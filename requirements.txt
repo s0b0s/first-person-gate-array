@@ -1,0 +1,11 @@
+# Python packages for the tools in this repository (Python 3.9 or newer).
+#
+# Everything else (the game model, asset generators, flash image builder, style checkers,
+# scripts/run_sim.py) uses only the standard library, so the build and the simulations need
+# nothing from this file.
+#
+# Install:  pip install -r requirements.txt
+# Or with uv, nothing to install: "uv run tools/uart/debug_uart.py ..." fetches the package
+# itself (the script lists it in a header at its top).
+
+pyserial  # serial port access for tools/uart/debug_uart.py (talking to the board over UART)

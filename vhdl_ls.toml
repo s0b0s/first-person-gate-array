@@ -1,0 +1,28 @@
+# VHDL LS (rust_hdl) project configuration: go-to-definition, hover, completion and live
+# diagnostics in VS Code (extension "VHDL LS", hbohlin.vhdl-ls) or any editor that runs
+# vhdl_ls. The server reads this file from the workspace root; std and ieee come with it.
+#
+# Every RTL file and every testbench file is in one library, as in scripts/run_sim.py and
+# scripts/build.tcl; "work" inside these files means this library, so it gets a real name.
+# UNISIM (MMCME2_BASE, BUFG, ODDR in rtl/clock/clock_reset.vhd and
+# rtl/memory/sram_controller.vhd) comes from the Vivado installation; only its component
+# declarations are needed. If Vivado is installed elsewhere, change the two paths, or keep
+# them in a personal ~/.vhdl_ls.toml (vhdl_ls merges that file with this one).
+
+# One standard for the whole workspace: 2008, because the testbenches use it. The design under
+# rtl/ is VHDL-93 (the course's standard); scripts/run_sim.py and the Vivado scripts compile it
+# as VHDL-93, so a 2008-only construct there still fails the build. (With "1993" here the
+# design shows no errors but every testbench shows dozens.)
+standard = "2008"
+
+[libraries]
+shooter.files = [
+	"rtl/**/*.vhd",
+	"sim/**/*.vhd",
+]
+
+unisim.files = [
+	"D:/Xilinx/2025.1/Vivado/data/vhdl/src/unisims/unisim_VPKG.vhd",
+	"D:/Xilinx/2025.1/Vivado/data/vhdl/src/unisims/unisim_VCOMP.vhd",
+]
+unisim.is_third_party = true

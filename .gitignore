@@ -1,0 +1,23 @@
+# Generated outputs
+build/
+
+# Vivado and xsim droppings (Vivado writes some of these into the folder it starts in)
+*.jou
+*.log
+*.pb
+*.wdb
+.Xil/
+xsim.dir/
+clockInfo.txt
+dfx_runtime.txt
+tight_setup_hold_pins.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude instructions and the planning notes and specifications written for it
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+docs/
