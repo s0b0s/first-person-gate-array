@@ -12,6 +12,16 @@ clockInfo.txt
 dfx_runtime.txt
 tight_setup_hold_pins.txt
 
+# KiCad clutter (backups, local view settings, caches, lock and autosave files, generated
+# Gerbers). Tracked: pcb/carrier.kicad_pro, .kicad_sch, .kicad_pcb, pcb/fp-lib-table (it loads
+# the footprint library as "carrier") and pcb/carrier.pretty/
+pcb/*-backups/
+pcb/*.kicad_prl
+pcb/fp-info-cache
+pcb/*.lck
+pcb/#auto_saved_files#
+pcb/gerbers/
+
 # Python
 __pycache__/
 *.pyc

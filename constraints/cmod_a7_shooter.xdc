@@ -91,17 +91,28 @@ set_property SLEW FAST [get_ports {sram_a[*] sram_dq[*] sram_oe_n sram_we_n}]
 ## DIP pins to the carrier PCB (23 used; JA and the other DIP pins unassigned)
 ## --------------------------------------------------------------------------
 ## PS/2 through the level shifter: open drain ('0' or 'Z'), the shifter's
-## 10 kohm resistors are the pull-ups
+## 10 kohm resistors are the pull-ups. Shifter channel An (3.3 V side) maps to
+## Bn (5 V side), which goes to the Pmod PS2 socket (Pmod pin 1 Data, 3 Clock).
+## DIP 1 kb_clk: A4/B4, keyboard Clock
 set_property -dict { PACKAGE_PIN M3 IOSTANDARD LVCMOS33 DRIVE 8 } [get_ports kb_clk]
+## DIP 2 kb_dat: A3/B3, keyboard Data
 set_property -dict { PACKAGE_PIN L3 IOSTANDARD LVCMOS33 DRIVE 8 } [get_ports kb_dat]
+## DIP 3 ms_clk: A2/B2, mouse Clock
 set_property -dict { PACKAGE_PIN A16 IOSTANDARD LVCMOS33 DRIVE 8 } [get_ports ms_clk]
+## DIP 4 ms_dat: A1/B1, mouse Data
 set_property -dict { PACKAGE_PIN K3 IOSTANDARD LVCMOS33 DRIVE 8 } [get_ports ms_dat]
 
-## Pmod I2S2, DAC row only
-set_property -dict { PACKAGE_PIN M1 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_mclk]
-set_property -dict { PACKAGE_PIN N3 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_lrck]
-set_property -dict { PACKAGE_PIN P3 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_sclk]
-set_property -dict { PACKAGE_PIN M2 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_sdin]
+## Pmod I2S2, DAC row only (Pmod pins 1 MCLK, 2 LRCK, 3 SCLK, 4 SDIN). The DIP
+## order runs SDIN to MCLK so the four PCB traces run in parallel without
+## crossing.
+## DIP 17 -> I2S2 pin 4
+set_property -dict { PACKAGE_PIN M1 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_sdin]
+## DIP 18 -> I2S2 pin 3
+set_property -dict { PACKAGE_PIN N3 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_sclk]
+## DIP 19 -> I2S2 pin 2
+set_property -dict { PACKAGE_PIN P3 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_lrck]
+## DIP 20 -> I2S2 pin 1
+set_property -dict { PACKAGE_PIN M2 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_mclk]
 
 ## PWR_SENSE: the PCB 3.3 V net; pulled down so a missing jumper reads '0'
 set_property -dict { PACKAGE_PIN W3 IOSTANDARD LVCMOS33 PULLDOWN TRUE } [get_ports pwr_sense]
