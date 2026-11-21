@@ -13,21 +13,14 @@
 --                 (numbers MASTER_* in game_pkg): 0 display line fetch,
 --                 1 sprite art reads, 2 pixel writes, 3 loader / debug.
 --                 Master port: hold req with we/addr/wdata until gnt is
---                 high for one cycle (the request is then taken; a master
---                 may present its next request in the following cycle).
---                 Read data returns on rvalid (one bit per master, shared
---                 rdata) in request order, a fixed SRAM latency after gnt
---                 (see sram_controller).
---                 Policy: master 0 wins whenever it asks, so the display
---                 is never starved and preempts bursts at the next access
---                 boundary. Otherwise the master that was served last
---                 keeps the bus while it keeps asking, for up to
---                 BURST_MAX accesses (this groups reads and writes into
---                 bursts so the read-to-write turnaround is rare). After
---                 that, or when it stops asking, the highest-priority
---                 other requester wins; the last master continues only
---                 if nobody else is waiting. So masters 1..3 wait at most
---                 two bursts of the others, plus the display's fetches.
+--                 high for one cycle; the next request may follow
+--                 immediately. Read data returns in order on rvalid (one
+--                 bit per master, shared rdata) a fixed latency after gnt.
+--                 Policy: master 0 always wins (display never starved).
+--                 Otherwise the last master keeps the bus for up to
+--                 BURST_MAX accesses (fewer read-to-write turnarounds),
+--                 then the highest-priority other requester wins. Masters
+--                 1..3 wait at most two bursts plus display fetches.
 --                 Also counts busy SRAM cycles for the debug overlay.
 --                 Clock domain: clk_i (system). Grant is combinational
 --                 from req (same cycle).
@@ -83,10 +76,8 @@ architecture arch of sram_arbiter is
 	signal gnt: std_logic;
 	signal busy_count: unsigned(23 downto 0) := (others => '0');
 begin
-	-- Choose the master for this cycle. When the last master's burst is
-	-- used up, any other waiting master goes first, so a master that asks
-	-- on every cycle (the SRAM self-test, a long sprite read) cannot
-	-- starve the ones below it.
+	-- Once the last master's burst is used up, any other waiting master
+	-- goes first, so a master asking every cycle cannot starve the rest
 	process(m_req_i, last, burst)
 		variable other: natural range 0 to 3;
 		variable found: boolean;

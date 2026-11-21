@@ -1,9 +1,8 @@
 """Bit-accurate fixed-point model of the renderer (ray engine + column rasterizer).
 
-This file is the specification the RTL must match bit for bit (the
-testbenches compare the RTL with golden files written from it).
-Only integer arithmetic; ">>" on negative numbers is an arithmetic shift (floor), exactly
-like VHDL shift_right on signed. Fixed-point formats:
+The RTL must match it bit for bit (testbenches compare against golden files written from
+it). Integer arithmetic only; ">>" on negatives is a floor shift, like VHDL shift_right on
+signed. Fixed-point formats:
 
     position  Q6.16 unsigned (tile units)     angle  10 bits (1024 per turn, + = clockwise)
     sin/cos   Q2.16 signed                     ray    Q2.16 signed
@@ -12,13 +11,13 @@ like VHDL shift_right on signed. Fixed-point formats:
     rowDist   Q8.16, saturated                z-buffer  perp >> 6 (Q6.10), saturated
     heights   integer units, 64 per tile; eye 0..127 (player floor height + eye height)
 
-Screen: 320 x 240, horizon at row 120 (between rows 119 and 120). Rows are sampled at their
-centers (y + 0.5), columns too (camera x from 2x + 1 - 320).
+Screen: 320 x 240, horizon between rows 119 and 120. Rows and columns are sampled at their
+centers (y + 0.5; camera x from 2x + 1 - 320).
 
-Heights: each column walks the grid front to back with a
-window of rows still open (wtop..wbot, initially 0..239) and the current floor and ceiling
-heights F and C (those of the camera's tile). At every boundary where the heights change
-(a tile edge, or one of the 7 sub-edges inside a ramp tile), at distance d:
+Heights: each column walks the grid front to back with an open row window (wtop..wbot,
+initially 0..239) and the current floor and ceiling heights F and C (of the camera's tile).
+At each boundary where heights change (a tile edge, or one of the 7 sub-edges of a ramp
+tile), at distance d:
     lh = N_LH / d; the screen row (Q.8) of height h is  yq(h) = 120 * 256 + ((lh * (eye - h)) >> 6)
     and the first row at or below a Q.8 coordinate v is  row(v) = (v - 128 + 255) >> 8
     1. floor span    rows max(row(yq(F)), wtop) .. wbot, then wbot = min(wbot, row(yq(F)) - 1)
@@ -28,22 +27,22 @@ heights F and C (those of the camera's tile). At every boundary where the height
     4. if the next ceiling Cn < C: upper wall rows wtop .. min(row(yq(Cn)) - 1, wbot) (RISER_TEX),
        wtop = max(wtop, row(yq(Cn)))
     5. F, C = Fn, Cn; record the clip entry (z, wtop, wbot); stop if wtop > wbot
-At a solid wall (or a closed door) steps 1 and 2 run at the wall distance and the wall fills
-the rest of the window. Every row of the column is drawn exactly once. Wall, riser and upper
-textures are anchored at yq(64), so texel row = 64 - world height. With every height 0 and
-64 this is exactly the flat column (same wall rows, same texture coordinates).
-A ramp tile rises from its floor height F (low end) by rise = (floor of the next tile in its
-direction) - F, in 8 flat steps: step j (j = 0 at the low end) has floor F + (rise * j) / 8.
-Its sub-edges along the ramp axis lie at (sd - dd) + ((k * dd) >> 3), k = 1..7.
+At a solid wall (or closed door) steps 1 and 2 run at the wall distance and the wall fills the
+rest of the window. Every row is drawn exactly once. Wall, riser and upper textures are
+anchored at yq(64) (texel row = 64 - world height); with all heights 0 and 64 this equals
+the flat column.
+A ramp rises from its floor F by rise = (floor of the next tile in its direction) - F in 8
+flat steps: step j (0 at the low end) has floor F + (rise * j) / 8. Its sub-edges along the
+ramp axis lie at (sd - dd) + ((k * dd) >> 3), k = 1..7.
 
 Floors and ceilings: rowDist = (e * RINV[y]) >> 8 with e = eye - F (floor) or C - eye
 (ceiling) and RINV[y] = (KR << 8) // dy, dy = 256 * |row - horizon| + 128 (a constant ROM).
 
 Light effects (frame registers lmod and anim, from the game):
-    light   every tile light is first offset by lmod[light_type] and clamped to 0..15
-            (light_mods(): 0 steady, 1 flicker, 2 strobe, 3 glow, plus 2 for every type
-            during the muzzle flash), then darkened with distance as before
-    sky     a ceiling pixel whose tile is open and has bit 23 set is the sky texel
+    light   tile light + lmod[light_type], clamped to 0..15 (light_mods(): 0 steady,
+            1 flicker, 2 strobe, 3 glow, +2 for all during the muzzle flash), then
+            darkened with distance
+    sky     a ceiling pixel over an open tile with bit 23 set is the sky texel
             (u = ((angle + SKYX[x]) >> 1) & 255, v = min(63, (y * 17) >> 5)), no light;
             flats[4] is the 256 x 64 sky (textures.sky())
     anim    wall texture 6 (slime) cycles through ROM slots 5, 8, 9, 10 by anim 0..3

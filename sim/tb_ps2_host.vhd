@@ -10,17 +10,13 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for ps2_host against
---                 ps2_device_model on open-drain lines with weak 'H'
---                 pull-ups. The system clock is 10 MHz here (timing
---                 generics scaled to match) to keep the run short; the
---                 PS/2 timing itself is real (12.5 kHz device clock).
---                 Tests: a run of bytes received in order; a parity
---                 error; a bad stop bit; a truncated byte that times out
---                 and is followed by a good byte; host-to-device bytes
---                 with both parities, acknowledged, with no bytes
---                 received during the send; a silent device that makes
---                 the send time out and release the lines; enable low
---                 in the middle of a send releasing both lines at once.
+--                 ps2_device_model on open-drain lines with 'H' pull-ups.
+--                 A 10 MHz system clock (generics scaled) keeps it short; PS/2
+--                 timing is real (12.5 kHz device clock).
+--                 Tests: bytes in order; parity error; bad stop bit; truncated
+--                 byte timeout, then a good byte; sends with both parities,
+--                 acknowledged, nothing received meanwhile; silent device send
+--                 timeout; enable low mid-send releasing both lines at once.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 ps2_device_model, ps2_host

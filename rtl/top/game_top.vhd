@@ -9,27 +9,22 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Maze game: walk the textured maze of level 1 in first
---                 person with keyboard and mouse, open doors, never pass
---                 through walls.
+-- Description:    Maze game: walk level 1's textured maze in first person
+--                 with keyboard and mouse, open doors, collide with walls.
 --                 Boot: the level loader copies level 1 from flash into the
---                 tile map (the map's power-on contents are level 1 too, so
---                 a failed load still starts the game), then the game runs.
---                 Every frame: the buffer manager pulses frame_start at the
---                 start line; ps2_input latches the input snapshot;
---                 game_seq updates the player and doors; render_top draws
---                 the back buffer; when the last pixel has left the pixel
---                 FIFO the frame is done and the buffers swap at vblank.
---                 Tile map port B: the level loader while it runs, the game
---                 while it updates, otherwise the renderer's floor caster
---                 (the three never overlap in time).
---                 SRAM masters: 0 display, 1 (sprites, unused here), 2 pixel
---                 FIFO, 3 UART debug port.
+--                 tile map (its power-on contents are level 1 too, so a
+--                 failed load still runs).
+--                 Each frame: frame_start at the start line, ps2_input
+--                 latches the snapshot, game_seq updates player and doors,
+--                 render_top draws the back buffer; once the pixel FIFO is
+--                 empty the buffers swap at vblank.
+--                 Tile map port B: level loader, then game update, else the
+--                 floor caster (never overlapping in time).
+--                 SRAM masters: 0 display, 1 unused, 2 pixel FIFO, 3 UART.
 --                 UART control register 32: bit 0 test tone, bit 7 test
---                 pattern override with bits 6:4, bits 13:12 tint, bit 16
---                 freeze (no new frames; the front buffer stays for a
---                 dump). Register 33: frame start line (default 115).
---                 Status registers: see the "Status words" block below.
+--                 pattern override (bits 6:4), bits 13:12 tint, bit 16
+--                 freeze (front buffer kept for a dump). Register 33: frame
+--                 start line (default 115). Status: "Status words" below.
 --                 Clock domains: clk_sys (100 MHz), clk_pix (25 MHz),
 --                 crossed only inside display_controller.
 --
@@ -606,8 +601,8 @@ begin
 	------------------------------------------------------------------
 	-- SRAM: arbiter, controller, pins
 	------------------------------------------------------------------
-	-- Packed master buses, master 3 leftmost; master 1 is unused here.
-	-- The pixel FIFO only writes, at '0' & buf & (y * 320 + x).
+	-- Packed master buses, master 3 leftmost, master 1 unused.
+	-- Pixel FIFO writes go to '0' & buf & (y * 320 + x).
 	m_req <= g_req & fifo_valid & '0' & d_req;
 	m_we <= g_we & '1' & '0' & '0';
 	m_addr <= g_addr & ('0' & fifo_data(PIXW_BUF) & fifo_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)) &
@@ -891,9 +886,8 @@ begin
 	------------------------------------------------------------------
 	freeze <= ctrl(16);
 
-	-- A game frame starts at the buffer manager's start line, or right
-	-- after an unfreeze if the buffer manager is still waiting for the
-	-- frame it asked for while frozen
+	-- A game frame starts at the start line, or right after an unfreeze if
+	-- the buffer manager still waits for a frame requested while frozen
 	process(clk_sys, rst_sys)
 	begin
 		if (rst_sys = '1') then
@@ -1125,8 +1119,7 @@ begin
 	values(14 * 32 + 31 downto 14 * 32) <= x"0000" & mouse_retries & mouse_state & '0' & mouse_buttons;
 	values(15 * 32 + 31 downto 15 * 32) <= rx_count & tx_count;
 	values(16 * 32 + 31 downto 16 * 32) <= x"0000000" & '0' & front & locked & pcb_on; -- 2 front, 1 locked, 0 PCB on
-	-- Words 17..24: the door table as rendered (x, y, open per entry), so
-	-- the PC can render the same frame with the model (frame capture)
+	-- Words 17..24: door table as rendered, so the model can redraw the frame
 	door_words: for k in 0 to 7 generate
 		values((17 + k) * 32 + 31 downto (17 + k) * 32) <=
 			"0000000000000" & doors(k * DOOR_BITS + DOOR_BITS - 1 downto k * DOOR_BITS);

@@ -11,25 +11,18 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for audio_mixer with the real
 --                 flash_arbiter, flash_reader and the SPI flash model,
---                 preloaded with build/gamedata.bin at FLASH_DATA_BASE.
---                 sample_req comes every 2,048 clocks, as from i2s_tx.
---                 The mixer runs the case of sim/golden/mixer_case.txt
---                 (written by the Python Mixer model):
+--                 with build/gamedata.bin at FLASH_DATA_BASE; sample_req
+--                 every 2,048 clocks as from i2s_tx. Golden case
+--                 sim/golden/mixer_case.txt (Python Mixer model):
 --                   M track master    music track and master volume
 --                   T t id vol pan pri  a command before model sample t
 --                   O left right      model output of sample t (in order)
---                 Alignment: sample_req R_k starts computation k, which is
---                 model sample k. Music is switched on just before R_0, the
---                 commands of sample t are handed over between R_(t-1) and
---                 R_t, and the outputs of computation k are compared at
---                 R_(k+1), for all 6,000 samples.
---                 Meanwhile client 1 of the arbiter (the loader's port)
---                 reads random spans of the flash with random back-pressure
---                 and checks every byte against the flash memory.
---                 Also checked: underflows_o stays 0, no flash model errors.
---                 Client 1 counts its checks in its own variables and
---                 copies them to c1_checks and c1_errors; the main process
---                 adds those to its own counts at the end.
+--                 sample_req R_k starts computation k (model sample k);
+--                 commands of sample t go in between R_(t-1) and R_t, and
+--                 outputs of computation k are compared at R_(k+1), for
+--                 6,000 samples. Meanwhile arbiter client 1 reads random
+--                 flash spans with random back-pressure, checking every
+--                 byte. Also: underflows_o stays 0, no flash model errors.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, std.textio, tb_pkg, audio_mixer,

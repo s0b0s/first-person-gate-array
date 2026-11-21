@@ -10,11 +10,10 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    Metastability shift register for one asynchronous input
---                 or one bit crossing into the clk_i domain (three
---                 stages, no logic between them, clocked by the
---                 receiving domain). INIT sets both the power-on and the
---                 reset value, so a line that idles high (PS/2, UART RX)
---                 does not produce a false edge after configuration.
+--                 or one bit entering the clk_i domain (no logic between
+--                 stages). INIT is the power-on and reset value, so an
+--                 idle-high line (PS/2, UART RX) gives no false edge
+--                 after configuration.
 --                 Clock domain: clk_i. Latency: STAGES clock cycles.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164

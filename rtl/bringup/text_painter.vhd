@@ -9,30 +9,22 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Draws the 40 x 30 character bring-up page (page_rom) into
---                 a 320x240 framebuffer through the pixel write port, once
---                 per start_i pulse, so the page shows live values. This
---                 stands in for the renderer in the bring-up design and
---                 exercises the same path: pixel FIFO, SRAM writes, buffer
---                 manager swap, display.
---                 Order: for each pixel row y (0..239), for each cell
---                 column (0..39): fetch the page cell (row y / 8), turn a
---                 field cell into a hex digit of its value word, fetch the
---                 font row (y mod 8), emit 8 pixels left to right.
---                 States per cell:
---                   PAINT_CELL  page ROM address on the bus (from
---                               counters)
---                   PAINT_CHAR  page cell valid; character -> font
---                               address
---                   PAINT_LOAD  font row valid; copy it and the color
---                   PAINT_EMIT  8 pixels, each waiting for
---                               pix_ready_i
---                 Colors (palette_pkg): row 0 yellow, value digits light
---                 green, other text white, background black.
---                 done_o pulses when the last pixel has been taken by the
---                 FIFO (the FIFO may still be writing it to SRAM).
+-- Description:    Draws the 40 x 30 character bring-up page (page_rom)
+--                 into a 320x240 framebuffer once per start_i pulse, so it
+--                 shows live values. Stands in for the renderer on the
+--                 same path: pixel FIFO, SRAM writes, buffer swap,
+--                 display.
+--                 For each pixel row y, for each cell column: fetch the
+--                 page cell (row y / 8), turn a field cell into a hex
+--                 digit of its value word, fetch font row y mod 8, emit 8
+--                 pixels (states PAINT_CELL, PAINT_CHAR, PAINT_LOAD,
+--                 PAINT_EMIT).
+--                 Colors: row 0 yellow, value digits light green, other
+--                 text white, background black.
+--                 done_o pulses when the FIFO takes the last pixel (it may
+--                 still be writing it to SRAM).
 --                 Clock domain: clk_i (system). About 11 cycles per 8
---                 pixels when the FIFO does not stall; the SRAM takes 16.
+--                 pixels without stalls; the SRAM takes 16.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, game_pkg,
 --                 palette_pkg, page_rom, font_rom

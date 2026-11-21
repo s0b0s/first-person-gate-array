@@ -9,42 +9,34 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Deterministic replay: records the per-frame input
---                 snapshots and game-state CRCs into SRAM, and can play a
---                 recorded (or uploaded) snapshot stream back into the game
---                 in place of the keyboard and mouse. The same stream gives
---                 the same CRC every frame on the board, in simulation and
---                 in the Python model, which proves they behave alike.
---                 Modes (mode_i, taken at the first frame after a change;
---                 a change restarts the frame counter at 0):
+-- Description:    Deterministic replay: records per-frame input snapshots
+--                 and game-state CRCs into SRAM, and plays a recorded (or
+--                 uploaded) snapshot stream back in place of keyboard and
+--                 mouse. The same stream gives the same CRCs on the board,
+--                 in simulation and in the Python model.
+--                 Modes (mode_i, taken at the next frame; a change
+--                 restarts the frame counter at 0):
 --                   0 pass-through  snap_out = snap_in, one clock later
---                   1 record        pass-through, and frame k's snapshot
---                                   goes to REPLAY_BASE + 5 k (5 bytes,
---                                   little endian)
---                   2 play          frame k's snapshot is read back from
+--                   1 record        pass-through; frame k's snapshot goes
+--                                   to REPLAY_BASE + 5 k (little endian)
+--                   2 play          frame k's snapshot is read from
 --                                   REPLAY_BASE + 5 k and replaces
---                                   snap_in; snap_in_valid_i still marks
---                                   the frame. The next frame's bytes are
---                                   prefetched right after a frame is
---                                   delivered, so the game never waits.
---                 In modes 1 and 2 each CRC (crc_valid_i, once per frame
---                 at render start) goes to CRC_BASE + 4 k, little endian.
---                 After MAX_FRAMES frames recording stops and play falls
---                 back to pass-through until the mode changes.
---                 The PC uploads or downloads both areas with the UART
---                 'S' and 'M' commands (tools/uart/).
---                 SRAM access is a byte-serial engine on an arbiter master
---                 port: snapshot writes (5), CRC writes (4), prefetch reads
---                 (5). A CRC that arrives while another job runs waits in
---                 a one-entry buffer.
---                 Coding: one clocked process; the
---                 SRAM engine is the job_state machine. Variables carry
---                 the next mode, frame, restart and fetch_ok values
---                 because a frame tick reads them in the same clock in
---                 which a mode change or a late prefetch updates them.
+--                                   snap_in (snap_in_valid_i still marks
+--                                   the frame); the next one is
+--                                   prefetched so the game never waits.
+--                 In modes 1 and 2 each CRC goes to CRC_BASE + 4 k. After
+--                 MAX_FRAMES, recording stops and play falls back to
+--                 pass-through until the mode changes. The PC moves both
+--                 areas with the UART 'S' and 'M' commands.
+--                 SRAM: a byte-serial engine on an arbiter master port
+--                 (snapshot writes, CRC writes, prefetch reads); a CRC
+--                 arriving during another job waits in a one-entry buffer.
+--                 Variables carry next mode, frame, restart and fetch_ok
+--                 because a frame tick reads them in the same clock a mode
+--                 change or late prefetch updates them.
 --                 Clock domain: clk_i (system). Latency: pass-through 1
---                 clock; play delivers 1 clock after snap_in_valid_i when
---                 the prefetch is done (it takes about 30 clocks).
+--                 clock; play 1 clock after snap_in_valid_i once the
+--                 prefetch (about 30 clocks) is done.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, hw_pkg,
 --                 game_pkg
@@ -163,8 +155,7 @@ begin
 			out_valid <= '0';
 			mode_old <= mode_i;
 
-			-- A mode change takes effect at the next frame; a new play mode
-			-- starts prefetching frame 0 at once
+			-- A mode change takes effect at the next frame; play prefetches frame 0 at once
 			if (mode_i /= mode_old) then
 				restart_n := '1';
 				fetch_ok_n := '0';
@@ -186,8 +177,7 @@ begin
 				end if;
 				-- A full log (frame_n = MAX_FRAMES) falls back to pass-through
 				if ((mode_n = "10") and (frame_n < MAX_FRAMES)) then
-					-- Play: deliver the prefetched snapshot (or as soon as it
-					-- arrives)
+					-- Play: deliver the prefetched snapshot (or when it arrives)
 					if (fetch_ok_n = '1') then
 						-- Deliver frame f, prefetch frame f + 1
 						out_snap <= fetch;

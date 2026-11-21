@@ -10,21 +10,18 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    One MMCM makes every clock from the 12 MHz oscillator:
---                   VCO   = 12 MHz x MULT_F           (600 MHz at 50.0)
---                   clk_sys     = VCO / 6             (100 MHz)
---                   clk_pix     = VCO / 24            (25 MHz)
---                   clk_sram_rd = VCO / 6, +37.5 deg  (100 MHz, 1.04 ns late)
---                 The SRAM capture clock phase is 37.5 deg instead of the
---                 planned 36 deg because the MMCM's static phase step for
---                 a /6 output is 45 / 6 = 7.5 deg (1/8 of a VCO period).
---                 MULT_F = 50.375 gives the exact-timing VGA fallback
---                 (25.19 MHz pixel, 100.75 MHz system, VCO 604.5 MHz).
---                 Each output drives a BUFG. Resets: rst_sys_o and
---                 rst_pix_o assert asynchronously while the MMCM is not
---                 locked or btn_rst_i is high, and release synchronously
---                 in their own domain (reset_sync).
---                 Clock domains: produces clk_sys and clk_pix (unrelated
---                 for timing) and clk_sram_rd (related to clk_sys).
+--                 VCO = 12 MHz x MULT_F (600 MHz at 50.0);
+--                 clk_sys = VCO / 6 (100 MHz); clk_pix = VCO / 24
+--                 (25 MHz); clk_sram_rd = VCO / 6 at +37.5 deg (1.04 ns
+--                 late; the MMCM phase step at /6 is 7.5 deg).
+--                 MULT_F = 50.375 gives exact VGA timing (25.19 MHz pixel,
+--                 100.75 MHz system).
+--                 Each output drives a BUFG. rst_sys_o and rst_pix_o
+--                 assert asynchronously while the MMCM is unlocked or
+--                 btn_rst_i is high, and release synchronously in their
+--                 own domain (reset_sync).
+--                 Clock domains: clk_sys and clk_pix (unrelated for
+--                 timing), clk_sram_rd (related to clk_sys).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, UNISIM (MMCME2_BASE, BUFG),
 --                 reset_sync

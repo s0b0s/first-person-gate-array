@@ -9,23 +9,20 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    UART receiver, 8N1 (8 data bits, no parity, 1 stop bit),
---                 LSB first.
---                 The line goes through a 3-stage synchronizer that powers
---                 up and resets to '1' (idle), so configuration does not
---                 look like a start bit. A falling edge to '0' starts a
---                 frame; the start bit is checked again half a bit later
---                 (a shorter glitch is ignored), then every data bit and
---                 the stop bit are sampled one bit period apart, in the
---                 middle of each bit. Counting system clocks per bit is
---                 CLK_HZ / BAUD times oversampling (100 at 1 Mbaud), well
---                 above the usual 10x minimum, and keeps the sample
---                 point within half a clock of the bit center.
---                 A low stop bit gives frame_err_o (no valid_o); the
---                 receiver then waits for the line to return high before
---                 it looks for a new start bit (a break holds it there).
+-- Description:    UART receiver, 8N1, LSB first.
+--                 The line passes a 3-stage synchronizer that resets to
+--                 '1' (idle), so configuration does not look like a start
+--                 bit. A falling edge starts a frame; the start bit is
+--                 rechecked half a bit later (shorter glitches are
+--                 ignored), then data and stop bits are sampled mid-bit,
+--                 one bit period apart. Counting clocks per bit (100 at
+--                 1 Mbaud) keeps the sample within half a clock of the bit
+--                 center.
+--                 A low stop bit gives frame_err_o (no valid_o), then the
+--                 receiver waits for the line to go high (a break holds it
+--                 there).
 --                 Clock domain: clk_i. Latency: valid_o one clock after
---                 the middle of the stop bit (plus 3 synchronizer clocks).
+--                 mid-stop bit, plus 3 synchronizer clocks.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 synchronizer

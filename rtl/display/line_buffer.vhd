@@ -9,13 +9,11 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Dual-clock line buffer: 1024 bytes, written in the
---                 system domain by the line fetcher and read in the pixel
---                 domain by the display pipeline. Two 320-byte halves at
---                 0 and 512 hold rendered lines alternately (ping-pong).
---                 This RAM is one of the display's clock-domain crossing
---                 points: the fetcher only writes the half the pixel side
---                 is not reading, so no word is written and read at once.
+-- Description:    Dual-clock 1024-byte ping-pong line buffer: halves at 0
+--                 and 512 hold alternate rendered lines. Written by the
+--                 line fetcher (system), read by the display (pixel).
+--                 Crossing is safe because the fetcher writes only the
+--                 half not being read.
 --                 Clock domains: wr_clk_i (system), rd_clk_i (pixel).
 --                 Read latency: 1 rd_clk_i cycle.
 --

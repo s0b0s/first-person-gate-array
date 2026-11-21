@@ -9,17 +9,14 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    PWR_SENSE gate. PWR_SENSE (DIP 34) reads the carrier
---                 PCB's 3.3 V
---                 net. pcb_on_o goes '1' only after the synchronized input
---                 has been '1' for HOLD_CYCLES clocks in a row (1,000,000
---                 = 10 ms at 100 MHz) and drops to '0' on the first clock
---                 that sees it '0'. While pcb_on_o is '0' the top level
---                 keeps every PCB-facing output high-impedance, because
---                 the Pmod VGA buffers must not be driven while unpowered.
---                 Clock domain: clk_i (system). Latency: 3 cycles
---                 (synchronizer) plus 1 to turn off; 3 + HOLD_CYCLES + 1
---                 to turn on.
+-- Description:    PWR_SENSE (DIP 34) reads the carrier PCB's 3.3 V net.
+--                 pcb_on_o goes '1' after the synchronized input has been
+--                 '1' for HOLD_CYCLES clocks in a row (10 ms at 100 MHz)
+--                 and drops on the first '0'. While it is '0' the top level
+--                 keeps PCB-facing outputs high-impedance (the unpowered
+--                 Pmod VGA buffers must not be driven).
+--                 Clock domain: clk_i (system). Latency: 3 + 1 cycles to
+--                 turn off, 3 + HOLD_CYCLES + 1 to turn on.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, hw_pkg,
 --                 synchronizer
@@ -75,8 +72,7 @@ begin
 			sync_o => sense
 		);
 
-	-- Count how long the sense line has been high; any low sample
-	-- restarts the count and switches the PCB off.
+	-- Any low sample restarts the count and switches the PCB off
 	process(sense, count)
 	begin
 		if (sense = '0') then

@@ -9,14 +9,12 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Small first-word-fall-through FIFO for the sprite engine:
---                 16 words in distributed RAM with an asynchronous read, so
---                 a word pushed at one edge is on dout_o in the next cycle
---                 (the read-return path needs that: SRAM read data can
---                 arrive two clocks after the request was granted).
---                 push_i on a full FIFO and pop_i on an empty one are
---                 ignored; the sprite engine's credit counting keeps both
---                 from happening.
+-- Description:    16-word first-word-fall-through FIFO for the sprite
+--                 engine, in distributed RAM with an asynchronous read: a
+--                 word pushed at one edge is on dout_o the next cycle (SRAM
+--                 read data can return two clocks after the grant).
+--                 Push when full and pop when empty are ignored; the
+--                 sprite engine's credit counting prevents both.
 --                 Clock domain: clk_i. One push and one pop per clock.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std

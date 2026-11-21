@@ -9,24 +9,19 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    The whole PS/2 input block:
---                 a ps2_host for the keyboard (receive only) and one for
---                 the mouse, the scan code decoder (ps2_keyboard), the
---                 mouse start-up and packet driver (ps2_mouse) and the
---                 per-frame snapshot (input_snapshot). Also keeps what
---                 the bring-up input page shows: the last 16 bytes from
---                 each device and error counts.
---                 Pins: the *_pull_o outputs are '1' to drive a line
---                 low; the top level makes each line open drain
---                 (line <= '0' when pull = '1' else 'Z', never '1') and
---                 feeds the line back on the *_i inputs. enable_i is the
---                 PWR_SENSE gate (pcb_on): while '0' both devices are
---                 held idle and all four lines are released.
---                 Timing generics are in microseconds and converted to
---                 clock cycles with CLK_HZ; simulations shorten them.
---                 Error counts saturate at 255. The mouse timeout byte
---                 (ms_errors_o 23:16) also counts send errors (no
---                 response from the mouse to FF or F4 within 20 ms).
+-- Description:    The whole PS/2 input block: a ps2_host each for the
+--                 keyboard (receive only) and the mouse, ps2_keyboard,
+--                 ps2_mouse and input_snapshot, plus the last 16 bytes
+--                 from each device and error counts for the bring-up
+--                 page.
+--                 *_pull_o = '1' drives a line low; the top level makes
+--                 each line open drain ('0' or 'Z') and feeds it back on
+--                 the *_i inputs. enable_i is the PWR_SENSE gate: while
+--                 '0' both devices idle and all four lines are released.
+--                 Timing generics are in us, converted with CLK_HZ.
+--                 Error counts saturate at 255; the mouse timeout byte
+--                 (ms_errors_o 23:16) also counts send errors (no reply
+--                 to FF or F4 within 20 ms).
 --                 Clock domain: clk_i (system). PS/2 pins asynchronous.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,

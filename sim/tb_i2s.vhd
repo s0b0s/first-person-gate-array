@@ -10,18 +10,12 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for i2s_tx and tone_gen against
---                 i2s_receiver_model (which checks the I2S frame format
---                 and the MCLK / SCLK / LRCK ratios on every frame).
---                 1. Known samples: a list of stereo pairs (including
---                    0, -1, full scale positive and negative, alternating
---                    bits) is presented one pair per sample_req_o; every
---                    pair must come out of the receiver bit exact and in
---                    order.
---                 2. Tone: tone_gen (440 Hz, quarter volume) drives both
---                    channels; over 600 received samples the peaks must be
---                    within 0.1% of +/-8192 and the mean period between
---                    upward zero crossings 110.97 samples (48,828.125 /
---                    440) within half a sample.
+--                 i2s_receiver_model (checks frame format and clock ratios).
+--                 1. Known stereo pairs (0, -1, full scale, alternating bits),
+--                    one per sample_req_o, come out bit exact and in order.
+--                 2. tone_gen at 440 Hz, quarter volume, over 600 samples:
+--                    peaks within 0.1% of +/-8192, mean period 110.97 samples
+--                    (48,828.125 / 440) within half a sample.
 --                 3. tone_gen disabled gives silence.
 --                 Also measures the LRCK rate (48.828 kHz).
 --

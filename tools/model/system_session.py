@@ -1,12 +1,11 @@
 """Short scripted session for the system testbench (sim/tb_shooter_top.vhd).
 
-The whole design runs from the 12 MHz oscillator, so every frame costs 16.7 ms of simulated
-time; the 1500-frame autopilot session (golden2.py) is far too long for it. This session
-reaches gameplay on frame 2 and then exercises movement, turning, running, firing (hitscan
-and sounds) and the automap.
+The whole design runs from the 12 MHz oscillator, so each frame costs 16.7 ms of simulated
+time and the 1500-frame autopilot session is far too long. This one reaches gameplay on
+frame 2, then moves, turns, runs, fires (hitscan and sounds) and opens the automap.
 
 write_system_trace(path, assets) writes, per frame k:
-    F k <snapshot, 10 hex digits>        the input (the testbench plays it via the replay unit)
+    F k <snapshot, 10 hex digits>        the input (played via the replay unit)
     G k <flow> <crc 8 hex> <sounds> <tint>
     E                                    then 240 lines of 640 hex digits: the frame as drawn
 """

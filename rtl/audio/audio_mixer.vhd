@@ -9,63 +9,45 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    8 effect voices + 1 music voice, mixed exactly like
---                 Mixer in tools/model/audio.py, with the samples streamed
---                 from the SPI flash.
+-- Description:    8 effect voices + 1 music voice streamed from SPI flash,
+--                 mixed bit-exactly like Mixer in tools/model/audio.py.
 --
---                 Output samples. Every sample_req_i (from i2s_tx, one per
---                 2,048 clocks) starts the computation of the next output
---                 pair; left_o / right_o change once it is done: 10 clocks
---                 per waiting command, 7 per playing voice, 2 per free
---                 one, 10 for the music and output (at most about 250
---                 clocks), well before the next sample_req_i.
---                 Command timing rule: commands taken on snd_* in clock
---                 cycles before a sample_req_i are applied, in the order
---                 taken, at the start of the computation that sample_req_i
---                 starts (the model's command() before sample()); a
---                 command taken in the same cycle as sample_req_i waits
---                 for the next one. music_i is sampled the same way: a new
---                 value restarts that track at position 0 in the
---                 computation started by the sample_req_i that sees it.
---                 Up to 16 commands may wait.
+--                 Timing: each sample_req_i (one per 2048 clocks) computes
+--                 the next pair: 10 clocks per waiting command, 7 per
+--                 playing voice, 2 per free one, 10 for music and output
+--                 (at most about 250 clocks). Commands taken before the
+--                 sample_req_i cycle are applied in order first (the
+--                 model's command() before sample()); one taken in that
+--                 cycle waits for the next. A new music_i restarts that
+--                 track at 0 the same way. Up to 16 commands may wait.
 --
---                 Per output sample (model formats): each voice holds a
---                 position Q.16 in its sound advanced by STEP = 14798
---                 (11,025 / 48,828.125 in Q.16); the sample is
---                 byte[pos >> 16] - 128; gains (vol * (31 -+ pan)) >> 5;
---                 music gain 40, or 20 while more than 4 effect voices
---                 play; out = sat16((sum * master) >> 4). Voice allocation:
---                 lowest free voice, else the lowest-priority voice (lowest
---                 index on ties) if its priority is lower than the new
---                 one's, else the command is dropped. A sound id above 17
---                 does not exist and is ignored.
+--                 Math: position Q.16 advances by STEP = 14798 (11,025 /
+--                 48,828.125); sample = byte[pos >> 16] - 128; gains
+--                 (vol * (31 -+ pan)) >> 5; music gain 40, or 20 while
+--                 more than 4 effects play; out = sat16((sum * master)
+--                 >> 4). Allocation: lowest free voice, else the lowest-
+--                 priority voice (lowest index on ties) if below the new
+--                 one's priority, else dropped. Sound ids above 17 are
+--                 ignored.
 --
---                 Sample storage (audio_ram, 4 KB): the first 64 bytes of
---                 every item ("heads") are loaded at start-up, so a new
---                 sound plays its first 283 output samples (5.8 ms) from
---                 the head while its 256-byte ring fills from flash. Ring v
---                 holds the item's bytes 64, 65, ... at address
---                 v * 256 + (byte mod 256); fill(v) counts the bytes
---                 written (raised once a whole chunk is in). A ring is
---                 topped up in chunks of 64 bytes
---                 whenever at most 192 unread bytes remain, so after the
---                 first chunk at least 192 bytes (17 ms) are always ahead
---                 of the player: the 9 rings need 99 KB/s, the flash
---                 gives about 3 MB/s minus the loader's commands.
---                 A restarted voice gets a new generation number gen(v);
---                 the fetch machine notices it, restarts that ring, and
---                 does not commit a chunk requested for the old sound.
---                 The music ring streams the track in a loop (fill and the
---                 read pointer ru count bytes without wrapping, mod 2^20).
---                 A byte the ring does not hold yet (an underflow; never
---                 expected) plays as silence and is counted.
+--                 Storage (audio_ram, 4 KB): 64-byte heads of every item
+--                 load at start-up, covering a new sound's first 5.8 ms
+--                 while its 256-byte ring fills. Ring v holds bytes 64, 65,
+--                 ... at v * 256 + (byte mod 256); fill(v) counts bytes
+--                 committed (per whole chunk). A ring gets a 64-byte chunk
+--                 whenever at most 192 unread bytes remain (17 ms ahead;
+--                 9 rings need 99 KB/s of the flash's ~3 MB/s). A restart
+--                 bumps gen(v); the fetch machine then restarts the ring
+--                 and drops a chunk requested for the old sound. Music
+--                 loops; fill and its read pointer ru count mod 2^20. A
+--                 byte not yet in the ring (underflow) plays as silence
+--                 and is counted.
 --
---                 Start-up (first time enable_i is '1'): read the flash
---                 directory at 0x220000, keep the flash address and length
---                 of items 16..33 (sounds 0..17) and 40..42 (music 1..3),
---                 then load the 21 heads. Until then the output is 0 and
---                 commands are dropped. enable_i = '0' later silences
---                 everything and stops refills (the directory is kept).
+--                 Start-up (first enable_i = '1'): read the directory at
+--                 0x220000, keep address and length of items 16..33
+--                 (sounds 0..17) and 40..42 (music 1..3), load the 21
+--                 heads; until then output is 0 and commands are dropped.
+--                 enable_i = '0' later silences all and stops refills.
 --
 --                 Clock domain: clk_i (system, 100 MHz).
 --
@@ -272,9 +254,8 @@ begin
 			rdata_o => ram_rdata
 		);
 
-	-- Item table: LUT RAM, written while the directory is read, read
-	-- asynchronously by both machines (no reset, so it is not made of
-	-- flip-flops; the directory is read again after every reset)
+	-- Item table: LUT RAM, read asynchronously by both machines. No reset
+	-- (keeps it out of flip-flops); the directory is re-read after reset.
 	process(clk_i)
 	begin
 		if rising_edge(clk_i) then
@@ -435,9 +416,8 @@ begin
 						end if;
 					end if;
 
-				-- Refills: visit the nine rings in turn. FILL_SCAN copies the
-				-- ring's state into s_* registers, FILL_DECIDE acts on them
-				-- (two clocks per ring keep the multiplexers out of the
+				-- Refills: round-robin over the nine rings. FILL_SCAN copies the
+				-- ring into s_*, FILL_DECIDE acts (keeps the muxes out of the
 				-- request arithmetic).
 				when FILL_SCAN =>
 					s_gen <= gen(sv);
@@ -481,8 +461,7 @@ begin
 						end if;
 					elsif ((s_act = '1') and ((sv = 8) or (s_off < s_len)) and (ahead(s_fill, s_idx) <= 192)) then
 						-- At most 192 bytes ahead: fetch the next chunk
-						-- (music: up to the end of the track; the next
-						-- chunk starts again at its beginning)
+						-- (music stops at track end; the next chunk wraps)
 						f_req_valid <= '1';
 						f_req_addr <= s_addr + resize(s_off, 24);
 						f_req_len <= chunk(s_len - s_off);
@@ -498,8 +477,7 @@ begin
 						fill_state <= FILL_DATA;
 					end if;
 				when FILL_DATA =>
-					-- w_fill / w_mf count the chunk's bytes; they are
-					-- committed to fill / mfpos after the last one
+					-- w_fill / w_mf count the chunk; committed after the last byte
 					if (data_valid_i = '1') then
 						ram_we <= '1';
 						ram_waddr <= to_unsigned(fv, 4) & w_fill(7 downto 0); -- Ring fv: fv * 256 + fill mod 256
@@ -515,8 +493,7 @@ begin
 						end if;
 					end if;
 				when FILL_COMMIT =>
-					-- A chunk fetched for a sound that has been replaced
-					-- since is not committed (its ring restarts instead)
+					-- Drop a chunk for a sound replaced meanwhile (its ring restarts)
 					if (gen(fv) = cur_gen) then
 						fill(fv) <= w_fill;
 						if (fv = 8) then
@@ -642,10 +619,9 @@ begin
 						end if;
 					end if;
 
-				-- Start the waiting sounds in order: MIX_CMD takes one from
-				-- the queue, MIX_ALLOC looks at voices 0..7 one per clock
-				-- (first free voice, lowest priority with lowest index),
-				-- MIX_START sets up the chosen voice. 10 clocks per command.
+				-- Waiting sounds in order: MIX_CMD pops one, MIX_ALLOC scans
+				-- voices 0..7 one per clock, MIX_START sets up the chosen
+				-- voice. 10 clocks per command.
 				when MIX_CMD =>
 					if (napply = 0) then
 						mv <= 0;
@@ -698,10 +674,9 @@ begin
 					end if;
 					mix_state <= MIX_CMD;
 
-				-- Effect voices 0..7. MIX_VLOOK copies voice mv into v_*;
-				-- MIX_VOICE ends it or sets the RAM address; the RAM reads
-				-- at the MIX_VWAIT clock; MIX_VREAD takes the byte, MIX_VMUL
-				-- multiplies by the gains, MIX_VACC adds and advances.
+				-- Effect voices 0..7: VLOOK copies voice mv into v_*, VOICE
+				-- ends it or sets the RAM address, VWAIT (RAM read), VREAD
+				-- takes the byte, VMUL applies the gains, VACC adds and advances.
 				when MIX_VLOOK =>
 					v_act <= active(mv);
 					v_item <= vitem(mv);
@@ -719,8 +694,7 @@ begin
 				when MIX_VOICE =>
 					idx := resize(v_pos(31 downto 16), 20); -- Byte index: integer part of the Q.16 position
 					if ((v_act = '0') or (idx >= v_len)) then
-						-- Free, or the sound has ended (the model frees it
-						-- here too, without output)
+						-- Free, or ended (freed without output, as in the model)
 						active(mv) <= '0';
 						if (mv = 7) then
 							mix_state <= MIX_MUSIC;
@@ -770,8 +744,7 @@ begin
 						mix_state <= MIX_VLOOK;
 					end if;
 
-				-- Music voice: same steps, then the position advances and
-				-- wraps at the end of the track in MIX_MACC / MIX_MADV
+				-- Music voice: same steps; MIX_MACC / MIX_MADV advance and wrap
 				when MIX_MUSIC =>
 					if (track = 0) then
 						mix_state <= MIX_OUT1;
@@ -822,8 +795,7 @@ begin
 					else
 						mpos <= mnext;
 					end if;
-					-- STEP < 1.0: the byte index moves by 0 or 1 (a wrap
-					-- also counts as one), so ru follows the stream
+					-- STEP < 1.0: the byte index moves by 0 or 1 (wrap included)
 					if (mnext(35 downto 16) /= mpos(35 downto 16)) then
 						ru <= ru + 1;
 						if (ru = HEAD - 1) then

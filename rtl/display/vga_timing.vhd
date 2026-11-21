@@ -15,10 +15,8 @@
 --                      656..751 sync, 752..799 back porch
 --                   v: 0..479 visible, 480..489 front porch,
 --                      490..491 sync, 492..524 back porch
---                 h_o / v_o are the registered counters; hsync_o,
---                 vsync_o and active_o are decoded from them in the same
---                 cycle (the display pipeline delays them to match its
---                 color path).
+--                 h_o / v_o are registered; hsync_o, vsync_o and
+--                 active_o are decoded from them combinationally.
 --                 Clock domain: clk_i (pixel clock, 25 MHz). One pixel
 --                 per clock.
 --

@@ -9,22 +9,18 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Bring-up design, kept buildable as a diagnostics
---                 image for checking the board, the PCB and its wiring.
+-- Description:    Diagnostics image for checking the board, PCB and wiring.
 --                 - Display: 640x480 from the SRAM front buffer; BTN1
---                   cycles the test patterns (framebuffer, color bands,
---                   checker, grid, gradient).
+--                   cycles the test patterns.
 --                 - A status page (text_painter) is redrawn into the back
---                   buffer every frame and swapped in at vblank by the
---                   buffer manager, as the renderer will be later.
+--                   buffer every frame and swapped in at vblank.
 --                 - SRAM self-test on 0x40000..0x7FFFF (outside both
 --                   framebuffers), flash JEDEC ID and data-area pattern,
---                   PS/2 keyboard and mouse, 440 Hz test tone on the
---                   Pmod I2S2, UART debug port (1 Mbaud).
---                 SRAM masters: 0 display, 1 SRAM tester, 2 pixel FIFO
---                 (status page), 3 UART debug port.
---                 PWR_SENSE gate: VGA and I2S pins are high impedance and
---                 the PS/2 lines released until pcb_on (power_gate).
+--                   PS/2 keyboard and mouse, 440 Hz tone on the Pmod
+--                   I2S2, UART debug port (1 Mbaud).
+--                 SRAM masters: 0 display, 1 SRAM tester, 2 pixel FIFO,
+--                 3 UART. VGA and I2S pins are high impedance and PS/2
+--                 released until pcb_on.
 --                 LEDs: LED0 MMCM locked, LED1 pcb_on; RGB (dim): red =
 --                 SRAM errors or line overruns, green = 1 Hz heartbeat,
 --                 blue = PS/2 errors.
@@ -541,8 +537,8 @@ begin
 	------------------------------------------------------------------
 	-- SRAM: arbiter, controller, pins
 	------------------------------------------------------------------
-	-- Packed master buses, master 3 leftmost. The pixel FIFO only writes, at
-	-- '0' & buf & (y * 320 + x); the display only reads.
+	-- Packed master buses, master 3 leftmost. Pixel FIFO writes go to
+	-- '0' & buf & (y * 320 + x).
 	m_req <= g_req & fifo_valid & t_req & d_req;
 	m_we <= g_we & '1' & t_we & '0';
 	m_addr <= g_addr & ('0' & fifo_data(PIXW_BUF) & fifo_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)) &
@@ -743,8 +739,7 @@ begin
 			level_o => fifo_level
 		);
 
-	-- The frame is done when the painter has finished and the FIFO has
-	-- handed its last pixel to the SRAM controller
+	-- Frame done: painter finished and the FIFO's last pixel taken by the SRAM
 	process(clk_sys, rst_sys)
 	begin
 		if (rst_sys = '1') then

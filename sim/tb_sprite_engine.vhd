@@ -9,32 +9,23 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for sprite_engine against the
---                 golden model (tools/model/sprites.py). For each case in
---                 sim/golden/sprite_cases.txt (session frames) and then
---                 sim/golden/sprite_stress.txt (tools/model/sprite_stress.py:
---                 full table, near limit, equal depths, screen edges, no
---                 sprites) and sim/golden/sprite4_cases.txt (heights: level-3
---                 frames and hand-placed scenes where sprites stand on raised
---                 floors and are clipped by height edges) it loads the
---                 camera, the sprite table (7 fields, with the floor
---                 height), the wall z-buffer and the clip lists (count and
---                 entries per column) into behavioral RAMs (1-clock reads),
---                 serves texel reads from build/art.bin through a
---                 behavioral arbiter port (random grants, read data 4
---                 clocks after the grant), applies random back-pressure on
---                 the pixel port (READY_PCT percent of clocks ready) and
---                 checks:
---                 - the base image with the pixel writes applied equals
---                   the expected image, and every write has the right
---                   buffer bit;
---                 - pixels_o equals the number of pixel writes (saturated);
---                 - the span list equals the golden one, and the span
---                   count of the previous frame stays readable until done;
---                 - one done_o per frame, busy_o low afterwards.
---                 Prints the clocks per case. The capture process keeps the
---                 written pixels in the signal img and counts them in
---                 writes (both cleared through clear_store before a case).
+-- Description:    Self-checking testbench for sprite_engine against
+--                 tools/model/sprites.py. Cases from
+--                 sim/golden/sprite_cases.txt (session frames),
+--                 sprite_stress.txt (full table, near limit, equal depths,
+--                 screen edges, none) and sprite4_cases.txt (sprites on raised
+--                 floors, clipped by height edges). Per case it loads camera,
+--                 sprite table (7 fields with the floor height), wall z-buffer
+--                 and clip lists into 1-clock RAMs, serves texels from
+--                 build/art.bin (random grants, data 4 clocks later) and makes
+--                 the pixel port ready READY_PCT percent of clocks. Checks:
+--                 - base image plus pixel writes equals the expected image;
+--                   every write has the right buffer bit
+--                 - pixels_o equals the write count (saturated)
+--                 - span list equals the golden one; the previous frame's
+--                   span count stays readable until done
+--                 - one done_o per frame, busy_o low afterwards
+--                 Prints the clocks per case.
 --                 RUN_VARIANTS: READY_PCT=60 READY_PCT=100
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,

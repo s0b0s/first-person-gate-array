@@ -9,30 +9,23 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    I2S output to the Pmod I2S2 DAC (Cirrus CS4344,
---                 single-speed mode, MCLK / LRCK = 256). Every I2S clock
---                 is a bit of one free-running 11-bit counter cnt on the
---                 100 MHz system clock, so they keep exact ratios and
---                 need no extra clock domain:
+-- Description:    I2S output to the Pmod I2S2 DAC (CS4344, single-speed,
+--                 MCLK / LRCK = 256). All I2S clocks are bits of one
+--                 free-running 11-bit counter cnt, so no extra clock
+--                 domain is needed:
 --                   MCLK = cnt(2)   100 MHz / 8    = 12.5 MHz
 --                   SCLK = cnt(4)   100 MHz / 32   = 3.125 MHz (64 x LRCK)
 --                   LRCK = cnt(10)  100 MHz / 2048 = 48.828 kHz, '0' = left
---                 Each channel is 32 SCLK slots (cnt(9 downto 5)). A slot
---                 starts when cnt(4 downto 0) = 0, which is an SCLK
---                 falling edge, so SDIN and LRCK change on falling edges
---                 and the DAC samples on rising edges. I2S puts the MSB
---                 one SCLK after the LRCK edge: slot 0 is a zero, slots
---                 1..16 carry bits 15..0, slots 17..31 are zeros (16-bit
---                 samples, left-justified in the 24-bit word the DAC
---                 reads).
---                 left_i and right_i are taken together at the end of
---                 each frame (cnt = 2047); sample_req_o pulses on the next
---                 clock, leaving 2048 clocks to present the next pair.
---                 All four outputs are registered from the same counter
---                 value, so they leave the FPGA aligned (one clock after
---                 the counter).
---                 Clock domain: clk_i (system, 100 MHz). Throughput: one
---                 stereo sample per 2048 clocks.
+--                 Each channel has 32 SCLK slots (cnt(9 downto 5)); a slot
+--                 starts on an SCLK falling edge, so the DAC samples on
+--                 rising edges. Slot 0 is zero (I2S one-bit delay), slots
+--                 1..16 carry bits 15..0, slots 17..31 are zero.
+--                 left_i and right_i are taken at cnt = 2047;
+--                 sample_req_o pulses the next clock, leaving 2048 clocks
+--                 for the next pair. All four outputs are IOB registers
+--                 fed from the same count, so they stay aligned.
+--                 Clock domain: clk_i (100 MHz). One stereo sample per
+--                 2048 clocks.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
 --

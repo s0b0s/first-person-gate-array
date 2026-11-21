@@ -9,54 +9,42 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Draws the frame's sprites (enemies, items, fireballs) over
---                 the walls, matching tools/model/sprites.py bit for bit.
---                 Pass 1: for every sprite table entry, depth =
---                   (rx * cos + ry * sin) >> 16 with rx, ry = (x << 6) - cam
---                   (Q.16 tiles); entries with depth < 1/8 tile are culled.
---                 Pass 2: repeatedly pick the farthest remaining entry
---                   (strictly larger depth wins, so equal depths keep table
---                   order: the model's stable sort), project it in full:
+-- Description:    Draws the frame's sprites over the walls, bit-exact with
+--                 tools/model/sprites.py.
+--                 Pass 1: depth = (rx * cos + ry * sin) >> 16 per table
+--                   entry, rx, ry = (x << 6) - cam (Q.16 tiles); depth
+--                   below 1/8 tile is culled.
+--                 Pass 2: take the farthest remaining entry (strictly
+--                   larger wins, so ties keep table order like the model's
+--                   stable sort) and project it:
 --                     lateral = (-rx * sin + ry * cos) >> 16
 --                     lh      = min(N_LH / depth, LH_MAX)       (divider)
 --                     w_f, h_f = (lh * width) >> 6, (lh * height) >> 6
 --                     left    = 40960 + ((lateral * lh) >> 16) - (w_f >> 1)
 --                     bottom  = 30720 + ((lh * (eye - floor)) >> 6),
---                               top = bottom - h_f (floor: the sprite's floor
---                               height; eye - floor may be negative)
+--                               top = bottom - h_f (eye - floor may be < 0)
 --                     x0, x1, y0, y1 by the pixel-center rule, clipped
 --                     step    = (depth * M_TS) >> 16  texels per pixel, Q.16
---                   then draw it at once, column by column: a column is
---                   drawn only where z = min(depth >> 6, 65535) is below the
---                   wall z; u starts at ((x0 * 256 + 128 - left) * step) >> 8
---                   and v at ((y0 * 256 + 128 - top) * step) >> 8 and both
---                   advance by step (exact: ((d + 256) * s) >> 8 equals
---                   ((d * s) >> 8) + s), clamped to the frame size.
---                   Clip windows: before a column is drawn its clip
---                   list (render_top: count and entries, nearest first) is
---                   scanned, one entry per clock, for the last entry with
---                   entry z <= sprite z; only rows inside that window are
---                   read and written (rows 0..239 without entries). Rows
---                   above the window are skipped one per clock while v
---                   still advances, rows below it end the column.
---                 Texels are read from the art in SRAM (column-major at
---                 ART_BASE + frame offset + u * height + v) through an
---                 arbiter master port, several reads in flight. Each read
---                 carries its pixel address and light level through a
---                 16-word FIFO; returned texels other than 255 go through
---                 the light table into a 16-word output FIFO feeding the
---                 pixel port. A read is issued only while
---                 reads in flight + pipeline + output FIFO < 12, so neither
---                 FIFO can overflow under back-pressure.
---                 Spans (actor index, x0, x1, z) of every target sprite that
---                 survives culling are written in drawing order into the
---                 bank not being read; the banks swap when the frame ends,
---                 so the game always reads the last finished frame.
---                 Multiplies share one signed 32 x 25 multiplier with three
---                 pipeline registers (4 clocks per product); one divider.
+--                   Then draw it column by column where z = min(depth >> 6,
+--                   65535) is below the wall z. u starts at
+--                   ((x0 * 256 + 128 - left) * step) >> 8, v likewise from
+--                   y0 and top; both advance by step (exact) and clamp to
+--                   the frame size. Each column's clip list (nearest
+--                   first) is scanned one entry per clock for the last
+--                   entry with z <= sprite z; only rows in that window are
+--                   drawn (rows above are skipped while v advances).
+--                 Texels come from column-major art in SRAM (ART_BASE +
+--                 frame offset + u * height + v) with several reads in
+--                 flight. Pixel address and light ride a 16-word FIFO;
+--                 texels other than 255 go through the light table into a
+--                 16-word output FIFO. Reads issue only while in flight +
+--                 pipeline + output FIFO < 12, so no FIFO overflows.
+--                 Spans (actor index, x0, x1, z) of target sprites go into
+--                 the bank the game is not reading; banks swap at frame end.
+--                 One shared signed 32 x 25 multiplier (4 clocks per
+--                 product) and one divider.
 --                 Clock domain: clk_i (system). About 100 clocks per sprite
---                 plus about 4 clocks per drawn texel (2 per SRAM read and
---                 2 per pixel write share the SRAM).
+--                 plus about 4 per drawn texel (SRAM read and pixel write).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, render_pkg,
 --                 render_types_pkg, game_pkg, game_tables_pkg, hw_pkg,
@@ -296,8 +284,8 @@ architecture arch of sprite_engine is
 
 	type span_ram_type is array (0 to 63) of std_logic_vector(SPAN_BITS - 1 downto 0);
 	signal span_ram: span_ram_type := (others => (others => '0'));
-	-- 64 x 48 bits is a whole RAMB36 (wider than 36 bits); about 50 LUTs
-	-- of distributed RAM instead keeps the block within its 1-BRAM budget
+	-- 64 x 48 bits would take a whole RAMB36; about 50 LUTs of distributed
+	-- RAM keep the block within its 1-BRAM budget
 	attribute ram_style: string;
 	attribute ram_style of span_ram: signal is "distributed";
 begin
@@ -342,8 +330,7 @@ begin
 	frame_no <= to_integer(unsigned(spr_data_i(SPR_FRAME_HI downto SPR_FRAME_LO)))
 		when (unsigned(spr_data_i(SPR_FRAME_HI downto SPR_FRAME_LO)) <= 60) else 0;
 	sel_depth <= depth(to_integer(sel));
-	-- Light: tile light minus min(15, depth >> 18); depth >= 2^22 means
-	-- depth >> 18 >= 16, so the distance term is 15
+	-- Light: tile light minus min(15, depth >> 18) (15 once depth >= 2^22)
 	light <= signed(resize(unsigned(spr_data_i(SPR_LIGHT_HI downto SPR_LIGHT_LO)), 6)) - 15
 		when (sel_depth(25 downto 22) /= 0) else
 		signed(resize(unsigned(spr_data_i(SPR_LIGHT_HI downto SPR_LIGHT_LO)), 6)) -
@@ -372,10 +359,10 @@ begin
 	issue <= '1' when ((sprite_state = SPRITE_ROW) and (in_win = '1') and (credit_ok = '1') and (m_gnt_i = '1')) else '0';
 
 	------------------------------------------------------------------
-	-- State machine. A multiply loads mul_a and mul_b, sets mcnt and
-	-- mul_ret and waits in SPRITE_MULW; the product is in m3 when
-	-- mul_ret starts. A column ends by stepping x (and u) or, after the
-	-- last column, by going back to the scan (SPRITE_SEL).
+	-- State machine. A multiply loads mul_a, mul_b, mcnt and mul_ret and
+	-- waits in SPRITE_MULW; the product is in m3 when mul_ret starts.
+	-- A column ends by stepping x (and u), or after the last column by
+	-- returning to SPRITE_SEL.
 	------------------------------------------------------------------
 	process(clk_i, rst_i)
 	begin
@@ -636,9 +623,8 @@ begin
 					sprite_state <= SPRITE_P2_EDGE;
 
 				when SPRITE_P2_EDGE =>
-					-- Pixel-center rule: the first pixel whose center (p * 256 + 128)
-					-- is at or past edge e is ceil((e - 128) / 256) = (e + 127) >> 8,
-					-- the last one ((e + 127) >> 8) - 1 = (e - 129) >> 8
+					-- Pixel-center rule: first pixel with center (p * 256 + 128) >= e
+					-- is (e + 127) >> 8; the last one before e is (e - 129) >> 8
 					ex0 <= shift_right(left_f + 127, 8);
 					ex1 <= shift_right(left_f + w_f - 129, 8);
 					ey0 <= shift_right(top_f + 127, 8);
@@ -646,8 +632,7 @@ begin
 					sprite_state <= SPRITE_P2_CLIP;
 
 				when SPRITE_P2_CLIP =>
-					-- Clipped x0 > x1 written on the unclipped edges, so the
-					-- compares run in parallel with the clamps
+					-- Off-screen test on the unclipped edges, in parallel with the clamps
 					if ((ex0 > ex1) or (ex0 > SCREEN_W - 1) or (ex1 < 0) or
 						(ey0 > ey1) or (ey0 > SCREEN_H - 1) or (ey1 < 0)) then
 						-- Off screen: next sprite
@@ -764,8 +749,8 @@ begin
 					end if;
 
 				when SPRITE_ROW =>
-					-- A row inside the window advances when its read is issued, a row
-					-- above the window at once (no read; v still steps)
+					-- Rows in the window advance when their read issues; rows above it
+					-- advance at once (no read, v still steps)
 					if ((issue = '1') or (in_win = '0')) then
 						v <= v + resize(step, 50);
 						paddr <= paddr + 320;
@@ -805,8 +790,7 @@ begin
 					null;
 			end case;
 
-			-- Counters that run beside the state machine (these win over the
-			-- clears in SPRITE_IDLE, as they are assigned last)
+			-- Side counters; assigned last, so they win over the SPRITE_IDLE clears
 			if (span_we = '1') then
 				span_n <= span_n + 1;
 			end if;

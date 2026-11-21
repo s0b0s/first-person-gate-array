@@ -9,16 +9,13 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for text_painter against the
---                 golden image from tools/bringup/make_page.py
---                 (sim/golden/page_expected.txt, value word w set to
---                 (0x9E3779B9 * (w + 1)) mod 2^32 on both sides).
---                 The pixel port's ready is random (about 60% high) to
---                 exercise back-pressure. Checks: every one of the 76,800
---                 pixel addresses is written exactly once, to the
---                 requested buffer, with the golden palette index; done
---                 pulses once at the end; a second page into the other
---                 buffer works too.
+-- Description:    Self-checking testbench for text_painter against
+--                 sim/golden/page_expected.txt (tools/bringup/make_page.py;
+--                 value word w = (0x9E3779B9 * (w + 1)) mod 2^32 on both
+--                 sides). Pixel ready is random (about 60%). Checks: all
+--                 76,800 pixels written once, to the requested buffer, with
+--                 the golden index; one done pulse; a second page into the
+--                 other buffer works too.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, std.textio, tb_pkg, text_painter, page_rom,

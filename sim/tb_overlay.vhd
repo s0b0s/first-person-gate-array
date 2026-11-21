@@ -9,26 +9,19 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for overlay against the golden
---                 model (tools/model/overlay.py). For each case of
+-- Description:    Self-checking testbench for overlay against
+--                 tools/model/overlay.py. For each case of
 --                 sim/golden/overlay_cases.txt (title, briefing, playing,
---                 message, automap, paused, dead, debug, keys, three
---                 key-marker cases, score, ending) it loads the tile map and seen bits into
---                 behavioral RAMs (1-clock read), packs the HUD word, key
---                 positions and debug counters, fills a framebuffer with
---                 the base image B, runs the overlay once, applies every
---                 pixel write, and compares the whole framebuffer with the
---                 expected image E. (B is a variable of the stimulus
---                 process; the write process keeps the pixels written in
---                 the signal img, -1 = not written, cleared through
---                 clear_store before each case; a pixel not written shows
---                 B.)
---                 The weapon art comes from a behavioral SRAM master port
---                 that answers from build/art.bin at ART_BASE, with random
---                 grant delays and a fixed read latency; the pixel port is
---                 ready a random READY_PCT percent of the clocks.
---                 Checks per case: image equal, buffer bit of every write,
---                 exactly one done_o. Prints the clocks per case.
+--                 message, automap, paused, dead, debug, keys, score, ending)
+--                 it loads the tile map and seen bits into 1-clock RAMs, packs
+--                 the HUD, key and debug inputs, runs the overlay over base
+--                 image B and compares the result with image E (written pixels
+--                 in signal img, -1 = not written, cleared through
+--                 clear_store). Weapon art comes from a behavioral SRAM port
+--                 serving build/art.bin at ART_BASE (random grants, fixed
+--                 latency); the pixel port is ready READY_PCT percent of clocks.
+--                 Checks per case: image, buffer bit of every write, one
+--                 done_o. Prints the clocks per case.
 --                 Run from build/sim_overlay (paths are relative to it).
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,

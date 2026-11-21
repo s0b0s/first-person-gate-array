@@ -10,16 +10,13 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    Push-button debouncer: 3-stage synchronizer, then a
---                 saturating
---                 counter with hysteresis that counts up while the input
---                 is '1' and down while it is '0'; the output changes only
---                 when the counter reaches all ones or all zeros. A
---                 prescaler advances the counter once every TICK_CYCLES
---                 clocks, so the input must hold for about
---                 TICK_CYCLES x 2^CNT_BITS clocks (default 100 x 2^16 at
---                 100 MHz = 65 ms, so about 7 presses per second is the
---                 fastest it follows). rise_o pulses for one cycle on each
---                 debounced press.
+--                 saturating up/down counter (up while the input is '1')
+--                 whose output changes only at all ones or all zeros. A
+--                 prescaler steps it once every TICK_CYCLES clocks, so
+--                 the input must hold about TICK_CYCLES x 2^CNT_BITS
+--                 clocks (65 ms at the defaults and 100 MHz, about 7
+--                 presses per second at most). rise_o pulses one cycle
+--                 per debounced press.
 --                 Clock domain: clk_i.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,

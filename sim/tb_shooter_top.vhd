@@ -9,42 +9,29 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    System testbench for the full game: from the 12 MHz
---                 oscillator (real MMCM model) through the boot art copy,
---                 a level load, the game core, the frame renderer, the
---                 SRAM, the audio mixer and I2S, with the board models
---                 (SRAM, SPI flash holding build/gamedata.bin at 0x220000,
---                 PS/2 keyboard and mouse, VGA monitor, I2S receiver).
---                 Input: the scripted session of tools/model/
---                 system_session.py (sim/golden/system_trace.txt; title,
---                 briefing, level 1, walking, turning, two shots, the
---                 automap). Its snapshots are preloaded into the SRAM
---                 replay area and the design starts in replay play mode
---                 (generic REPLAY_INIT = 2), the same path the board uses
---                 for a recorded session.
+-- Description:    System testbench for the full game from the 12 MHz
+--                 oscillator (real MMCM model): boot art copy, level load,
+--                 game core, renderer, SRAM, audio mixer and I2S, with SRAM,
+--                 SPI flash (build/gamedata.bin at 0x220000), PS/2, VGA and
+--                 I2S models.
+--                 Input: the session of tools/model/system_session.py
+--                 (sim/golden/system_trace.txt), preloaded into the SRAM
+--                 replay area and played back (REPLAY_INIT = 2), as the board
+--                 does for a recorded session.
 --                 Checks:
---                 - the art copy and the level 1 load succeed (status)
---                 - every frame k: the game-state CRC at render start, the
---                   number of sound commands and the screen tint equal
---                   the model's; the CRC log the replay unit writes to
---                   SRAM (CRC_BASE + 4 k) equals them too
---                 - every frame k, once swapped to the front: the whole
---                   front buffer equals the model's frame, pixel for pixel
---                 - audio reaches the I2S pins (non-zero samples once the
---                   level's music plays) with no ring underflows
+--                 - art copy and level 1 load succeed (status)
+--                 - per frame k: CRC at render start, sound command count and
+--                   tint equal the model's, as does the replay CRC log
+--                   (CRC_BASE + 4 k); once swapped, the front buffer equals
+--                   the model's frame
+--                 - non-zero I2S audio once music plays, no ring underflows
 --                 - no SRAM, flash or VGA timing errors
---                 Every run prints the first few events of the frame chain
---                 (frame start, snapshot, replay output, render start and
---                 done, frame done, level load) for diagnosis, and stops at
---                 the first frame that never swaps.
---                 About 0.3 s of simulated time (64 ms art copy, then one
---                 16.7 ms frame each). BOOT_ART = false skips the art copy
---                 (the testbench preloads build/art.bin into the SRAM);
---                 CHECK_FRAMES sets how many frames of the session are checked.
---                 The regression runs two variants side by side, which
---                 together check everything one long run would: the boot
---                 path (art copy from flash, level 1 load, first 3 frames)
---                 and the whole 12-frame session with the art preloaded.
+--                 Prints the first frame chain events for diagnosis; stops at
+--                 the first frame that never swaps. About 0.3 s simulated
+--                 (64 ms art copy, then 16.7 ms per frame). BOOT_ART = false
+--                 preloads build/art.bin instead of the copy; CHECK_FRAMES
+--                 sets the frames checked. The two variants together cover
+--                 the boot path and the whole session.
 --                 RUN_VARIANTS: BOOT_ART=true,CHECK_FRAMES=3 BOOT_ART=false,CHECK_FRAMES=12
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,

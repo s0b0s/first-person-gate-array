@@ -9,16 +9,14 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    UART transmitter, 8N1, LSB first. A byte is taken on a
---                 clock where valid_i and ready_o are both '1'; it is
---                 loaded into a 10-bit frame register (stop, data, start)
---                 whose bit 0 drives the line directly, so tx_o comes
---                 straight from a flip-flop. The register shifts right
---                 (filling with '1', the idle level) once per bit period.
---                 ready_o is high again in the last clock of the stop
---                 bit, so a waiting byte follows with no idle gap.
+-- Description:    UART transmitter, 8N1, LSB first. A byte is taken when
+--                 valid_i and ready_o are both '1' and loaded into a
+--                 10-bit frame register (stop, data, start) whose bit 0
+--                 drives tx_o directly; it shifts right, filling with '1',
+--                 once per bit period. ready_o rises in the last clock of
+--                 the stop bit, so back-to-back bytes have no idle gap.
 --                 Clock domain: clk_i. Throughput: one byte per 10 bit
---                 periods. tx_o goes low one clock after the byte is taken.
+--                 periods. tx_o falls one clock after the byte is taken.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
 --

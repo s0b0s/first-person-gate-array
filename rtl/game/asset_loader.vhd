@@ -9,42 +9,29 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Loader jobs from the game data in flash
---                 (format in tools/flash_image/make_gamedata.py):
+-- Description:    Loader jobs from the flash game data:
 --                   art job    item 8 (sprite art, 197,632 bytes) copied
 --                              byte by byte into SRAM at ART_BASE
 --                   level job  item 1..3: 4096 tile words into the tile
---                              map (port B), 32 actor records into the
---                              actor table (slots past the level's count
---                              are written as 0), and the start pose
---                 Game data layout (tools/flash_image/make_gamedata.py),
---                 little endian, at FLASH_DATA_BASE:
---                   0..7 "FPGADATA", 8..9 version, 10..11 entry count N,
---                   then N entries of 12 bytes: u32 id, u32 offset (from
---                   the image start), u32 length
+--                              map (port B), 32 actor records (unused
+--                              slots zeroed) and the start pose
+--                 Game data at FLASH_DATA_BASE (make_gamedata.py), little
+--                 endian: 0..7 "FPGADATA", 8..9 version, 10..11 entry
+--                 count N, then N 12-byte entries (u32 id, u32 offset from
+--                 image start, u32 length).
 --                 Level item (tools/model/level.py): 12,288 tile bytes (3
---                 per tile, index y * 64 + x), start x u32, start y u32
---                 (Q6.16), angle u16, actor count u16, count x 8-byte
---                 actor records, level number u8.
---                 Each job makes three flash_reader requests:
---                   LD_HDR_REQ / LD_HDR_DATA    12 header bytes, check
---                                               magic
---                   LD_DIR_REQ / LD_DIR_DATA    12 N directory bytes, find
---                                               the id, keep offset, length
---                   LD_ITEM_REQ / LD_ITEM_DATA  the item itself
---                 then LD_CLEAR (level: zero the unused actor slots) or
---                 LD_FLUSH (art: wait for the last SRAM write).
---                 Art bytes are written through an SRAM arbiter master
---                 port; while a byte waits for its grant data_ready_o is
---                 low, so the flash reader stops SCK (back-pressure)
---                 instead of losing data.
---                 Bad magic, N = 0 or a missing id set error_o (held until
---                 the next start) and end without done_o.
---                 Coding: one clocked process for the state machine and
---                 its registers.
---                 Clock domain: clk_i (system). Time is set by the flash
---                 (25 MHz SCK, 3.1 MB/s): about 4 ms for a level, 64 ms
---                 for the art.
+--                 per tile, index y * 64 + x), start x, y u32 (Q6.16),
+--                 angle u16, actor count u16, 8-byte actor records, level
+--                 number u8.
+--                 Each job reads header (check magic), directory (find id)
+--                 and item, then LD_CLEAR (zero unused actor slots) or
+--                 LD_FLUSH (wait for the last art SRAM write). While an
+--                 art byte waits for its SRAM grant, data_ready_o is low
+--                 and the flash reader stops SCK. Bad magic, N = 0 or a
+--                 missing id set error_o (held until the next start), no
+--                 done_o.
+--                 Clock domain: clk_i (system). Flash-bound (3.1 MB/s):
+--                 about 4 ms per level, 64 ms for the art.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, hw_pkg,
 --                 render_types_pkg
@@ -154,9 +141,8 @@ architecture arch of asset_loader is
 	signal ready: std_logic;
 	signal take: std_logic; -- A flash byte is accepted this clock
 begin
-	-- Art bytes are taken only when no earlier byte is still waiting for
-	-- the SRAM (one byte of buffering is plenty: the flash delivers a byte
-	-- every 32 clocks, an SRAM write takes 2 to 4)
+	-- Take an art byte only when none waits for the SRAM (one byte of buffer is
+	-- enough: a flash byte every 32 clocks, an SRAM write takes 2 to 4)
 	ready <= not pend;
 	take <= data_valid_i and ready;
 
@@ -351,15 +337,14 @@ begin
 								phase <= "00";
 							end if;
 						elsif (idx < ACTORS_START) then
-							-- Start pose (10 bytes) then the actor count (2 bytes,
-							-- not needed: the item length and data_last end the
-							-- records); bytes shift in from the top
+							-- Start pose (10 bytes), then the actor count (unused:
+							-- data_last ends the records); bytes shift in from the top
 							if (idx < COUNT_START) then
 								pose_n := data_i & pose(79 downto 8);
 							end if;
 						elsif (slot < 32) then
-							-- Actor records, 8 bytes little endian; the final
-							-- level-number byte never completes a record
+							-- Actor records, 8 bytes little endian (the final level
+							-- byte never completes one)
 							rec <= data_i & rec(63 downto 8);
 							rec_byte <= rec_byte + 1;
 							if (rec_byte = 7) then

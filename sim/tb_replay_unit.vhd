@@ -10,23 +10,17 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for replay_unit with a
---                 behavioral SRAM master port (grants after a random 0..5
---                 clock delay, read data 4 clocks after the grant, in
---                 order). Frames are 400 clocks apart; the game-state CRC
---                 comes 150 clocks after each frame tick.
---                 1. Pass-through: every snapshot comes out unchanged one
---                    clock later.
---                 2. Record 25 frames: pass-through output, and the SRAM
---                    holds each snapshot at REPLAY_BASE + 5 k and each CRC
---                    at 0x75800 + 4 k (little endian); frames_o = 25.
---                 3. Play: the input is ignored; frame k's recorded
---                    snapshot comes out one clock after the tick, all 25,
---                    and the CRCs are written again.
---                 4. Play started on the same clock as a tick: frame 0 is
---                    late (prefetch still running) but arrives within 60
---                    clocks and the rest follow in order.
---                 The SRAM contents are the signal sram_mem, written only
---                 by the port model and read by the checks.
+--                 behavioral SRAM port (grant after 0..5 clocks, read data 4
+--                 clocks later, in order). Frames are 400 clocks apart; the
+--                 CRC comes 150 clocks after each tick.
+--                 1. Pass-through: snapshot out unchanged one clock later.
+--                 2. Record 25 frames: snapshots at REPLAY_BASE + 5 k, CRCs at
+--                    0x75800 + 4 k (little endian); frames_o = 25.
+--                 3. Play: input ignored; recorded snapshot k out one clock
+--                    after the tick; CRCs written again.
+--                 4. Play started on a tick: frame 0 late (prefetch) but within
+--                    60 clocks, the rest in order.
+--                 SRAM contents live in signal sram_mem (port model writes).
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, tb_pkg, replay_unit, hw_pkg, game_pkg

@@ -10,28 +10,20 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for sram_arbiter +
---                 sram_controller against sram_model (datasheet timing
---                 checks). Board wiring adds 3.5 ns from the FPGA's output
---                 registers to the SRAM pins (clock-to-out plus trace).
---                 Clocks: clk_sys 100 MHz and clk_sram_rd 1.04 ns later.
---                 Tests:
---                 1. Directed: write then read back, read-to-write and
---                    write-to-read turnarounds, back-to-back reads.
---                 2. Random traffic from all four masters at once over a
---                    small address window (many address collisions); the
---                    response checker keeps a shadow memory, updated at
---                    grant time, that predicts every read, and per-master
---                    queues that check the returned order.
+--                 sram_controller against sram_model (datasheet timing).
+--                 Board wiring adds 3.5 ns (clock-to-out plus trace);
+--                 clk_sram_rd lags the 100 MHz clk_sys by 1.04 ns. Tests:
+--                 1. Directed: write and read back, read-write turnarounds,
+--                    back-to-back reads.
+--                 2. Random traffic from all four masters in a small window
+--                    (many collisions); a shadow memory updated at grant
+--                    predicts every read, per-master queues check the order.
 --                 3. Display deadline: 320-byte line reads from master 0
---                    finish within 320 x CYCLES + 60 cycles under full
---                    write traffic (the deadline is 6,400 cycles).
---                 Throughout: the SRAM model's timing checks, and no
---                 cycle where the FPGA and the SRAM drive the bus at the
---                 same time.
---                 Each checking process counts its own checks; the two
---                 monitors and the response checker copy their counts to
---                 their own signals, and the stimulus process adds them at
---                 the end.
+--                    finish within 320 x CYCLES + 60 cycles under full write
+--                    traffic (real deadline 6,400 cycles).
+--                 Throughout: model timing checks and no bus contention.
+--                 Monitors and the response checker hand their counts to the
+--                 stimulus process on their own signals.
 --                 RUN_VARIANTS: CYCLES=2 CYCLES=3
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -339,12 +331,10 @@ begin
 	end process;
 
 	------------------------------------------------------------------
-	-- Response checker: a shadow memory, updated when a write is
-	-- granted, predicts every read; each master has a queue (a ring
-	-- buffer with head and tail) of the bytes its granted reads must
-	-- return, in order. The checker sees each grant on the same clock
-	-- edge as the master's request procedure; the arbiter grants one
-	-- master per clock.
+	-- Response checker: a shadow memory, updated at write grants, predicts
+	-- every read; each master has a ring-buffer queue of the bytes its
+	-- granted reads must return. It sees each grant on the same edge as
+	-- the request procedure; the arbiter grants one master per clock.
 	------------------------------------------------------------------
 	process
 		type shadow_t is array (0 to 2 ** 19 - 1) of std_logic_vector(7 downto 0);

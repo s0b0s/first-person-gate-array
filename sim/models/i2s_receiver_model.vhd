@@ -9,19 +9,14 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Receiving side of an I2S DAC like the Pmod I2S2's
---                 CS4344, used to check i2s_tx:
---                 - samples SDIN and LRCK on SCLK rising edges; an LRCK
---                   change marks a new channel ('0' left, '1' right);
---                   the first SCLK after the change is the I2S delay
---                   slot, the next 16 carry the sample MSB first, and the
---                   rest must be '0' (16-bit samples, zero padded)
---                 - each channel must last exactly 32 SCLK periods, each
---                   frame exactly 256 MCLK periods (single-speed mode)
---                 - after a whole frame (left then right) it updates
---                   left_o and right_o and increments count_o
---                 Problems are reported (severity error) and counted in
---                 errors_o. The first, partial frame is ignored.
+-- Description:    I2S DAC receiver (like the Pmod I2S2's CS4344) that checks
+--                 i2s_tx. Samples SDIN and LRCK on rising SCLK; an LRCK
+--                 change starts a channel ('0' left); slot 0 is the I2S
+--                 delay, slots 1-16 the sample MSB first, the rest '0'.
+--                 Each channel must be 32 SCLK, each frame 256 MCLK.
+--                 After each left+right frame it updates left_o, right_o
+--                 and count_o. Errors are reported and counted in
+--                 errors_o; the first, partial frame is ignored.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std
 --
@@ -79,9 +74,8 @@ begin
 	begin
 		wait until rising_edge(sclk_i);
 		if ((lrck_i /= '0') and (lrck_i /= '1')) then
-			-- Lines not driven (for example high-Z before the PWR_SENSE gate
-			-- opens): forget the frame; decoding restarts at the next real
-			-- 1 to 0 LRCK edge after the lines are driven
+			-- Lines not driven (high-Z before the PWR_SENSE gate opens): drop
+			-- the frame and restart at the next real 1 to 0 LRCK edge
 			lrck_old := 'X';
 			started := false;
 			have_left := false;

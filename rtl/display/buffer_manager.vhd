@@ -9,27 +9,18 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Double buffering with a late frame start. The display
+-- Description:    Double buffering with a late frame start: the display
 --                 shows front_o while the renderer draws back_o.
---                 States:
---                   BUF_WAIT_START  waiting for the display to reach
---                                   start_line_i; then pulse
---                                   frame_start_o
---                   BUF_RENDERING   renderer busy; frame_done_i ->
---                                   BUF_DONE
---                   BUF_DONE        finished; the next vblank swaps the
---                                   buffers and goes back to
---                                   BUF_WAIT_START
---                 A frame that is not done by vblank keeps the old front
---                 buffer for one more refresh (no tearing) and counts a
---                 late frame; it swaps at the first vblank after it
---                 finishes. A frame_done_i in the same cycle as vblank_i
---                 counts as done in time.
---                 The display line clock is the line fetcher's
---                 line_start_i / line_i (line r is fetched while line
---                 r - 1 is shown, at scanline 2(r - 1)). With the default
---                 start line 115 the frame starts at scanline 228, about
---                 8 ms before the swap at scanline 480.
+--                   BUF_WAIT_START  pulse frame_start_o at start_line_i
+--                   BUF_RENDERING   until frame_done_i
+--                   BUF_DONE        swap at the next vblank
+--                 A frame not done by vblank keeps the old front buffer
+--                 one more refresh (no tearing), counts as late, and
+--                 swaps at the next vblank. frame_done_i in the vblank
+--                 cycle counts as in time.
+--                 Lines come from the line fetcher (line r is fetched at
+--                 scanline 2(r - 1)): start line 115 = scanline 228,
+--                 about 8 ms before the swap at scanline 480.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std

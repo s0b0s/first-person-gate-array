@@ -10,24 +10,18 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    PS/2 host for one device (keyboard or mouse):
---                 - both raw lines go through 3-stage synchronizers that
---                   power up '1' (the bus idles high, so no false edge
---                   after configuration)
---                 - glitch filter: the lines are sampled every
---                   SAMPLE_CYCLES clocks (1 MHz at 100 MHz) and a line
---                   takes a new level only after 4 equal samples in a
---                   row. A clean edge is delayed 4 to 5 us, far less
---                   than the 30 us or more of a half bit, and both lines
---                   are delayed alike, so data is still stable at each
---                   filtered clock edge
---                 - falling edges of the filtered clock drive ps2_rx and
+--                 - both lines pass 3-stage synchronizers that power up
+--                   '1' (idle bus, no false edge after configuration)
+--                 - glitch filter: sampled every SAMPLE_CYCLES (1 MHz),
+--                   a new level needs 4 equal samples in a row; both
+--                   lines are delayed alike by 4 to 5 us, far below a
+--                   30 us half bit
+--                 - filtered clock falling edges drive ps2_rx and
 --                   ps2_tx; the receiver is off while transmitting
---                 Outputs are pull requests ('1' = drive the line low);
---                 the top level turns them into open drain ('0' or 'Z',
---                 never '1'). en_i = '0' (PWR_SENSE gate off) clears the
---                 receiver and transmitter and releases both lines.
---                 Clock domain: clk_i (system). Line inputs are
---                 asynchronous.
+--                 Outputs are pull requests ('1' = drive low); the top
+--                 level makes them open drain. en_i = '0' (PWR_SENSE
+--                 gate) clears rx and tx and releases both lines.
+--                 Clock domain: clk_i (system). Line inputs asynchronous.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 synchronizer, ps2_rx, ps2_tx

@@ -55,8 +55,8 @@ synth_design -top $top -part $part
 write_checkpoint -force [file join $out ${top}_synth.dcp]
 report_utilization -file [file join $out ${top}_utilization_synth.rpt]
 
-# Timing-driven directives: the full game fills 65 % of the LUTs and several blocks run
-# within tens of ps of 10 ns, which the default strategy missed by up to 0.06 ns
+# Timing-driven directives: at 65 % LUT use several paths are within tens of ps of 10 ns;
+# the default strategy missed by up to 0.06 ns
 opt_design
 place_design -directive ExtraTimingOpt
 phys_opt_design -directive AggressiveExplore

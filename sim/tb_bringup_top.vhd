@@ -9,23 +9,18 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    System testbench for the bring-up design, from the
---                 12 MHz oscillator (real MMCM model) to every board model:
---                 SRAM, SPI flash (game-data header "FPGADATA" at
---                 0x220000), PS/2 keyboard and mouse with 10 kohm pull-ups,
---                 VGA monitor, I2S receiver, and a PC on the UART.
---                 Checks, about 40 ms of operation:
---                 - PWR_SENSE gate: VGA and I2S pins high impedance and
---                   PS/2 lines released before pcb_on (10 ms), driven after
---                 - UART: ping; build id, flash JEDEC id and the first 8
---                   flash data bytes through register reads
---                 - a keyboard make code reaches the key register and the
---                   keyboard history, a break code clears it
---                 - SRAM self-test runs without errors; frames swap with no
---                   late frames and no line fetch overruns
---                 - the front framebuffer holds the status page: the rows
---                   with no live values match the golden image exactly
---                 - VGA timing (monitor) and I2S format clean, tone present
+-- Description:    System testbench for the bring-up design: 12 MHz
+--                 oscillator (real MMCM model), SRAM, SPI flash ("FPGADATA"
+--                 at 0x220000), PS/2 keyboard and mouse (10 kohm pull-ups),
+--                 VGA monitor, I2S receiver and a PC on the UART.
+--                 Checks over about 40 ms:
+--                 - VGA, I2S and PS/2 released before pcb_on (10 ms)
+--                 - UART ping; build id, JEDEC id, first 8 flash data bytes
+--                 - a make code sets the key register and history, a
+--                   break code clears it
+--                 - SRAM self-test clean; no late frames or fetch overruns
+--                 - status page rows without live values match the golden
+--                 - VGA timing and I2S format clean, tone present
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 std.textio, tb_pkg, bringup_top and everything under it,
@@ -395,8 +390,7 @@ begin
 			rx_parity_errors_o => ms_rx_errors
 		);
 
-	-- The monitor samples with its own 25 MHz clock; the design's pixel
-	-- clock comes from the MMCM, so take it from inside for alignment
+	-- The monitor samples on the design's MMCM pixel clock, taken from inside
 	clk_pix_mon <= << signal .tb_bringup_top.dut.clk_pix: std_logic >>;
 
 	monitor: vga_monitor
@@ -533,8 +527,7 @@ begin
 		read_reg(16, word);
 		check(word = x"00000000", "no keyboard errors " & to_hex(word), checks, errors);
 
-		-- Let a few more frames go by, then check the status page and the
-		-- counters
+		-- A few more frames, then check the status page and counters
 		wait until (mon_frames >= 2);
 		wait until (mon_v = 100);
 		if (front = '1') then

@@ -9,21 +9,17 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Watches the VGA pins the way a monitor would and checks
---                 640x480 at 60 Hz timing independently of the design:
---                 it locks onto the falling edges of the syncs (hsync
---                 falls at h = 656, vsync falls at the start of line 490)
---                 and from then on checks, on every pixel clock, that
---                 hsync is low exactly for h = 656..751, vsync exactly for
---                 lines 490..491, and color is zero outside 640x480.
---                 It outputs the screen position of the pixel on the pins
---                 (hpos_o, vpos_o, visible_o) so a testbench can check
---                 pixel values, and counts whole frames.
---                 If DUMP_FRAME > 0, frame number DUMP_FRAME (counting
---                 from 1 after lock) is written to DUMP_FILE as a binary
---                 PPM (640x480, colors scaled from OUT_BITS to 8 bits).
---                 Sampling is on the falling pixel clock edge, half a
---                 cycle after the design's output registers change.
+-- Description:    Checks 640x480 at 60 Hz timing on the VGA pins
+--                 independently of the design: locks onto the sync falling
+--                 edges (hsync at h = 656, vsync at line 490), then checks
+--                 hsync low exactly for h = 656..751, vsync for lines
+--                 490..491, and zero color outside 640x480.
+--                 Outputs the position of the pixel on the pins (hpos_o,
+--                 vpos_o, visible_o) and counts frames. DUMP_FRAME > 0
+--                 writes that frame (from 1 after lock) to DUMP_FILE as a
+--                 binary PPM, colors scaled from OUT_BITS to 8 bits.
+--                 Samples on the falling pixel clock edge, half a cycle
+--                 after the design's output registers change.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 std.textio

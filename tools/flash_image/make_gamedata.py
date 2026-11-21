@@ -1,6 +1,6 @@
 """Build build/gamedata.bin, the game-data image placed in flash at 0x220000.
 
-Layout (all numbers little endian; offsets are from the start of the image):
+Layout (little endian, offsets from the start of the image):
 
     0x0000  8 bytes   magic "FPGADATA" (the bring-up page shows these bytes)
     0x0008  u16       format version (1)
@@ -17,10 +17,8 @@ Items:
     id 16..33  sound effects 0..17, 11,025 Hz 8-bit unsigned (tools/model/audio.py)
     id 40..42  music loops for levels 1..3, 11,025 Hz 8-bit unsigned
 
-The image must stay under 1,966,080 bytes
-(the space between 0x220000 and the end of the 4 MB flash).
-
-scripts/build.tcl puts this file after the bitstream when it exists.
+Must stay under 1,966,080 bytes (0x220000 to the end of the 4 MB flash). scripts/build.tcl
+appends it after the bitstream when it exists.
 
 Usage: python tools/flash_image/make_gamedata.py
 """

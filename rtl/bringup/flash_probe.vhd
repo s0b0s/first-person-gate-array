@@ -9,13 +9,11 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Flash check: after reset (and on every start_i
---                 pulse) asks flash_reader for the 3-byte JEDEC ID and
---                 then the first 8 bytes of the game-data area at
---                 0x220000, and holds them for the bring-up page. The
---                 flash image builder puts a known test pattern there.
---                 States: PROBE_ID_REQ, PROBE_ID_DATA, PROBE_RD_REQ,
---                 PROBE_RD_DATA, PROBE_DONE.
+-- Description:    Flash check: after reset and on every start_i pulse,
+--                 reads the 3-byte JEDEC ID and the first 8 bytes at
+--                 0x220000 (a test pattern from the flash image builder)
+--                 through flash_reader, and holds them for the bring-up
+--                 page.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, hw_pkg

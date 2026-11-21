@@ -9,19 +9,14 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Shares one flash_reader between two clients that use the
---                 flash_reader request/data ports: client 0 (audio sample
---                 refills, higher priority) and client 1 (asset loader).
---                 Whole commands are granted: when the reader is free, the
---                 request of client 0 (else client 1) is passed through;
---                 once it is taken, that client owns the reader until the
---                 last byte of its command has been delivered (data_last
---                 taken), and every data byte goes to it. The other client
---                 sees req_ready = '0' and data_valid = '0' meanwhile.
---                 States: ARB_IDLE (no command running), ARB_BUSY (owner
---                 set).
---                 Clock domain: clk_i (system). No added latency: requests
---                 and data pass through combinationally.
+-- Description:    Shares one flash_reader between client 0 (audio sample
+--                 refills, priority) and client 1 (asset loader). Whole
+--                 commands are granted: once a request is taken, that
+--                 client owns the reader and gets every data byte until
+--                 data_last is taken; the other sees req_ready = '0' and
+--                 data_valid = '0'.
+--                 Clock domain: clk_i (system). No added latency
+--                 (combinational pass-through).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164
 --

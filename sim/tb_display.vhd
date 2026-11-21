@@ -11,26 +11,20 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for display_controller with the
 --                 real SRAM path (sram_arbiter, sram_controller,
---                 sram_model) while masters 2 and 3 load the SRAM with
---                 background traffic. Both framebuffers are preloaded
---                 through the SRAM model's back door.
---                 vga_monitor checks sync timing and blanking on every
---                 pixel clock; this testbench predicts every visible
---                 pixel of every checked frame from its own model of the
---                 pixel doubling, palette, tint, dither and test patterns:
+--                 sram_model), masters 2 and 3 adding background traffic,
+--                 both framebuffers preloaded through the back door.
+--                 vga_monitor checks sync timing and blanking; this
+--                 testbench predicts every visible pixel from its own model
+--                 of doubling, palette, tint, dither and test patterns:
 --                   frame 1  framebuffer 0
 --                   frame 2  framebuffer 1, red tint, one palette entry
 --                            rewritten during the previous vblank
 --                   frame 3  color bands      frame 4  checker + border
 --                   frame 5  grid             frame 6  palette gradient
 --                   frame 7  blank
---                 Also checks the PWR_SENSE output enables, that palette
---                 writes are refused outside vblank, and that no line
---                 fetch overruns. Frame 2 is saved as
---                 build/sim/tb_display_frame2.ppm for a visual check.
---                 The pixel checker copies its check counts to pix_checks
---                 and pix_errors; the stimulus process adds them at the
---                 end.
+--                 Also: PWR_SENSE output enables, palette writes refused
+--                 outside vblank, no line fetch overruns. Frame 2 is saved
+--                 as build/sim/tb_display_frame2.ppm for a visual check.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, tb_pkg, sram_model, vga_monitor,
@@ -343,8 +337,8 @@ architecture arch of tb_display is
 			when TINT_GREEN => t := (0, 63, 0);
 			when others => null;
 		end case;
-		-- Per 6-bit channel (R, G, B): the tint blends 3/4 color with 1/4 tint color, then
-		-- the 2x2 Bayer offset and the divide by 4 give the 4-bit pin value
+		-- Per 6-bit channel: tint = 3/4 color + 1/4 tint color, then 2x2 Bayer
+		-- offset and divide by 4 give the 4-bit pin value
 		for k in 0 to 2 loop
 			ch := to_integer(unsigned(col(17 - 6 * k downto 12 - 6 * k)));
 			if (c.tint /= TINT_NONE) then
@@ -394,8 +388,7 @@ begin
 			vga_t_o => vga_t
 		);
 
-	-- Masters: 0 display, 1 idle, 2 writes and 3 reads outside the
-	-- framebuffers as background traffic
+	-- Masters: 0 display, 1 idle, 2 and 3 background writes and reads
 	m_req <= '1' & '1' & '0' & d_req;
 	m_we <= "0100";
 	m_addr <= std_logic_vector(bg_addr3) & std_logic_vector(bg_addr2) &
@@ -608,8 +601,8 @@ begin
 		wait for 10 * PERIOD_PIX;
 		check(vga_t = "00000000000000", "VGA pins driven after pcb_on", checks, errors);
 
-		-- Settings for frame k + 1 are set during frame k (they are taken
-		-- at the next vblank; the front buffer at the next line-0 fetch)
+		-- Settings for frame k + 1 go in during frame k (taken at vblank; the
+		-- front buffer at the next line-0 fetch)
 		for k in 1 to LAST_FRAME - 1 loop
 			wait until (mon_frames = k) and (mon_v = 10);
 			front <= '1' when (CFG(k + 1).front = 1) else '0';
@@ -627,8 +620,8 @@ begin
 					wait until rising_edge(clk_sys);
 					exit when (pal_ready = '1');
 				end loop;
-				-- The pins run 3 pixels behind the internal raster, so the
-				-- monitor is at the end of line 479 when vblank starts
+				-- Pins lag the raster by 3 pixels: monitor is at the end of
+				-- line 479 when vblank starts
 				check(not mon_visible, "palette write accepted in vblank", checks, errors);
 				pal_valid <= '0';
 			end if;

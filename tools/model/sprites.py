@@ -1,13 +1,12 @@
 """Bit-accurate model of the sprite engine.
 
-Input: the camera (position Q6.16, angle, eye height 0..127), the sprite table from the game
-(actor index, x and y in Q6.10, art frame, tile light, flags: bit 0 fullbright, bit 1 hitscan
-target, floor height 0..64 under the sprite), the wall z-buffer of this frame (z = perp >> 6,
-Q6.10), the clip lists of this frame (per column, the open window (z, top, bottom)
-after each height edge, nearest first) and the art (frame table + column-major texels, index
-255 transparent).
+Inputs: the camera (position Q6.16, angle, eye 0..127); the sprite table (actor index, x and
+y in Q6.10, art frame, tile light, flags: bit 0 fullbright, bit 1 hitscan target, floor
+height 0..64); the wall z-buffer (z = perp >> 6, Q6.10); the clip lists (per column, the open
+window (z, top, bottom) after each height edge, nearest first); the art (frame table +
+column-major texels, 255 transparent).
 
-Per sprite (same projection as the walls, so a 64-texel frame stands one tile tall):
+Per sprite (the wall projection, so a 64-texel frame stands one tile tall):
     rel     = (x << 6) - cam                      Q.16 tiles
     depth   = (rx * cos + ry * sin) >> 16         distance along the view
     lateral = (-rx * sin + ry * cos) >> 16        sideways offset
@@ -20,13 +19,11 @@ Per sprite (same projection as the walls, so a 64-texel frame stands one tile ta
     step    = (depth * M_TS) >> 16                texels per pixel, Q.16 (as for walls)
     z       = min(depth >> 6, 65535); light = 15 if fullbright else
               clamp(light - min(15, depth >> 18))
-Sprites are drawn far to near (sort by depth, larger first; equal depths keep table order).
-A column is drawn only where z < wall z, and only in the rows of the column's window at the
-sprite's depth: the window of the last clip entry with entry z <= sprite z (rows 0..239 if
-none). Texel 255 is skipped; u = ((x * 256 + 128 - left) * step) >> 8 and v likewise from the
-top (counted from the sprite's first row, also for rows the window hides), both clamped to the
-frame size.
-Spans (for next frame's hitscan): (actor index, x0, x1, z) of every drawn target sprite.
+Drawn far to near (by depth, larger first; ties keep table order). A pixel is drawn where
+z < wall z, within the window of the column's last clip entry with entry z <= sprite z (rows
+0..239 if none), and texel != 255. u = ((x * 256 + 128 - left) * step) >> 8, v likewise from
+the sprite's first row (even if hidden), both clamped to the frame size.
+Spans (next frame's hitscan): (actor index, x0, x1, z) of every drawn target sprite.
 """
 
 from render import div_sat, N_LH, LH_MAX, M_TS, LIGHT_SHIFT, COS, SIN, W, H, HORIZON

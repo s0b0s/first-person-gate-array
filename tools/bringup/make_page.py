@@ -1,17 +1,16 @@
 """Build the bring-up status page ROM (rtl/bringup/page_rom.vhd).
 
-The page is 40 x 30 character cells (8 x 8 pixels each, 320 x 240). The layout below is
-plain text with fields in braces that show live hardware values in hex:
+The page is 40 x 30 cells of 8 x 8 pixels. In the layout below, fields in braces show live
+values in hex:
 
     {W.N}     the low N hex digits of value word W (0..31)
     {W.N.S}   N hex digits of word W starting at nibble S (nibble 0 = bits 3:0)
 
-Each ROM entry is 9 bits:
+ROM entry, 9 bits:
     bit 8 = 0: bits 6:0 are an ASCII character
     bit 8 = 1: a hex digit; bits 7:3 = value word, bits 2:0 = nibble index
-The painter (rtl/bringup/text_painter.vhd) turns field entries into digits at draw time.
-The value words are wired up in rtl/top/bringup_top.vhd; keep this list and that file
-in step:
+rtl/bringup/text_painter.vhd draws the digits. The value words are wired up in
+rtl/top/bringup_top.vhd; keep this list in step with it:
 
      0 build id                       16 keyboard errors P(7:0) F(15:8) T(23:16)
      1 SRAM passes(31:16) errors      17 mouse errors P F T(+tx)
@@ -26,9 +25,9 @@ in step:
   12-15 mouse bytes, newest first     26 overruns(15:0) pcb_on(16) locked(20)
                                       27 audio on(0) pattern(6:4)
 
-It also writes sim/golden/page_expected.txt, the image the painter must draw (one line of
-320 two-digit hex palette indices per pixel row) when value word w holds
-test_value(w) = (0x9E3779B9 * (w + 1)) mod 2^32; sim/tb_text_painter.vhd uses the same values.
+Also writes sim/golden/page_expected.txt (one line of 320 two-digit hex palette indices per
+row): the image drawn when word w holds test_value(w) = (0x9E3779B9 * (w + 1)) mod 2^32, as
+in sim/tb_text_painter.vhd.
 
 Usage: python tools/bringup/make_page.py
 """

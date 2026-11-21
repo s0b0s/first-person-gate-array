@@ -1,14 +1,14 @@
-"""Bit-accurate model of the game: the specification of the game sequencer and
-the actor engine RTL. Integer arithmetic only; ">>" is an arithmetic (floor) shift.
+"""Bit-accurate model of the game: the specification of the game sequencer and actor
+engine RTL. Integer arithmetic only; ">>" is an arithmetic (floor) shift.
 
-One call of Game.step(snapshot, spans, zwall) is one frame. spans and zwall are what the renderer
-produced for the PREVIOUS frame (hitscan aims at what the player saw): spans is a list of
-(actor index, x0, x1, z) for drawn target sprites, zwall the 320 wall z values.
+Game.step(snapshot, spans, zwall) is one frame. spans (actor index, x0, x1, z of drawn target
+sprites) and zwall (320 wall z values) come from the PREVIOUS frame's render, so hitscan aims
+at what the player saw.
 
-Game flow (flow): TITLE -> BRIEFING -> PLAYING (<-> PAUSED) -> SCORE -> BRIEFING (next level) ...
--> ENDING -> TITLE; PLAYING -> DEAD -> PLAYING (level restarted). Use or a fire press moves on.
+Flow: TITLE -> BRIEFING -> PLAYING (<-> PAUSED) -> SCORE -> BRIEFING (next level) ...
+-> ENDING -> TITLE; PLAYING -> DEAD -> PLAYING (level restarted). Use or fire moves on.
 
-Order of one PLAYING frame (the RTL follows exactly this order, including every random() call):
+One PLAYING frame, in this order (the RTL matches it, every random() call included):
   1. level clock; player turn; duck and peek easing (2 units per frame)
   2. move x then y: walls, closed doors and solid actors block; walls push the player back flush
   3. peek camera: the sideways offset shrinks by 2 until the camera box is free
@@ -17,8 +17,8 @@ Order of one PLAYING frame (the RTL follows exactly this order, including every 
   6. weapon: select, cooldown, fire (hitscan against the last frame's spans)
   7. actors 0..31 in index order (actions, timers, fireballs); spawned actors take free slots
   8. doors; boss timer; death check; HUD timers
-Random numbers: a 16-bit LFSR (x^16 + x^15 + x^13 + x^4 + 1), advanced once per random() call,
-which returns the low 8 bits; seeded with 0xACE1 xor (level << 8) when a level loads.
+random(): a 16-bit LFSR (x^16 + x^15 + x^13 + x^4 + 1) advanced once per call, returning the
+low 8 bits; seeded with 0xACE1 xor (level << 8) at each level load.
 """
 
 import zlib
@@ -37,9 +37,8 @@ IDLE, OPENING, OPEN, CLOSING = 0, 1, 2, 3
 TITLE, BRIEFING, PLAYING, PAUSED, DEAD, SCORE, ENDING = range(7)
 EYE_STAND, EYE_DUCK, EYE_DEAD = 32, 16, 8
 PEEK = 16
-# Floor and ceiling heights (units, 64 per tile): the player and monsters climb steps up to STEP_MAX,
-# need PLAYER_H / ACTOR_H of headroom, and fall FALL_ACC faster each frame up to FALL_MAX.
-# On a flat level none of this ever triggers.
+# Heights (units, 64 per tile): bodies climb steps up to STEP_MAX, need PLAYER_H / ACTOR_H of
+# headroom, and fall FALL_ACC faster each frame up to FALL_MAX. Inactive on flat levels.
 STEP_MAX, PLAYER_H, ACTOR_H = 24, 40, 40
 FALL_ACC, FALL_MAX = 2, 16
 COOLDOWN = {1: 14, 2: 40}
@@ -566,10 +565,10 @@ class Game:
                 self.alert()
 
     def alert(self):
-        """Sound alert: the shot is heard in every cell connected to the player's
-        through open cells (4 neighbors; walls and closed doors stop it). Every sleeping,
-        living monster there that is not an ambusher wakes as if it had seen the player.
-        Actors are woken in slot order, after the shot's hitscan."""
+        """Sound alert: the shot is heard in every cell connected to the player's through
+        open cells (4 neighbors; walls and closed doors stop it). Every sleeping, living,
+        non-ambush monster there wakes as if it saw the player, in slot order, after the
+        shot's hitscan."""
         start = ((self.px >> 16) & 63, (self.py >> 16) & 63)
         heard = {start}
         queue = [start]
@@ -848,16 +847,15 @@ class Game:
         }
 
     def state_crc(self):
-        """Per-frame game-state checksum for replay validation (the RTL and the
-        board must give the same CRC every frame): CRC32 (zlib) over the state words,
-        each as 8 bytes little endian."""
+        """Per-frame replay checksum (RTL and board must match): CRC32 (zlib) over the
+        state words, each as 8 bytes little endian."""
         data = b"".join((w & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little") for w in self.state_words())
         return zlib.crc32(data) & 0xFFFFFFFF
 
     def state_words(self):
-        """What the game testbench compares each frame (91 words: 19 scalars, 8 doors x 5,
-        32 actor records). Word 5 = eye | z << 8 | vz << 16 (z and vz are 0 on flat levels,
-        so sessions on flat levels keep their CRCs)."""
+        """The 91 words the game testbench compares each frame: 19 scalars, 8 doors x 5,
+        32 actor records. Word 5 = eye | z << 8 | vz << 16 (z and vz are 0 on flat levels,
+        so flat sessions keep their CRCs)."""
         p = self.player
         w = [self.flow, self.level, self.px, self.py, self.angle,
              self.eye | (self.z << 8) | (self.vz << 16), self.off & 0xFF,

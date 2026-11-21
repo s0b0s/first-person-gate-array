@@ -9,19 +9,14 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for buffer_manager. A display
---                 process plays the line and vblank events of a frame
---                 (compressed: 10 clocks per line); a renderer process
---                 answers each frame_start with frame_done after a
---                 scripted delay. Cases: frames finishing early, exactly
---                 on the vblank cycle, one refresh late, three refreshes
---                 late, and a frame_done arriving while waiting (ignored).
---                 Checks: front changes only on vblank cycles and only
---                 after a finished frame, back is always the other buffer,
---                 one frame_start per frame, frame and late counters.
---                 The monitor process copies its check counts to
---                 mon_checks and mon_errors; the renderer process adds
---                 them to its own at the end.
+-- Description:    Self-checking testbench for buffer_manager. Line and
+--                 vblank events are compressed to 10 clocks per line; a
+--                 renderer answers each frame_start with frame_done after
+--                 a scripted delay: early, exactly on the vblank cycle, one
+--                 and three refreshes late, plus a stray frame_done while
+--                 waiting (ignored). Checks: front swaps only on vblank
+--                 after a finished frame, back is the other buffer, one
+--                 frame_start per frame, frame and late counters.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 buffer_manager
@@ -65,10 +60,9 @@ architecture arch of tb_buffer_manager is
 	constant START_LINE: natural := 115;
 	-- Lines in a compressed refresh: 240 fetched lines plus vblank time
 	constant REFRESH_LINES: natural := 262;
-	-- Render time per frame in clocks, counted from the edge that first
-	-- sees frame_start. Line 115's event is followed by 124 more lines of
-	-- 10 clocks, so frame_done lands exactly on the vblank cycle with
-	-- 1249 clocks; 1248 is one cycle early, 1250 one cycle late.
+	-- Render clocks from the edge that sees frame_start. Line 115's event is
+	-- followed by 124 lines of 10 clocks, so 1249 lands exactly on the vblank
+	-- cycle (1248 one early, 1250 one late).
 	type delays_t is array (0 to 6) of natural;
 	constant DELAYS: delays_t := (300, 1248, 1249, 1250, 1249 + 2 * REFRESH_LINES * LINE_CLOCKS + 1,
 		600, 100);

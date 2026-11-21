@@ -9,30 +9,20 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for the ray engine against
---                 the golden model (tools/model/render.py via golden4.py):
---                 sim/golden/ray4_poses.txt gives 27 poses (the 9 flat
---                 level-1 poses of game_top, then 10 on level 3: stairs, a
---                 ramp, a platform, a lower ceiling, a pit, a dais, standing
---                 on a ramp, ducked in a pit, nose on a riser, down a ramp,
---                 then 4 on the directed test map: a -y ramp from below and
---                 above, a 24 step, a ramp chain that overflows the clip list,
---                 then 4 with light effects: level 1's sky with flicker
---                 offsets, the level-3 arena during a strobe, the flickering
---                 hall, the glowing room during a muzzle flash; each pose
---                 line ends with the effects register: lmod of light types
---                 0..3 and anim, driven on fx_i),
---                 ray4_maps.txt the tile maps and ray4_spans.txt every
---                 span, clip entry and z of every column.
---                 The map RAM has the 1-clock read latency of the tile map
---                 BRAM; desc_ready is high READY_PCT percent of the clocks.
---                 Checks: every span in order (column, kind, rows, ray and
---                 LAST; textured spans also texture, column, v0, tex_step,
---                 light, side; floor and ceiling spans E), the span count
---                 per column, every z-buffer, clip-count and clip-entry
---                 write, and one done_o per frame. Prints the clocks per
---                 pose. Each pose's expectations are loaded by pose number
---                 before it runs, so one failing pose cannot shift the next.
+-- Description:    Self-checking testbench for ray_engine against
+--                 tools/model/render.py (via golden4.py). Golden files:
+--                 ray4_poses.txt (27 poses: 9 flat level-1, 10 level-3 height
+--                 cases, 4 on the directed test map, 4 with light effects;
+--                 each line ends with the fx_i effects register: lmod of light
+--                 types 0..3, anim), ray4_maps.txt (tile maps), ray4_spans.txt
+--                 (spans, clip entries and z of every column).
+--                 The map RAM has 1-clock latency; desc_ready is high
+--                 READY_PCT percent of clocks.
+--                 Checks: every span in order with all its fields, span count
+--                 per column, every z-buffer, clip-count and clip-entry write,
+--                 one done_o per frame. Prints the clocks per pose. Each
+--                 pose's expectations are loaded by pose number, so a failing
+--                 pose cannot shift the next.
 --                 RUN_VARIANTS: READY_PCT=40 READY_PCT=100
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -254,9 +244,7 @@ begin
 		end if;
 	end process;
 
-	-- Stimulus and checks. Each pose's expectations are loaded completely (by
-	-- pose number) before the pose runs, so a pose that emits too many or too
-	-- few spans cannot shift the expectations of the next one.
+	-- Stimulus and checks (expectations loaded per pose number, see header)
 	process
 		file fm, fp, fs: text;
 		variable l: line;

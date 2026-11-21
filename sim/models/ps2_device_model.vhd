@@ -9,27 +9,20 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Behavioral PS/2 device (keyboard or mouse) on open-drain
---                 lines: it only drives '0' or 'Z'; the testbench adds
---                 the pull-ups as weak 'H' drivers.
+-- Description:    Behavioral PS/2 keyboard or mouse; drives only '0' or 'Z'
+--                 (the testbench adds weak 'H' pull-ups).
 --                 Device to host: each toggle of send_i sends send_byte_i
---                 as start, 8 data bits LSB first, odd parity, stop, at
---                 12.5 kHz (HALF_PERIOD 40 us). Data changes in the
---                 middle of the clock-high time. send_mode_i:
---                   0 normal, 1 wrong parity, 2 stop bit '0',
---                   3 truncated (only the first 5 bits, then silence)
---                 sent_o counts finished bytes (including automatic
---                 mouse replies), so a testbench waits for it to grow.
---                 Host to device: when the host holds the clock low and
---                 then releases it with data low, the model clocks in 8
---                 data bits, the parity bit and the stop bit (reading
---                 data while the clock is high), then acknowledges by
---                 pulling data low for one more clock pulse. rx_byte_o,
---                 rx_count_o and rx_parity_errors_o record what arrived.
---                 silent_i = true makes it ignore host requests (to test
---                 the host's 20 ms send timeout).
---                 MOUSE = true adds the mouse replies: FA to every byte,
---                 and after FF a self-test of BAT_DELAY, then AA 00.
+--                 (start, 8 bits LSB first, odd parity, stop) at 12.5 kHz,
+--                 data changing mid clock-high. send_mode_i: 0 normal,
+--                 1 wrong parity, 2 stop '0', 3 truncated after 5 bits.
+--                 sent_o counts finished bytes, mouse replies included.
+--                 Host to device: after a request (clock low, then
+--                 released with data low) it clocks in data, parity and
+--                 stop, then acks with data low for one clock pulse;
+--                 results in rx_byte_o, rx_count_o, rx_parity_errors_o.
+--                 silent_i ignores requests (tests the 20 ms timeout).
+--                 MOUSE = true: FA to every byte; after FF, BAT_DELAY then
+--                 AA 00.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164
 --

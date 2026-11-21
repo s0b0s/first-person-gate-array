@@ -1,5 +1,5 @@
-# Out-of-context implementation of single blocks at their own clock rates, to record
-# LUT / FF / BRAM / DSP / worst slack per block, to check each against its budget.
+# Out-of-context implementation of single blocks at their own clock rates: LUT / FF /
+# BRAM / DSP / worst slack per block, to check against its budget.
 #
 # Usage (from the repository root):
 #   vivado -mode batch -source scripts/ooc.tcl -tclargs block1 [block2 ...]
@@ -31,8 +31,8 @@ proc vhd_files {dir} {
 }
 set pkgs [lsort [glob -directory [file join $root rtl pkg] *.vhd]]
 # OOC_ONLY (environment, optional): comma-separated path fragments; only RTL files whose path
-# contains one are read (packages always are), so an unfinished file elsewhere does not stop
-# the run. Example: OOC_ONLY=game/asset_loader,debug/replay_unit
+# contains one are read (packages always are), so unfinished files elsewhere are skipped.
+# Example: OOC_ONLY=game/asset_loader,debug/replay_unit
 set only {}
 if {[info exists ::env(OOC_ONLY)]} {
 	set only [split $::env(OOC_ONLY) ","]

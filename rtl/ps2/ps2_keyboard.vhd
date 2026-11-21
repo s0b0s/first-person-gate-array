@@ -9,23 +9,20 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Scan code set 2 decoder (the keyboard's default set, no
---                 setup commands needed). A key going down sends its make
---                 code (repeated while held); going up sends F0 and the
---                 code. Extended keys send E0 first (E0 code, E0 F0
---                 code). Only the keys the game uses are kept, one bit
---                 each in keys_o (game_pkg KEY_* positions):
---                   plain: W 1D, A 1C, S 1B, D 23, C 21, Q 15, E 24,
---                          Esc 76, Space 29, LShift 12, RShift 59,
---                          LCtrl 14, 1 16, 2 1E, 3 26, Tab 0D, F1 05
---                   E0:    Up 75, Down 72, Left 6B, Right 74, RCtrl 14
---                 The fake shifts that some keyboards wrap around
---                 extended keys (E0 12, E0 59) are not in the E0 table,
---                 so they are ignored. Pause sends E1 14 77 E1 F0 14 F0
---                 77 with no break code; after E1 the next 7 bytes are
---                 skipped. Other bytes (AA self-test, FA, errors) only
---                 clear the prefix flags.
---                 en_i = '0' releases every key.
+-- Description:    Scan code set 2 decoder (the default set, no setup
+--                 commands). Make code on press (repeated while held),
+--                 F0 code on release; extended keys add an E0 prefix.
+--                 Only the game's keys are kept, one bit each in keys_o
+--                 (game_pkg KEY_* positions):
+--                 plain: W 1D, A 1C, S 1B, D 23, C 21, Q 15, E 24,
+--                 Esc 76, Space 29, LShift 12, RShift 59, LCtrl 14,
+--                 1 16, 2 1E, 3 26, Tab 0D, F1 05
+--                 E0: Up 75, Down 72, Left 6B, Right 74, RCtrl 14
+--                 Fake shifts around extended keys (E0 12, E0 59) are not
+--                 in the E0 table, so they are ignored. Pause (E1 14 77
+--                 E1 F0 14 F0 77, no break): the 7 bytes after E1 are
+--                 skipped. Other bytes (AA, FA, errors) clear the prefix
+--                 flags. en_i = '0' releases every key.
 --                 Clock domain: clk_i (system). keys_o changes one cycle
 --                 after the byte that completes a code.
 --

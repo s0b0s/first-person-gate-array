@@ -9,62 +9,46 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Draws the spans of every screen column through the pixel
---                 write port (with floor and ceiling heights).
---                 Bit for bit the same as raster_spans() and
---                 row_dist() in tools/model/render.py.
---                 A span (render_types_pkg, DESC_*) is rows y0..y1 of one
---                 column and one kind; the ray engine sends the spans of a
---                 column in any row order, the last one with DESC_LAST.
---                 Together they cover each row of the column exactly once.
---                 Per pixel (one issued per clock while there is credit):
---                   textured span (walls, risers, upper walls): texel =
+-- Description:    Draws every column's spans through the pixel write port.
+--                 Bit exact with raster_spans() and row_dist() in
+--                 tools/model/render.py.
+--                 A span (DESC_*) is rows y0..y1 of one column and kind;
+--                 a column's spans come in any order, cover each row once,
+--                 and the last has DESC_LAST.
+--                 Per pixel:
+--                   textured (walls, risers, upper walls): texel =
 --                     WALL[slot][tex_col][min(v >> 16, 63)], slot = (tex_id
---                     - 1) mod 8, except texture 6 (slime), which cycles
---                     through ROM slots 5, 8, 9, 10 with the animation frame
---                     (fx_i); v from v0 adding tex_step per row; color =
---                     LIGHT[span light][texel] (the ray engine already
---                     applied the light type to the span light)
---                   floor and ceiling spans: rd = min(DD_MAX, (E * RINV(y))
---                     >> 8) (E = eye - floor or ceiling - eye, carried by the
---                     span; RINV from render_pkg); w = pos + ((rd * ray) >>
---                     16) per axis (Q6.16, mod 2^22: only bits 21:10 are
---                     used); tile = map[wy(21:16)][wx(21:16)]; u = wx(15:10),
---                     v = wy(15:10); flat = floor_tex (floor spans), else 0
---                     on a ramp tile (special 7: ceil_tex holds the ramp
---                     direction) or ceil_tex; light = max(0, clamp(tile light
---                     + lmod(light type), 0, 15) - min(15, rd >> 18)), lmod
---                     from fx_i (render.py Frame.light)
---                   sky: a ceiling pixel whose tile is open (wall_tex 0)
---                     with bit 23 set is SKY[u][v], u = ((angle + SKYX(col))
---                     >> 1) mod 256, v = min(63, (y * 17) >> 5), no light
+--                     - 1) mod 8, slime (6) cycles slots 5, 8, 9, 10 with
+--                     the animation frame; v += tex_step per row; color =
+--                     LIGHT[span light][texel] (light type already applied)
+--                   floor/ceiling: rd = min(DD_MAX, (E * RINV(y)) >> 8),
+--                     E = eye distance from the span; w = pos + ((rd * ray)
+--                     >> 16) per axis (Q6.16 mod 2^22); tile =
+--                     map[wy(21:16)][wx(21:16)]; u = wx(15:10), v =
+--                     wy(15:10); flat = floor_tex, or ceil_tex (0 on a ramp
+--                     tile); light = max(0, clamp(tile light + lmod(type),
+--                     0, 15) - min(15, rd >> 18)), lmod from fx_i
+--                   sky: ceiling pixel over an open tile with bit 23 set:
+--                     SKY[u][v], u = ((angle + SKYX(col)) >> 1) mod 256,
+--                     v = min(63, (y * 17) >> 5), unlit
 --                 Pipeline (fixed latency, never stalls; S0 = issue):
---                   S0  wall ROM and RINV ROM addresses; SKYX(col) and the
---                       sky row
---                   S1  wall texel and RINV(y) arrive; sky column
---                   S2  product E * RINV (7 x 27 bits)
+--                   S0  wall and RINV ROM addresses
+--                   S1  texel, RINV(y), SKYX(col) and sky row arrive
+--                   S2  E * RINV (7 x 27)
 --                   S3  rd = min(DD_MAX, product >> 8)
---                   S4  multiplier operand registers (DSP A/B); distance
---                       light term
---                   S5  products rd * rx, rd * ry (25 x 18 signed)
---                   S6  world point; map address on map_addr_o
---                   S7  tile word arrives: flat ROM address; the tile's
---                       light, light type and sky flag are registered
---                       (short logic after the unregistered tile map BRAM)
---                   S8  flat texel arrives; light = type offset, clamp,
---                       distance
---                   S9  light ROM and sky ROM addresses
---                   S10 palette index (or sky texel) arrives, written into
---                       the output FIFO
---                 Back-pressure: a pixel is issued only when a slot in the
---                 15-word output FIFO is reserved for it (credit counter:
---                 minus one per issue, plus one per pixel accepted on the
---                 pixel port), so the pipeline never has to stop. The
---                 credits also tell when the frame is finished: after the
---                 last span of column 319 every credit is back.
+--                   S4  DSP operand registers; distance light term
+--                   S5  rd * rx, rd * ry (25 x 18 signed)
+--                   S6  world point; map address out
+--                   S7  tile word: flat ROM address; tile fields registered
+--                   S8  flat texel; light offset, clamp, distance
+--                   S9  light and sky ROM addresses
+--                   S10 palette index into the output FIFO
+--                 Back-pressure: credits for the 15-word output FIFO (minus
+--                 one per issue, plus one per accepted pixel), so the
+--                 pipeline never stalls. Frame done when all credits are
+--                 back after column 319.
 --                 Clock domain: clk_i (system). Throughput one pixel per
---                 clock plus one idle clock per span; the SRAM sets the
---                 real pace (one pixel per 2 clocks).
+--                 clock plus one per span; the SRAM limits it to one per 2.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, render_pkg,
 --                 render_types_pkg, game_pkg, wall_rom, anim_rom, flat_rom,
@@ -212,8 +196,8 @@ architecture arch of column_rasterizer is
 	signal issue: std_logic;
 	signal pop: std_logic;
 	signal trow: unsigned(5 downto 0);
-	-- Slots 0..7 in wall_rom, 8..10 in anim_rom (one 11-slot ROM on a 16-bit address took
-	-- 16 BRAM36); anim1 picks the ROM whose data arrives at S1
+	-- Slots 0..7 in wall_rom, 8..10 in anim_rom (one 11-slot ROM took 16 BRAM36);
+	-- anim1 picks the ROM at S1
 	signal wall_addr: std_logic_vector(14 downto 0);
 	signal anim_addr: std_logic_vector(13 downto 0);
 	signal wall_q, anim_q: std_logic_vector(7 downto 0);
@@ -408,8 +392,7 @@ begin
 	-- Any bit above 21 set means v >> 16 >= 64: clamp the row to 63
 	trow <= (others => '1') when (tex_v(31 downto 22) /= 0) else tex_v(21 downto 16);
 	wall_addr <= std_logic_vector(unsigned'(slot(2 downto 0) & tcol & trow));
-	-- Only slots 8..10 address the animation ROM (12,288 entries); other slots read address 0
-	-- there, its output unused (anim1 = '0')
+	-- Animation ROM (12,288 entries) only for slots 8..10; others read address 0, unused
 	anim_addr <= std_logic_vector(unsigned'(slot(1 downto 0) & tcol & trow)) when (slot(3) = '1') else
 		(others => '0');
 
@@ -474,12 +457,11 @@ begin
 		end if;
 	end process;
 
-	-- S1: sky column u = ((angle + SKYX) >> 1) mod 256 = bits 8:1 of this
-	-- two's complement sum
+	-- S1: sky column u = ((angle + SKYX) >> 1) mod 256 = bits 8:1 of this sum
 	sky_u1 <= signed(resize(angle, 12)) + resize(skyx1, 12);
 
-	-- S8: light = clamp(clamp(tile light + lmod(type), 0, 15) - distance term,
-	-- 0, 15); fx holds one signed 5-bit light offset per light type
+	-- S8: light = clamp(tile light + lmod(type), 0, 15) - distance term;
+	-- fx holds a signed 5-bit offset per light type
 	with ty8 select
 		lmod8 <= resize(signed(fx(4 downto 0)), 6) when "00",
 			resize(signed(fx(9 downto 5)), 6) when "01",
@@ -518,8 +500,7 @@ begin
 			prod2 <= e1 * rinv_q;
 			skya2 <= std_logic_vector(sky_u1(8 downto 1)) & std_logic_vector(skyv1);
 
-			-- S2 -> S3: rd = min(DD_MAX, product >> 8); product >> 8 needs more
-			-- than 24 bits exactly when product bits 33:32 are not 0
+			-- S2 -> S3: rd = min(DD_MAX, product >> 8); overflow when bits 33:32 /= 0
 			wall3 <= wall2;
 			ceil3 <= ceil2;
 			addr3 <= addr2;
@@ -562,8 +543,7 @@ begin
 			prod_x <= m_rd * m_rx;
 			prod_y <= m_rd * m_ry;
 
-			-- S5 -> S6: world point = pos + (product >> 16), mod 2^22: bits 37:16
-			-- are (product >> 16) mod 2^22; the wrap matches the model
+			-- S5 -> S6: world point = pos + product bits 37:16 (mod 2^22, as the model)
 			wall6 <= wall5;
 			ceil6 <= ceil5;
 			addr6 <= addr5;
@@ -585,8 +565,7 @@ begin
 			u7 <= wx6(15 downto 10);
 			vv7 <= wy6(15 downto 10);
 
-			-- S7 -> S8: the tile word has arrived straight from the tile map BRAM;
-			-- only register its fields here (the flat ROM address is combinational)
+			-- S7 -> S8: register the tile fields only (BRAM output is unregistered)
 			wall8 <= wall7;
 			addr8 <= addr7;
 			wl8 <= wl7;
@@ -625,8 +604,8 @@ begin
 	-- Tile index = integer parts of the world point (Q6.16 bits 21:16), y * 64 + x
 	map_addr_o <= std_logic_vector(unsigned'(wy6(21 downto 16) & wx6(21 downto 16)));
 
-	-- S7: flat of the tile: floor_tex, or ceil_tex (flat 0 on a ramp tile, whose
-	-- ceil_tex holds the ramp direction); special "111" = 7 = ramp
+	-- S7: floor_tex, or ceil_tex; flat 0 on a ramp (special 7), whose ceil_tex is
+	-- the ramp direction
 	flat_sel <= map_data_i(5 downto 4) when (ceil7 = '0') else
 		"00" when (map_data_i(16 downto 14) = "111") else
 		map_data_i(7 downto 6);

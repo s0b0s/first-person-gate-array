@@ -31,9 +31,8 @@ package hw_pkg is
 	constant SYS_CLK_HZ: natural := 100_000_000;
 	constant PIX_CLK_HZ: natural := 25_000_000;
 
-	-- 640x480 at 60 Hz (25.000 MHz pixel clock gives 59.52 Hz). Counts are
-	-- in pixel clocks (horizontal) and scanlines (vertical); syncs are
-	-- active low.
+	-- 640x480 at 60 Hz (59.52 Hz at 25.000 MHz). Counts in pixel clocks
+	-- (horizontal) and lines (vertical); syncs active low.
 	constant H_VISIBLE: natural := 640;
 	constant H_FRONT: natural := 16;
 	constant H_SYNC: natural := 96;
@@ -61,8 +60,7 @@ package hw_pkg is
 	constant FLASH_ADDR_BITS: natural := 22;
 	constant FLASH_DATA_BASE: natural := 16#220000#;
 
-	-- Number of cycles of clk in t_ns nanoseconds, rounded up. Used to turn
-	-- datasheet times into counter limits.
+	-- Cycles of clk_hz in t_ns nanoseconds, rounded up (datasheet times to counter limits)
 	function cycles_ns(clk_hz: natural; t_ns: natural) return natural;
 	-- Smallest number of bits that can hold the value n (at least 1)
 	function bits_for(n: natural) return natural;

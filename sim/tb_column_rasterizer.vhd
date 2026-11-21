@@ -9,28 +9,18 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for the column_rasterizer
---                 against the golden model (tools/model/render.py,
---                 raster_spans). For each of the 27 poses of
---                 sim/golden/ray4_poses.txt (9 flat level-1 poses, 10 on
---                 level 3 with heights and ramps, 4 on the directed test
---                 map, 4 with the light effects: sky, light types,
---                 animated slime) it drives the pose's camera, angle and
---                 effects register (fx) and feeds the golden span
---                 descriptors of sim/golden/ray4_spans.txt (format in
---                 tools/model/golden4.py; LAST on the last span of each
---                 column) with random gaps, draws from a behavioral tile map
---                 RAM holding the pose's map (sim/golden/ray4_maps.txt,
---                 1-clock read latency), applies random back-pressure on
---                 the pixel port (READY_PCT percent of clocks ready), and
---                 compares every pixel with sim/golden/frame4_<k>.txt.
---                 Checks: every pixel address written exactly once (a pixel
---                 never written fails, like a framebuffer prefilled with a
---                 wrong value), every pixel equal to the model, the buffer
---                 bit, one done_o per frame, idle afterwards. Prints the
---                 clocks per frame. The capture process keeps the frame in
---                 the signal img (cleared through clear_store before each
---                 pose) and counts double writes in twice.
+-- Description:    Self-checking testbench for column_rasterizer against
+--                 tools/model/render.py raster_spans. For each of the 27
+--                 poses of sim/golden/ray4_poses.txt (9 flat level 1, 10
+--                 level 3 heights and ramps, 4 test map, 4 light effects)
+--                 it sets camera, angle and fx, feeds the golden spans of
+--                 ray4_spans.txt (format in tools/model/golden4.py) with
+--                 random gaps, reads a 1-clock tile map RAM loaded from
+--                 ray4_maps.txt, holds the pixel port ready READY_PCT
+--                 percent of clocks, and compares with frame4_<k>.txt.
+--                 Checks: every pixel written exactly once and equal to
+--                 the model, the buffer bit, one done_o per frame, idle
+--                 afterwards. Prints clocks per frame.
 --                 RUN_VARIANTS: READY_PCT=60 READY_PCT=100
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -116,9 +106,8 @@ architecture arch of tb_column_rasterizer is
 	signal busy, done: std_logic;
 	signal dones: natural := 0;
 	signal bad_buf: natural := 0;
-	-- Pixels captured for the current frame (-1 = not written) and the
-	-- number of writes to an already written pixel; driven by the capture
-	-- process, cleared when clear_store is true on a clock edge
+	-- Captured frame (-1 = not written) and count of double writes; cleared
+	-- on a clock edge while clear_store is true
 	signal img: image_t := (others => -1);
 	signal twice: natural := 0;
 	signal clear_store: boolean := false;

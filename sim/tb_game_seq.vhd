@@ -10,17 +10,12 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for game_seq against the golden
---                 trace of tools/model/game.py (sim/golden/game_trace.txt,
---                 897 frames: walking into a closed door, opening it,
---                 walking through, sliding along walls diagonally,
---                 running into a wall, strafing, backing up while
---                 turning, and the door closing again). The map is level
---                 1 (map_init_pkg) in a RAM model with one clock of read
---                 latency. Each frame: frame_start, the snapshot 2 clocks
---                 later (as ps2_input delivers it), wait for render_start,
---                 then compare position, angle, and every door entry's
---                 state, timer and open amount (x and y when active),
---                 plus the packing of doors_o.
+--                 trace sim/golden/game_trace.txt (tools/model/game.py, 897
+--                 frames of door, wall-slide, strafe and turn moves) on level 1
+--                 (map_init_pkg, 1-clock read RAM). Each frame: frame_start,
+--                 the snapshot 2 clocks later, wait for render_start, then
+--                 compare position, angle, every door's state, timer and open
+--                 amount (x, y when active), and the packing of doors_o.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 std.textio, tb_pkg, game_seq, game_pkg, render_types_pkg,

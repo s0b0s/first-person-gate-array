@@ -9,19 +9,15 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for sram_tester running through
---                 sram_arbiter, sram_controller and sram_model on a
---                 512-byte range:
---                 1. Two clean passes: pass count rises, no errors, and
---                    the SRAM holds the last LFSR pattern (checked through
---                    the model's back door against this testbench's own
---                    LFSR).
---                 2. A data bit stuck at 0 on the board (fault injected
---                    between FPGA and SRAM): errors are counted and the
---                    first error is reported with the right address and
---                    data.
---                 3. Two address lines shorted together (A1 driven from
---                    A0): only the address-in-address phase can see it.
+-- Description:    Self-checking testbench for sram_tester through
+--                 sram_arbiter, sram_controller and sram_model on a 512-byte
+--                 range:
+--                 1. Two clean passes: pass count rises, no errors, the SRAM
+--                    holds the last LFSR pattern (back-door check).
+--                 2. A data bit stuck at 0 on the board: errors counted, the
+--                    first error reports the right address and data.
+--                 3. A1 driven from A0 (short): only the address-in-address
+--                    phase can see it.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 sram_model, sram_tester, sram_arbiter, sram_controller

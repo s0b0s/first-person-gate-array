@@ -1,16 +1,15 @@
-"""Check VHDL files against the team's formatting rules.
+"""Check VHDL files against the formatting rules.
 
 Usage:
     python tools/style/check_vhdl_style.py            every .vhd under rtl/ and sim/
     python tools/style/check_vhdl_style.py file.vhd   just these files
 
-Rules checked (outside comments and string literals):
-    - keyboard characters only (ASCII), no trailing whitespace
-    - tab indentation (no line starts with spaces)
+Rules (outside comments and string literals):
+    - ASCII only, no trailing whitespace, tab indentation
     - spaces around <=, =>, := and after commas
     - "port map (" and "generic map (" with a space before the parenthesis
     - "then" on the same line as its if/elsif
-    - no column alignment: no run of two or more spaces inside code
+    - no column alignment (no run of two or more spaces inside code)
     - exactly one space before an end-of-line comment
     - a header block ("-- Module Name:") near the top of each file
 Exit status 1 if anything is found. Generated files are checked too.

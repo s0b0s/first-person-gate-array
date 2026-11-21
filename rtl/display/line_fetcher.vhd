@@ -9,23 +9,18 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    System-domain half of the display: copies one rendered
---                 line (RENDER_W bytes) from the front framebuffer in SRAM
---                 into the line buffer half (line mod 2), as SRAM arbiter
---                 master 0 (top priority).
---                 first_i (once per frame, in vertical blanking) fetches
---                 line 0 and latches front_i, so the buffer shown cannot
---                 change in the middle of a frame; next_i fetches the
---                 following line. The pixel side sends next_i when it
---                 starts showing line r (on scanline 2r), so line r + 1
---                 has two scanlines (6,400 clocks) for 320 reads (640
---                 clocks at 2 cycles per access).
---                 The line numbers are counted here, so only single-bit
+-- Description:    Copies one rendered line (RENDER_W bytes) from the
+--                 front framebuffer in SRAM into line buffer half
+--                 (line mod 2), as SRAM arbiter master 0 (top priority).
+--                 first_i fetches line 0 and latches front_i (so the
+--                 shown buffer cannot change mid-frame); next_i fetches
+--                 the next line. next_i comes at scanline 2r, giving
+--                 line r + 1 two scanlines (6,400 clocks) for 320 reads
+--                 (640 clocks). Line numbers are counted here, so only
 --                 event pulses cross from the pixel domain.
---                 line_start_o pulses with line_o when a fetch starts
---                 (the buffer manager uses it as a display line clock).
---                 overrun_o pulses if a request arrives while a fetch is
---                 still running (a missed deadline; never expected).
+--                 line_start_o / line_o: fetch start (display line clock
+--                 for the buffer manager). overrun_o: request while
+--                 still busy (missed deadline, never expected).
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, hw_pkg,
@@ -96,8 +91,8 @@ begin
 			line_start <= start;
 			overrun <= (first_i or next_i) and busy;
 			if (first_i = '1') then
-				-- New frame: line 0 of the buffer that is front now. Any
-				-- unfinished fetch is abandoned (only after an overrun).
+				-- New frame: line 0 of the current front buffer; an
+				-- unfinished fetch (only after an overrun) is abandoned
 				line <= (others => '0');
 				if (front_i = '1') then
 					base <= to_unsigned(FB1_BASE, 19);

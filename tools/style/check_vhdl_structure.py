@@ -1,34 +1,31 @@
-"""Check VHDL files against the project's structural rules. tools/style/check_vhdl_style.py checks the
-formatting; this checks the structure.
+"""Check VHDL files against the project's structural rules (check_vhdl_style.py checks
+formatting).
 
 Usage:
     python tools/style/check_vhdl_structure.py            every .vhd under rtl/ and sim/
     python tools/style/check_vhdl_structure.py file.vhd   just these files
 
 Rules (code outside comments and string literals):
-    header      every field of the team's header block (tools/style/headers.py): Company,
-                Engineer, Create Date, Design Name, Module Name, Project Name (First-Person
-                Gate Array), Target Devices, Tool versions, Description, Dependencies,
-                Revision, Additional Comments
+    header      every field of the header block (tools/style/headers.py), Project Name
+                First-Person Gate Array
     library     "library IEEE;" (upper case), numeric_std only (no
                 std_logic_arith, std_logic_unsigned, std_logic_signed)
     vhdl93      in rtl/, no VHDL-2008 predefined functions (maximum, minimum, to_string,
                 to_hstring...): xvhdl's 93 mode accepts them, Vivado synthesis does not
-    record      in rtl/, no record types (plain signals and arrays instead)
+    record      in rtl/, no record types
     arch        every architecture is named arch
     component   instances use component declarations, never "entity work.x"
     begin       "begin" on its own line
     map         one association per line inside port map ( / generic map (
-    clocked     a process with rising_edge and a reset in its sensitivity list is (clk, rst)
-                and tests the reset before rising_edge; in rtl/, rising_edge only of a clock (a
-                name with "clk" in it, or C); a process with rising_edge and no
-                reset is reported as "no reset" for review (allowed for RAM, ROM and pipeline
-                registers only)
+    clocked     a process with rising_edge and a reset has sensitivity (clk, rst) and tests
+                the reset first; in rtl/, rising_edge only of a clock (name containing "clk",
+                or C); rising_edge without a reset is listed as "no reset" for review
+                (allowed for RAM, ROM and pipeline registers)
     names       generics and constants in upper case; in rtl/ (except rtl/top/) every entity
                 port ends in _i, _o or _io
     sync        no synchronizer instance with fewer than 3 stages
     testbench   every sim/tb_*.vhd has a clock process and a separate reset process
-Exit status 1 if anything is found (the "no reset" review list does not count).
+Exit status 1 if anything is found (the "no reset" list does not count).
 """
 
 import re
@@ -78,8 +75,8 @@ def check(path):
             bad(n, "write 'library IEEE;' (upper case)")
         if re.search(r"std_logic_(arith|unsigned|signed)", low):
             bad(n, "numeric_std only (no std_logic_arith/unsigned/signed)")
-        # VHDL-93 design: predefined VHDL-2008 functions that xsim's 93 mode accepts but
-        # Vivado synthesis rejects (found the hard way: maximum() in ps2_input)
+        # VHDL-2008 predefined functions that xsim's 93 mode accepts but Vivado synthesis
+        # rejects
         if is_rtl:
             m = re.search(r"\b(maximum|minimum|to_string|to_hstring|to_ostring|to_bstring)\s*\(", low)
             if m:

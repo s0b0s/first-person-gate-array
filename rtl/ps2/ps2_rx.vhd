@@ -10,21 +10,15 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    PS/2 receiver (device to host). The device drives the
---                 clock (10 to 16.7 kHz) and changes data while the clock
---                 is high; the host takes one bit on every falling clock
---                 edge. A frame is 11 bits, first bit first:
---                   bit 0      start, always '0'
---                   bits 1..8  data, LSB first
---                   bit 9      odd parity (data and parity hold an odd
---                              number of ones)
---                   bit 10     stop, always '1'
---                 After the 11th bit exactly one output pulses for one
---                 cycle: valid_o (good byte on data_o), frame_err_o (bad
---                 start or stop bit) or parity_err_o. If a frame is
---                 started and no falling edge arrives for TIMEOUT_CYCLES
---                 (2 ms at 100 MHz, longer than any bit time), the bit
---                 counter restarts and timeout_o pulses, so a lost clock
---                 edge cannot shift every following byte.
+--                 clock (10 to 16.7 kHz) and changes data while it is
+--                 high; the host takes a bit on each falling edge. Frame
+--                 of 11 bits: start '0', 8 data LSB first, odd parity,
+--                 stop '1'.
+--                 After the 11th bit exactly one of valid_o, frame_err_o
+--                 (bad start or stop) or parity_err_o pulses. A started
+--                 frame with no falling edge for TIMEOUT_CYCLES (2 ms)
+--                 restarts and pulses timeout_o, so a lost edge cannot
+--                 shift every following byte.
 --                 en_i = '0' (host disabled or transmitting) clears the
 --                 frame and ignores the line.
 --                 Clock domain: clk_i (system). fall_i and dat_i come

@@ -3,18 +3,18 @@
 Tile word (24 bits):
     3:0 wall_tex (0 open, 1..15 wall texture)   5:4 floor_tex   7:6 ceil_tex
     11:8 light   13:12 light_type   16:14 special   19:17 floor_h   22:20 ceil_h
-    23 door orientation: 0 = door plane perpendicular to x (rays and the player cross it while
-       moving in x), 1 = perpendicular to y
-Special codes: 1 door, 2 locked door (needs key 1, blue), 3 locked door (key 2, red), 4 exit
-switch (a wall tile you "use"), 5 secret (a floor tile, counted once), 6 toxic floor, 7 ramp.
-Doors (specials 1..3) must have walls on both sides across their axis, so a ray or the player
-can only cross a door tile along the door's axis (check_doors() enforces it).
+    23 door orientation: 0 = door plane perpendicular to x (crossed moving in x),
+       1 = perpendicular to y; on an open, non-door tile: sky ceiling
+Specials: 1 door, 2 locked door (key 1, blue), 3 locked door (key 2, red), 4 exit switch
+(a wall tile you "use"), 5 secret (floor, counted once), 6 toxic floor, 7 ramp.
+Doors need walls on both sides across their axis, so they are only crossed along it
+(check_doors()).
 
-Heights: floor height = floor_h * 8 units (0..56), ceiling = 64 - ceil_h * 8 units
-(64..8); a tile is 64 units tall. Flat levels have every floor_h and ceil_h at 0. A ramp (special 7) keeps its direction in ceil_tex (0 +x, 1 -x, 2 +y, 3 -y;
-the ramp's ceiling flat is then flat 0) and rises from its own floor height to the floor
-height of the next tile in that direction (check_heights() enforces walls on its two sides,
-open tiles or doors at its ends, and chains of ramps in one direction). Bit 23 of an open, non-door tile marks a sky ceiling.
+Heights: floor = floor_h * 8 units (0..56), ceiling = 64 - ceil_h * 8 (64..8); a tile is 64
+units tall; flat levels have all heights 0. A ramp keeps its direction in ceil_tex (0 +x,
+1 -x, 2 +y, 3 -y; its ceiling flat is then flat 0) and rises from its floor height to that
+of the next tile in that direction (check_heights(): walls on its two sides, open tiles or
+doors at its ends, ramp chains in one direction only).
 
 Level item in flash (level.binary()): 4096 tile words x 3 bytes little endian, start x u32,
 start y u32 (Q6.16), start angle u16, actor count u16, then count x 8-byte actor records
@@ -433,13 +433,11 @@ def level3():
 
 
 def level_test():
-    """Directed heights test map (not a game level; tools/model/golden4.py drives it with a
-    scripted session). Along y = 3..5: a step up 16, a drop back to 0, then a step up 24 from 0
-    (exactly STEP_MAX; higher steps cannot be reached anyway, since a floor above 24 leaves less
-    than the 40 units of headroom under the 64-unit ceiling), then a drop to 0. A corridor south
-    at x = 17 starts 8 up and goes down a ramp rising toward -y (its direction field 3 also
-    tests the ramp ceiling rule), then under a ceiling exactly 40 above the floor (passable) to
-    one 32 above it (refused)."""
+    """Directed heights test map (not a game level; driven by golden4.py). Along
+    y = 3..5: step up 16, drop to 0, step up 24 (exactly STEP_MAX; higher floors leave less
+    than the 40-unit headroom anyway), drop to 0. A corridor south at x = 17 starts 8 up, goes
+    down a ramp rising toward -y (direction 3 also tests the ramp ceiling rule), then under a
+    ceiling 40 above the floor (passable) to one 32 above (refused)."""
     lv = Level("Test", 9)
     lv.room(2, 3, 18, 5, 1, light=12)
     lv.heights(7, 3, 9, 5, fh=2)                              # step up 16
@@ -461,11 +459,10 @@ def level_test():
 
 
 def level_alert():
-    """Directed sound-alert test map (not a game level; golden4.py drives it with a scripted
-    session): from the start room A, room B lies around a corner (no line of sight) with a
-    normal Grunt and an ambushing Grunt; room C lies behind a closed door with a Grunt. A shot
-    from A must wake only B's normal Grunt; after the door is opened, a second shot must also
-    wake C's Grunt; B's ambusher must stay asleep."""
+    """Directed sound-alert test map (not a game level; driven by golden5.py). From
+    start room A, room B is around a corner (no line of sight) with a normal and an ambush
+    Grunt; room C is behind a closed door with a Grunt. Shot 1 wakes only B's normal Grunt;
+    after the door opens, shot 2 also wakes C's; B's ambusher stays asleep."""
     lv = Level("Alert test", 10)
     lv.room(2, 2, 6, 8, 2, light=12)                          # A: start
     lv.corridor(7, 5, 10, 5)

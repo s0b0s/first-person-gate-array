@@ -1,11 +1,10 @@
 """Golden files for sound alerts and the ambush flag, written by build_assets.py.
 
-    game5a_trace.txt  a scripted session on the directed alert map (level.level_alert(), map
-                      level 10, build/level10.bin), in the game2_trace.txt format; it plays as
-                      level 1. A first shot wakes only the Grunt around the corner; the Grunt
-                      behind the closed door and the ambusher stay asleep; the door is opened
-                      (the far Grunt is beyond sight range, so it stays asleep); a second shot
-                      wakes the far Grunt through the open door; the ambusher never wakes.
+game5a_trace.txt  scripted session on the directed alert map (level.level_alert(), map
+                  level 10, build/level10.bin), game2_trace.txt format, plays as level 1.
+                  Shot 1 wakes only the Grunt around the corner (not the one behind the
+                  closed door, not the ambusher); the door opens (the far Grunt is out of
+                  sight range); shot 2 wakes the far Grunt; the ambusher never wakes.
 """
 
 import game as G

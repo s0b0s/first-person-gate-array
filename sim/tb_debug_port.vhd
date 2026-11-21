@@ -11,17 +11,12 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for debug_port at 1 Mbaud with
 --                 the real SRAM path behind master 3 (sram_arbiter,
---                 sram_controller, sram_model). A PC-side UART written
---                 here sends commands bit by bit and collects the reply
---                 bytes. Commands tested: ping, echo, read of a status
---                 register, write then read of a control register (and
---                 ctrl_o), read of an unused register, SRAM write of 40
---                 bytes then read back (checked against the SRAM model's
---                 back door as well), an unknown command, and a command
---                 abandoned half-way (dropped after TIMEOUT_MS = 1 ms, the
---                 next ping still works). The PC-side receiver copies its
---                 start and stop bit check counts to rx_checks and
---                 rx_errors; the stimulus process adds them at the end.
+--                 sram_controller, sram_model) and a PC-side UART. Tests:
+--                 ping, echo, status register read, control register
+--                 write and read back (and ctrl_o), unused register, 40-byte
+--                 SRAM write and read back (also via the model's back
+--                 door), unknown command, and a command abandoned half-way
+--                 (dropped after TIMEOUT_MS = 1 ms; the next ping works).
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 sram_model, debug_port, uart_rx, uart_tx, sram_arbiter,

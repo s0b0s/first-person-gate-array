@@ -9,34 +9,26 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Walls, floors and ceilings of one frame with floor and
---                 ceiling heights and ramps:
+-- Description:    Walls, floors and ceilings (with heights and ramps) of
+--                 one frame:
 --                   ray_engine -> span FIFO (16) -> column_rasterizer
 --                   -> pixel write port (to the SRAM pixel FIFO)
---                 The ray engine walks each column front to back and sends
---                 its spans (render_types_pkg DESC_*) while the rasterizer
---                 draws earlier ones (the rasterizer's SRAM writes set the
---                 pace: about 480 clocks per column).
---                 The ray engine owns tile map port A; the rasterizer reads
---                 the map through the shared port B (the frame renderer
---                 hands port B to it while busy_o is high).
---                 Memories filled by the ray engine, read by the sprite
---                 engine and the game (1-clock reads):
---                   z-buffer  320 x 16: z of the wall (or of the edge that
---                             closed the window) per column, Q6.10
---                   clip RAM  320 x 16 entries of CLIP_BITS (z, top, bottom:
---                             the open window after each height edge,
---                             nearest first), address column & entry
+--                 The ray engine runs ahead; the rasterizer's SRAM writes
+--                 set the pace (about 480 clocks per column). Ray engine
+--                 owns tile map port A; the rasterizer uses port B while
+--                 busy_o is high.
+--                 RAMs written by the ray engine, read by sprites and game
+--                 (1-clock reads):
+--                   z-buffer  320 x 16, Q6.10: wall (or closing edge) z
+--                   clip RAM  320 x 16 entries of CLIP_BITS (z, top,
+--                             bottom of the open window after each height
+--                             edge, nearest first), address column & entry
 --                             (5,120 words, about 4.5 BRAM36)
 --                   counts    320 x 5: clip entries per column
---                 Frame registers (pos, angle, eye, doors, fx, buf) must be
---                 stable from start_i until done_o. fx_i (effects:
---                 light type offsets, animation frame) goes to both engines:
---                 the ray engine for wall, riser and upper-wall light, the
---                 rasterizer for floor and ceiling light, the sky (with the
---                 view angle) and the animated slime texture.
---                 cycles_o counts clocks from start_i to done_o of the
---                 last frame (debug overlay: render time).
+--                 Frame inputs (pos, angle, eye, doors, fx, buf) must be
+--                 stable from start_i to done_o. fx_i (light offsets,
+--                 animation frame) feeds both engines. cycles_o: clocks
+--                 of the last frame (debug overlay).
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -262,8 +254,7 @@ begin
 			done_o => raster_done
 		);
 
-	-- Z-buffer, clip entries and clip counts: written by the ray engine, read
-	-- by the sprite engine and the game (block or LUT RAM, 1-clock reads)
+	-- Z-buffer, clip entries and clip counts (1-clock reads)
 	process(clk_i)
 	begin
 		if rising_edge(clk_i) then

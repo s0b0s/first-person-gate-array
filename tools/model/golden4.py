@@ -1,23 +1,22 @@
 """Golden files for heights and ramps, written by build_assets.py.
 
-    ray4_maps.txt    the tile maps the poses use: "M <level>" then 4096 hex tile words
-    ray4_poses.txt   one pose per line: map level, px, py, angle, eye, door count, then
-                     (x y open) x 8, then the effects: lmod of light types 0..3 and anim,
-                     decimal
+    ray4_maps.txt    tile maps of the poses: "M <level>" then 4096 hex tile words
+    ray4_poses.txt   one pose per line (decimal): map level, px, py, angle, eye, door count,
+                     (x y open) x 8, then lmod of light types 0..3 and anim
     ray4_spans.txt   per pose, per column: "C <pose> <col> <z> <spans> <clips> <rx> <ry>",
                      then one line per span "S kind y0 y1 e tex_id tex_col v0 tex_step light side"
-                     (fields a kind does not use are 0) and one per clip entry "L z top bot"
-    frame4_<k>.txt   the walls, floors and ceilings of pose k (240 lines of 640 hex digits)
-    sprite4_cases.txt  sprite engine cases with heights: like sprite_cases.txt plus the clip
-                     lists ("L <col> <n> (z top bot) x n" for every column with entries)
-    game4_trace.txt  a 1,500-frame autopilot session on level 3 (stairs, a ramp, a raised hall,
-                     falls, combat), in the game2_trace.txt format; level 3 plays as level 1
-    game4d_trace.txt a scripted session on the directed test map (level.level_test(), map
+                     (unused fields 0) and one per clip entry "L z top bot"
+    frame4_<k>.txt   walls, floors and ceilings of pose k (240 lines of 640 hex digits)
+    sprite4_cases.txt  like sprite_cases.txt plus the clip lists
+                     ("L <col> <n> (z top bot) x n" for every column with entries)
+    game4_trace.txt  1,500-frame autopilot session on level 3 (stairs, ramp, raised hall,
+                     falls, combat), game2_trace.txt format; level 3 plays as level 1
+    game4d_trace.txt scripted session on the directed test map (level.level_test(), map
                      level 9, build/level9.bin): steps of 16 and 24, falls, a -y ramp, the
-                     headroom limit; it plays as level 1
+                     headroom limit; plays as level 1
 
-Clip entries of a closed window are stored as (z, 1, 0) (render.Column.edge), so top and
-bottom always fit in 8 bits.
+A closed window's clip entries are stored as (z, 1, 0) (render.Column.edge), so top and
+bottom fit in 8 bits.
 """
 
 import build_assets as B
@@ -65,9 +64,9 @@ def test_map_poses():
 
 
 def effect_poses():
-    """Light effects: the sky over level 1's slime pit (animated slime walls) and over the
-    level-3 arena during a strobe, the flickering hall and the glowing room during a muzzle
-    flash (render.light_mods gives each frame's offsets)."""
+    """Light effect poses: sky over level 1's slime pit (animated slime walls) and over
+    the level-3 arena during a strobe, the flickering hall and the glowing room during a
+    muzzle flash (offsets from render.light_mods)."""
     q = B.q16
     return [
         (1, render.Frame(q(36.5), q(56.5), 768, lmod=render.light_mods(5, False), anim=1)),

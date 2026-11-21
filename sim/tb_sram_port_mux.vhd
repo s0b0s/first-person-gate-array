@@ -9,26 +9,17 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for sram_port_mux. Two client
---                 processes each issue OPS random reads and writes to
---                 their own 256-byte region (client A 0..255, B 256..511),
---                 back to back or with random idle gaps, holding each
---                 request until its grant, without waiting for read data
---                 (several reads in flight). The read checker watches the
---                 grants: it keeps a shadow of both regions and queues the
---                 expected byte of every granted read, one queue per
---                 client (a ring buffer with head and count variables).
---                 The master port model grants a request with GNT_PCT
---                 probability per clock (combinationally, like
---                 sram_arbiter) and returns read data LAT clocks after the
---                 grant on the shared rvalid / rdata.
---                 Checks: every rvalid a client sees matches the head of
---                 its own queue (right client, right order, right byte);
---                 no rvalid with an empty queue; both clients finish all
---                 operations (no starvation) and every read comes back.
---                 The read checker copies its check counts and queue
---                 lengths to signals; the finish process adds the counts
---                 to its own.
+-- Description:    Self-checking testbench for sram_port_mux. Two clients
+--                 issue OPS random reads and writes to their own 256-byte
+--                 regions (A 0..255, B 256..511), back to back or with random
+--                 gaps, without waiting for read data. The master port model
+--                 grants with GNT_PCT probability per clock (combinationally,
+--                 like sram_arbiter) and returns data LAT clocks after the
+--                 grant. The read checker shadows both regions and queues the
+--                 byte of each granted read per client.
+--                 Checks: every rvalid matches the head of its client's queue
+--                 (client, order, byte); none with an empty queue; both
+--                 clients finish (no starvation); every read returns.
 --                 RUN_VARIANTS: LAT=2 LAT=5
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -230,12 +221,10 @@ begin
 		end if;
 	end process;
 
-	-- Read data checks. At each clock edge the checker sees the same
-	-- grants the clients see: a granted write updates the shadow of the
-	-- client's region, a granted read queues the byte it must return.
-	-- Each client has a 64-entry ring buffer (head, count); the read
-	-- data comes back at least 2 clocks after its grant, so returned
-	-- bytes are taken from the queues before this edge's grants are added.
+	-- Read data checks: a granted write updates the client's shadow, a
+	-- granted read queues its byte (64-entry ring per client). Data comes
+	-- back at least 2 clocks after its grant, so returned bytes leave the
+	-- queues before this edge's grants are added.
 	process(clk)
 		type queue_t is array (0 to 63) of natural;
 		variable shadow: mem_t := (others => 0);

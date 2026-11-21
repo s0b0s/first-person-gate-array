@@ -11,17 +11,12 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for clock_reset (the real
 --                 MMCME2_BASE simulation model) and power_gate:
---                 - clk_sys, clk_pix and clk_sram_rd periods, and the
---                   phase of clk_sram_rd (about 1.04 ns after clk_sys)
---                 - both resets stay high until lock, release on a rising
---                   edge of their own clock, and re-assert at once on
---                   btn_rst
---                 - pcb_on turns on only after PWR_SENSE has been high
---                   for HOLD_CYCLES (shortened to 200), ignores shorter
---                   pulses, and turns off within 4 cycles of a drop.
---                 The two reset-release processes copy their check counts
---                 to their own signals; the stimulus process adds them to
---                 its own at the end.
+--                 - clock periods; clk_sram_rd about 1.04 ns after clk_sys
+--                 - resets held until lock, released on their own clock's
+--                   rising edge, re-asserted at once by btn_rst
+--                 - pcb_on only after PWR_SENSE is high for HOLD_CYCLES
+--                   (200 here), not on shorter pulses, off within 4 cycles
+--                   of a drop
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 clock_reset, power_gate
@@ -121,8 +116,7 @@ begin
 		wait for PERIOD_12 / 2;
 	end process;
 
-	-- Reset: this design has no external reset; the MMCM lock is the
-	-- reset. The process checks that both resets hold until lock.
+	-- No external reset: MMCM lock is the reset; check both resets hold until lock
 	process
 		variable checks, errors: natural := 0;
 	begin
@@ -173,10 +167,8 @@ begin
 		check(abs ((t1 - t0) / 100 - 40 ns) < 10 ps, "clk_pix period " &
 			time'image((t1 - t0) / 100), checks, errors);
 
-		-- clk_sram_rd: same period, rising edge about 1.04 ns after clk_sys.
-		-- The MMCM model rounds single edges to whole picoseconds of a
-		-- 1.6667 ns VCO, so single edges wander by tens of ps; the period
-		-- is averaged over 100 cycles.
+		-- clk_sram_rd: same period, edge about 1.04 ns after clk_sys. Single edges
+		-- wander by tens of ps (MMCM model rounding), so average over 100 cycles.
 		wait until rising_edge(clk_sys);
 		t0 := now;
 		wait until rising_edge(clk_rd);

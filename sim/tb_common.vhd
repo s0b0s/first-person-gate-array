@@ -14,8 +14,7 @@
 --                 (asynchronous assert, release after 3 edges),
 --                 pulse_sync (every pulse arrives exactly once in the
 --                 slower domain) and debounce (glitches rejected, one
---                 rise pulse per press). Clock, reset and stimulus run in
---                 separate processes.
+--                 rise pulse per press).
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 synchronizer, reset_sync, pulse_sync, debounce

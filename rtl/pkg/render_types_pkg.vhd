@@ -10,15 +10,12 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    Bit layouts shared by the renderer blocks and the game:
---                 - Column descriptor, ray engine -> column rasterizer,
---                   packed into DESC_BITS. Field meanings match the dict
---                   returned by column() in tools/model/render.py. Rows
---                   y0..y1 are the clipped wall rows; y0 > y1 means no
---                   wall pixels (a wall thinner than one pixel).
---                 - Door table entry, game -> renderer: tile x, tile y,
---                   open amount 0..64 (64 = fully open; 0 = closed, so an
---                   unused entry is simply x = y = open = 0).
---                 - Frame registers widths.
+--                 - Column descriptor (ray engine -> column rasterizer),
+--                   fields as column() in tools/model/render.py. y0 > y1
+--                   means no wall pixels.
+--                 - Door table entry (game -> renderer): tile x, tile y,
+--                   open 0..64 (0 closed, so an unused entry is all zero).
+--                 - Frame register widths.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164
 --
@@ -71,10 +68,9 @@ package render_types_pkg is
 	constant DESC_RX_HI: natural := 104;
 	constant DESC_RY_LO: natural := 105; -- 122:105 ray y, Q2.16 signed
 	constant DESC_RY_HI: natural := 122;
-	-- Heights: the descriptor is one span of a column (tools/model/render.py); rows
-	-- y0..y1 are drawn as the kind says. A column is a run of spans ending with the
-	-- LAST bit. Wall spans (walls, risers, upper walls) use the texture fields; floor
-	-- and ceiling spans use E and the ray (rowDist = (E * RINV(y)) >> 8)
+	-- Each descriptor is one span (rows y0..y1) of a column; LAST ends the column.
+	-- Wall spans use the texture fields; floor and ceiling spans use E and the ray
+	-- (rowDist = (E * RINV(y)) >> 8).
 	constant DESC_KIND_LO: natural := 123; -- 124:123 span kind: 0 ceiling, 1 floor, 2 textured
 	constant DESC_KIND_HI: natural := 124;
 	constant DESC_E_LO: natural := 125; -- 131:125 floor: eye - F, ceiling: C - eye (0..127)
@@ -85,17 +81,17 @@ package render_types_pkg is
 	constant KIND_FLOOR: std_logic_vector(1 downto 0) := "01";
 	constant KIND_WALL: std_logic_vector(1 downto 0) := "10";
 
-	-- Effects register (game core -> renderer, render.py "Light effects"): the light
-	-- offset of each light type (0 steady, 1 flicker, 2 strobe, 3 glow), signed -8..2, already
-	-- including the muzzle flash, added to every tile light before distance; and the animated
-	-- texture frame (slime cycles through wall ROM slots 5, 8, 9, 10)
+	-- Effects register (game core -> renderer, render.py "Light effects"): per light type
+	-- (0 steady, 1 flicker, 2 strobe, 3 glow) a signed -8..2 offset, muzzle flash included,
+	-- added to tile light before distance; and the animation frame (slime cycles wall ROM
+	-- slots 5, 8, 9, 10)
 	constant FX_BITS: natural := 22;
 	constant FX_LMOD_W: natural := 5; -- Light type k offset at bits 5k + 4 .. 5k (signed)
 	constant FX_ANIM_LO: natural := 20; -- 21:20 animation frame 0..3
 	constant FX_ANIM_HI: natural := 21;
 
-	-- Clip entry (ray engine -> sprite engine): the open window after a height edge,
-	-- up to CLIP_MAX (render_pkg) per column, nearest first; a closed window is (z, 1, 0)
+	-- Clip entry (ray engine -> sprite engine): open window after a height edge, up to
+	-- CLIP_MAX (render_pkg) per column, nearest first; closed window = (z, 1, 0)
 	constant CLIP_BITS: natural := 32;
 	constant CLIP_Z_LO: natural := 0; -- 15:0 z of the edge, Q6.10 (as the z-buffer)
 	constant CLIP_Z_HI: natural := 15;

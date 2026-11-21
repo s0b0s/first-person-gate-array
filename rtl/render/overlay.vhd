@@ -11,37 +11,31 @@
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    2D overlay, drawn last into the back buffer: status bar,
 --                 crosshair, weapon, messages, minimap or automap, PAUSED
---                 box, death text, debug counters, and the full-screen
---                 title, briefing, score and ending pages. Matches
---                 draw_overlay() in tools/model/overlay.py bit for bit.
+--                 box, death text, debug counters, and the title,
+--                 briefing, score and ending pages. Bit-exact with
+--                 draw_overlay() in tools/model/overlay.py.
 --
---                 Structure: a small program of draw commands per screen
---                 (PROG, picked by the game flow in the HUD word) runs in
---                 order, so later commands overwrite earlier ones exactly as
---                 in the model. Commands:
---                   RECT  solid fill (also single pixels: the crosshair)
---                   TEXT  a string of the string ROM, font 8x8, scale 1 or
---                         2, only lit pixels written; optionally centered
---                   BLIT  the weapon art frame scaled x2 from SRAM, texel
---                         255 transparent
---                   MAP   minimap or automap: every seen tile as a cell x
---                         cell square, then the keys, the player and the
---                         direction cell at (p + 2 cos, sin) >> 16
---                 Each command has a condition on the HUD word (automap,
---                 not dead, message, paused, dead, debug).
---                 Strings: one ROM of 51 strings of up to 40 characters.
---                 Lowercase letters in a string are digit placeholders:
---                 a run of the same letter is one number field, printed
---                 right-aligned with leading spaces (the seconds field is
---                 zero padded), like num() in the model. The 17 number
---                 fields are converted to decimal once at the start
+--                 Each screen is a program of draw commands (PROG, chosen
+--                 by the game flow) run in order, later ones overwriting
+--                 earlier ones. Each command has a condition on the HUD
+--                 word. Commands:
+--                   RECT  solid fill (single pixels for the crosshair)
+--                   TEXT  string ROM entry, 8x8 font, scale 1 or 2, lit
+--                         pixels only, optionally centered
+--                   BLIT  weapon art from SRAM scaled x2, texel 255
+--                         transparent
+--                   MAP   every seen tile as a cell x cell square, then
+--                         keys, player and direction cell
+--                 String ROM: 51 strings of up to 40 characters. A run of
+--                 one lowercase letter is a number field, right-aligned
+--                 with leading spaces (seconds zero padded), like num() in
+--                 the model. The 17 fields are converted to BCD at start
 --                 (overlay_bcd, about 25 clocks each).
---                 Every pixel goes through one output register with
---                 valid/ready; pixels outside the screen are dropped there
---                 (the model's put() clips the same way).
+--                 Pixels leave through one valid/ready output register,
+--                 which drops off-screen pixels like the model's put().
 --                 Clock domain: clk_i (system). Inputs must be stable from
---                 start_i until done_o; done_o pulses when the last pixel
---                 has been taken by the pixel port.
+--                 start_i until done_o, which pulses when the last pixel
+--                 has been taken.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, game_pkg,
 --                 render_types_pkg, render_pkg, game_tables_pkg, hw_pkg,
@@ -206,10 +200,9 @@ architecture arch of overlay is
 		BRIEF_3_3'length
 	);
 
-	-- Character ROM entries, 9 bits: bit 8 = 0: ASCII in 6:0; bit 8 = 1: a
-	-- digit of a number field, field in 4:0, digit position in 7:5 (0 =
-	-- ones; the position of a placeholder is how many of the same letter
-	-- follow it in its run)
+	-- Character ROM entries, 9 bits: bit 8 = 0: ASCII in 6:0; bit 8 = 1:
+	-- number field in 4:0, digit position in 7:5 (0 = ones; the count of
+	-- the same letter after it)
 	type char_rom_t is array (0 to 2047) of std_logic_vector(8 downto 0);
 
 	function build_char_rom return char_rom_t is
@@ -582,9 +575,8 @@ begin
 	key_on <= keypos_i(KEYPOS_BLUE) when (key = 0) else keypos_i(KEYPOS_RED);
 
 	------------------------------------------------------------------
-	-- Character decode, like num(v, width) in the model. The ROM entry
-	-- (char_r) is a literal, or digit dec_pos (0 = ones) of number field
-	-- dec_f, printed as a space when it is a leading zero
+	-- Character decode, like num(v, width) in the model: char_r is a
+	-- literal or digit dec_pos of field dec_f (leading zeros as spaces)
 	------------------------------------------------------------------
 	dec_f <= 16 when (unsigned(char_r(4 downto 0)) > 16) else to_integer(unsigned(char_r(4 downto 0)));
 	dec_pos <= to_integer(unsigned(char_r(7 downto 5)));
@@ -611,8 +603,7 @@ begin
 	begin
 		if rising_edge(clk_i) then
 			char_q <= CHAR_ROM(caddr);
-			-- Second register: packs into the block RAM's output register,
-			-- so the character decode starts from a fast flip-flop (full-design timing)
+			-- Packs into the BRAM output register, so the decode starts from a fast flop
 			char_r <= char_q;
 			sin_q <= SIN_TABLE(to_integer(taddr));
 		end if;
@@ -693,13 +684,12 @@ begin
 		end case;
 	end process;
 
-	-- The output register takes a new pixel when it is empty or its pixel is being taken
+	-- Output register loads when empty or being emptied
 	can_load <= (not pix_valid) or pix_ready_i;
 	emit_ack <= emit_req and can_load;
 
-	-- Output register: pixels outside the screen are accepted and dropped.
-	-- Address y * 320 + x as (y << 8) + (y << 6) + x: carry chains instead
-	-- of a DSP multiply, whose input setup broke 100 MHz in the full design
+	-- Output register: off-screen pixels are accepted and dropped.
+	-- y * 320 + x as (y << 8) + (y << 6) + x: a DSP multiply failed 100 MHz
 	process(clk_i, rst_i)
 	begin
 		if (rst_i = '1') then
@@ -842,9 +832,8 @@ begin
 								tc <= cmd_color;
 								ty <= cmd_y;
 								if (cmd_word(CMD_CENTER) = '1') then
-									-- (320 - len * 8 * scale) // 2, the model's text_center: an
-									-- arithmetic shift rounds down like Python's //, and is
-									-- cheaper than "/ 2" (which rounds toward zero)
+									-- (320 - len * 8 * scale) // 2 (model's text_center); the
+									-- shift rounds down like Python's //, "/ 2" would not
 									cx <= to_integer(shift_right(to_signed(320 - text_len * 8 * cmd_scale, 12), 1));
 								else
 									cx <= cmd_x;

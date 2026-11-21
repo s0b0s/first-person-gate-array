@@ -1,4 +1,4 @@
-"""Build every generated asset and golden file from the Python model (single source of truth).
+"""Build every generated asset and golden file from the Python model.
 
     python tools/model/build_assets.py            assets, VHDL, golden vectors
     python tools/model/build_assets.py --preview  also preview PNGs in build/preview/
@@ -158,9 +158,8 @@ def game_goldens(assets, pal, preview, records4=()):
     add("dead", records[760], {"flow": game_mod.DEAD})
     add("debug", records[440], {"debug": True}, (177657, 33012, 2, 5))
     add("keys", records[700], {"keys": 3, "health": 200, "armor": 155, "ammo": 7, "weapon": 2})
-    # Key markers: no key lies in a seen cell during the session, so place them by hand (the
-    # hardware has one blue and one red slot): both keys on seen cells (minimap and automap),
-    # then the red key on an unseen cell, where it must not show
+    # Key markers placed by hand (no key is seen in the session; one blue and one red slot):
+    # both on seen cells, then the red key on an unseen cell, where it must not show
     seen_cells = sorted(records[1000]["seen"])
     unseen = [(x, y) for y in range(64) for x in range(64) if (x, y) not in records[1000]["seen"]]
     blue = (actors.I_KEY1,) + seen_cells[len(seen_cells) // 3]
@@ -172,9 +171,8 @@ def game_goldens(assets, pal, preview, records4=()):
     add("score", score, {})
     add("ending", score, {"flow": game_mod.ENDING})
     golden2.write_overlay_cases(GOLDEN / "overlay_cases.txt", ocases)
-    # Frame cases: the whole renderer. The first two playing frames
-    # after the level 1 load run back to back (the seen set grows); the
-    # later ones start from a cleared seen set, as after a level load.
+    # Frame cases (whole renderer): the first two playing frames after the level 1 load run
+    # back to back (the seen set grows); later ones start from a cleared seen set.
     fcases = []
     seen = set()
 

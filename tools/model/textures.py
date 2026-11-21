@@ -1,7 +1,5 @@
-"""Procedural textures (original art, no licensing questions).
-
-Every texture is 64 x 64 palette indices, generated from integer hashes so the output is the
-same on every machine and Python version.
+"""Procedural textures (original art): 64 x 64 palette indices from integer hashes, so
+the output is the same on every machine and Python version.
 
 Wall textures (tile wall_tex 1..8):
     1 brick    2 stone blocks    3 wood planks    4 metal panels
@@ -10,8 +8,8 @@ Wall textures (tile wall_tex 1..8):
     5, 8, 9, 10 (render.wall_texture_index), the drips sliding down 4 rows per frame
 Flats (floor_tex / ceil_tex 0..3):
     0 floor tiles    1 dirt and gravel    2 ceiling panels with lamps    3 wood ceiling
-Sky: 256 x 64, column-major (u * 64 + v), drawn without light over tiles marked
-as sky; u follows the view angle (two repeats per turn), v the screen row.
+Sky: 256 x 64, column-major (u * 64 + v), unlit, over tiles marked as sky; u follows the
+view angle (two repeats per turn), v the screen row.
 
 Storage (what the RTL ROMs expect):
     walls column-major: texel (u, v) at u * 64 + v  (the rasterizer walks down a column)

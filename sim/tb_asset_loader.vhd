@@ -10,23 +10,15 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for asset_loader with the real
---                 flash_reader and the SPI flash model, preloaded with
---                 build/gamedata.bin at FLASH_DATA_BASE. A behavioral SRAM
---                 master port grants art writes after random delays (0 to
---                 7 clocks) and stores them.
---                 Checks:
---                 - art job: every byte of build/art.bin lands at
---                   ART_BASE + i, each address once, nothing outside
---                 - level jobs 1, 2, 3: all 4096 map writes and all 32
---                   actor slots (records from build/level<n>.bin, zeros
---                   past the level's count) and the start pose
---                 - a directory without the wanted id, and a bad magic,
---                   give error_o, no writes and no done_o
---                 The write monitors keep what they capture in signals
---                 (one driver each) that the stimulus process reads; the
---                 SRAM port process copies its check counts to sram_checks
---                 and sram_errors, which the stimulus process adds to its
---                 own at the end.
+--                 flash_reader and the SPI flash model (build/gamedata.bin
+--                 at FLASH_DATA_BASE). The SRAM port grants after a random
+--                 0 to 7 clock delay. Checks:
+--                 - art: each byte of build/art.bin written once at
+--                   ART_BASE + i, nothing outside
+--                 - levels 1 to 3: all 4096 map writes, all 32 actor slots
+--                   (zeros past the count) and the start pose
+--                 - missing directory id or bad magic: error_o, no writes,
+--                   no done_o
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, tb_pkg, asset_loader, flash_reader,

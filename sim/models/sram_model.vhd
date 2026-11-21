@@ -9,24 +9,17 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Behavioral model of the ISSI IS61WV5128BLL-10 (512 K x 8
---                 asynchronous SRAM, 10 ns grade) with the datasheet
---                 timing the controller is designed around:
---                 Read: data is 'X' from tOHA (2 ns) after an address
---                   change until tAA (10 ns), and 'X' until tDOE (4.5 ns)
---                   after OE_n falls. The output keeps driving for tHZOE
---                   (4 ns) after OE_n rises or WE_n falls, so a driver
---                   that turns on too early shows up as contention.
---                 Write (WE controlled, data latched when WE_n rises):
---                   checks tPWE >= 8 ns, tSD >= 6 ns, tAW >= 8 ns, and
---                   that the address does not move while WE_n is low.
---                 driving_o tells the testbench when the model drives the
---                 bus so it can flag contention with the FPGA's drivers.
---                 Timing errors use severity error and are counted in
---                 errors_o.
---                 The storage is the shared variable sram_mem in
---                 sram_model_pkg, so a testbench can preload or inspect
---                 memory directly (one SRAM model per simulation).
+-- Description:    Model of the IS61WV5128BLL-10 (512 K x 8 async SRAM).
+--                 Read: data 'X' from tOHA (2 ns) after an address change
+--                 to tAA (10 ns), and until tDOE (4.5 ns) after OE_n falls;
+--                 it keeps driving tHZOE (4 ns) after OE_n rises or WE_n
+--                 falls, so early FPGA drivers show as contention.
+--                 Write (data latched at WE_n rising): checks tPWE >= 8 ns,
+--                 tSD >= 6 ns, tAW >= 8 ns, address stable while WE_n low.
+--                 driving_o shows when the model drives the bus. Timing
+--                 errors are reported and counted in errors_o.
+--                 Storage: shared variable sram_mem in sram_model_pkg, for
+--                 back-door preload and inspection (one model per sim).
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std
 --
@@ -46,8 +39,7 @@ package sram_model_pkg is
 		procedure write(addr: natural; data: std_logic_vector(7 downto 0));
 		impure function read(addr: natural) return std_logic_vector;
 	end protected sram_mem_t;
-	-- The one SRAM in the system; testbenches may read and write it
-	-- directly (back door) to preload or check memory.
+	-- The one SRAM; testbenches preload or check it here (back door)
 	shared variable sram_mem: sram_mem_t;
 end package sram_model_pkg;
 

@@ -1,24 +1,18 @@
-# Inline dependency list (PEP 723). Plain "python" ignores it; with uv installed,
-# "uv run tools/uart/debug_uart.py ..." reads it and fetches pyserial by itself.
+# Inline dependency list (PEP 723), read by "uv run"; plain "python" ignores it.
 # /// script
 # requires-python = ">=3.9"
 # dependencies = ["pyserial"]
 # ///
 """PC side of the UART debug port (rtl/debug/debug_port.vhd).
 
-Needs pyserial, the only package outside the standard library that any tool here uses.
-Either install it once:
-    pip install -r requirements.txt
-or, with uv (https://docs.astral.sh/uv/), skip installing and run the script through uv,
-which reads the dependency list at the top of this file:
+Needs pyserial: "pip install -r requirements.txt", or run through uv, which reads the
+dependency list at the top of this file:
     uv run tools/uart/debug_uart.py auto ping
 
-The serial port name depends on the computer (COM3, COM7... on Windows, /dev/ttyUSB1 on Linux,
-/dev/tty.usbserial-... on macOS), so COM5 below is only an example. Find it with
-    python tools/uart/debug_uart.py ports
-or give "auto" as the port: it picks the Cmod's UART by its USB ID (FTDI, vendor 0403).
-The Cmod's FTDI chip has two channels: A is JTAG (programming), B is the UART. Windows usually
-lists only B as a COM port; Linux lists both, and the UART is the second (ttyUSB1).
+Port names differ per computer (COM3... on Windows, /dev/ttyUSB1 on Linux,
+/dev/tty.usbserial-... on macOS); list them with "ports", or give "auto" to pick the Cmod by
+its FTDI USB ID (0403). The FTDI chip has two channels, A JTAG and B UART; Windows usually
+lists only B, Linux both (the UART is the second, ttyUSB1).
 
 Usage (or "uv run" in place of "python"; "auto" or a port name in place of COM5):
     python tools/uart/debug_uart.py ports                  list serial ports, board marked

@@ -10,18 +10,12 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    Sequential unsigned restoring divider, one quotient bit
---                 per clock (shift and subtract):
---                   for i = NUM_BITS - 1 downto 0:
---                     r = 2 r + num(i); if r >= den then r = r - den,
---                     q(i) = 1
---                 quo_o = floor(num / den), except that it saturates to
---                 2^QUO_BITS - 1 when the quotient does not fit in
---                 QUO_BITS bits or den = 0 (then every step subtracts
---                 nothing and q comes out all ones). This is exactly
---                 div_sat() in tools/model/render.py.
---                 Interface: pulse start_i with num_i and den_i; done_o
---                 pulses with quo_o valid NUM_BITS + 1 clocks later; quo_o
---                 holds until the next start. busy_o is high meanwhile.
+--                 per clock. quo_o = floor(num / den), saturated to
+--                 2^QUO_BITS - 1 on overflow or den = 0 (matches div_sat()
+--                 in tools/model/render.py).
+--                 Pulse start_i with num_i and den_i; done_o pulses with
+--                 quo_o valid NUM_BITS + 1 clocks later, held until the
+--                 next start. busy_o is high meanwhile.
 --                 Clock domain: clk_i. Latency NUM_BITS + 1 clocks.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
@@ -65,9 +59,8 @@ architecture arch of divider is
 	signal trial: unsigned(DEN_BITS + 1 downto 0);
 	signal shifted: unsigned(DEN_BITS + 1 downto 0);
 begin
-	-- One restoring step: shift the next dividend bit into the remainder
-	-- and subtract the divisor if it fits. The remainder never exceeds the
-	-- divisor, so DEN_BITS + 1 bits hold it; one more bit holds the shift.
+	-- One step: shift the next dividend bit in, subtract the divisor if it
+	-- fits. Remainder < divisor fits DEN_BITS + 1 bits; one more for the shift.
 	shifted <= rem_r & num(NUM_BITS - 1);
 	trial <= shifted - ('0' & den); -- MSB set = borrow: the divisor did not fit
 

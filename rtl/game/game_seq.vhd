@@ -9,48 +9,35 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Maze game sequencer: once per frame it runs the player
---                 and door update of tools/model/game.py (Game.step), bit
---                 for bit, then hands the result to the renderer.
---                 Order of one step (all integer, ">>" = arithmetic shift):
+-- Description:    Maze game sequencer: once per frame runs the player and
+--                 door update of Game.step (tools/model/game.py) bit for
+--                 bit, then hands the result to the renderer.
+--                 One step (integer, ">>" = arithmetic shift):
 --                   1 angle = (angle + turn) mod 1024
---                   2 cs = cos(angle), sn = sin(angle) (Q2.16, SIN_TABLE)
+--                   2 cs, sn = cos, sin(angle) (Q2.16, SIN_TABLE)
 --                     vx = move*cs - strafe*sn, vy = move*sn + strafe*cs
 --                     dx = vx >> 4, dy = vy >> 4 (>> 3 when running)
---                   3 move x, then y: the player box (half size R = 0.25
---                     tile = 16384) at the new position is tested against
---                     the 2 x 2 map cells it overlaps (4 reads of map port
---                     B). Solid = wall texture /= 0 unless it is a door
---                     whose table entry is fully open (64). If blocked,
---                     the box is put flush against the cell it ran into:
+--                   3 move x, then y: the player box (half size 0.25 tile
+--                     = 16384) is tested against the 2 x 2 cells it
+--                     overlaps (4 map port B reads). Solid = wall texture
+--                     /= 0 unless a fully open (64) door. If blocked, the
+--                     box goes flush against the cell:
 --                       dx > 0: max(px, ((nx + HALF) with bits 15:0 cleared)
 --                               - HALF - 1)
 --                       dx < 0: min(px, ((nx - HALF) with bits 15:0 cleared)
 --                               + 65536 + HALF)
---                   4 use: the cell at (px + (3 cs >> 2), py + (3 sn >> 2));
---                     a door there starts opening (new table entry in the
---                     first idle slot), or closes when open and the player
---                     is not in it, or reopens when closing
---                   5 doors, all 8 entries in parallel (they do not depend
---                     on each other): OPENING +2 per frame up to 64, then
---                     OPEN for 180 frames, then CLOSING -2 per frame to 0
+--                   4 use: cell at (px + (3 cs >> 2), py + (3 sn >> 2)); a
+--                     door there opens (first idle entry), closes if open
+--                     and the player is not in it, or reopens if closing
+--                   5 doors, all 8 in parallel: OPENING +2 per frame to
+--                     64, OPEN 180 frames, CLOSING -2 per frame to 0
 --                     (IDLE); a closing door with the player inside
---                     reopens; an expiring open door with the player
---                     inside waits 30 more frames
---                 Then the state is copied to the outputs and
---                 render_start_o pulses; the outputs change only then, so
+--                     reopens, an expiring open one waits 30 more frames
+--                 The outputs change only when render_start_o pulses, so
 --                 the renderer sees one consistent frame.
---                 States: SEQ_IDLE, SEQ_TURN, SEQ_SIN, SEQ_COS, SEQ_VEL,
---                 SEQ_MX, SEQ_MY, SEQ_BOX_A (cell address out), SEQ_BOX_D
---                 (cell data in), SEQ_MX_END, SEQ_MY_END, SEQ_USE,
---                 SEQ_USE_D, SEQ_DOORS, SEQ_OUT.
---                 Coding: one clocked process for the state machine and
---                 its registers. The door table is
---                 parallel arrays (door_x, door_y, door_amt, door_st,
---                 door_timer); a combinational process looks up doors by
---                 cell. The ROM and map addresses are decoded
---                 combinationally, as the reads must start in the same
---                 clock.
+--                 Door table: parallel arrays, looked up by cell in a
+--                 combinational process. ROM and map addresses are
+--                 combinational so reads start in the same clock.
 --                 Clock domain: clk_i (system). About 25 clocks per frame.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, game_pkg,
@@ -153,8 +140,7 @@ architecture arch of game_seq is
 	-- Velocity, Q2.16 (valid in SEQ_VEL, when rom_data holds cos)
 	signal vel_x: signed(19 downto 0);
 	signal vel_y: signed(19 downto 0);
-	-- Box corner k: bits 21:16 of (b -/+ HALF) are the cell index, which
-	-- is (b +/- HALF) >> 16 masked to 0..63
+	-- Box corner k: cell index = bits 21:16 of (b -/+ HALF)
 	signal corner_x: pos_t;
 	signal corner_y: pos_t;
 	signal box_cell: unsigned(11 downto 0);
@@ -207,8 +193,7 @@ begin
 		end if;
 	end process;
 
-	-- sin(angle) is read in SEQ_SIN (arrives in SEQ_COS), cos(angle) in
-	-- SEQ_COS (arrives in SEQ_VEL)
+	-- sin read in SEQ_SIN (ready in SEQ_COS), cos in SEQ_COS (ready in SEQ_VEL)
 	rom_addr <= angle + 256 when (seq_state = SEQ_COS) else angle;
 
 	------------------------------------------------------------------
@@ -243,8 +228,7 @@ begin
 	use_in <= '1' when (((ucell(5 downto 0) = pl_x0) or (ucell(5 downto 0) = pl_x1)) and
 		((ucell(11 downto 6) = pl_y0) or (ucell(11 downto 6) = pl_y1))) else '0';
 
-	-- Door table lookups. The loop runs from entry 7 down to 0, so the
-	-- lowest matching entry is assigned last and wins.
+	-- Door table lookups; the loop runs 7 down to 0 so the lowest match wins
 	process(door_x, door_y, door_amt, door_st, box_cell, ucell, pl_x0, pl_x1, pl_y0, pl_y1)
 	begin
 		box_open <= '0';
@@ -277,8 +261,7 @@ begin
 		end loop;
 	end process;
 
-	-- Map port B: the box corner under test, or the use target while
-	-- entering SEQ_USE_D
+	-- Map port B: box corner under test, or the use target entering SEQ_USE_D
 	map_addr <= use_cell when (seq_state = SEQ_USE) else box_cell;
 
 	------------------------------------------------------------------

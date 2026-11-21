@@ -9,18 +9,13 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Test tone: a sine at FREQ_HZ and quarter volume
---                 (peak 8192 of 32767) for the I2S output. A 32-bit phase
---                 accumulator advances once per output sample (step_i,
---                 from i2s_tx's sample_req_o); its top 8 bits index a
---                 256-entry sine table that is computed at elaboration
---                 with IEEE.math_real (no generated file needed).
+-- Description:    Test tone: sine at FREQ_HZ, quarter volume (peak 8192).
+--                 A 32-bit phase accumulator advances on each step_i
+--                 (i2s_tx sample_req_o); its top 8 bits index a 256-entry
+--                 sine table built at elaboration with IEEE.math_real.
 --                   increment = FREQ_HZ x 2^32 / (CLK_HZ / 2048)
---                 (38,702,809 for 440 Hz at 48,828.125 samples per
---                 second; the frequency error is below 0.001 Hz).
---                 With 256 table entries the sine has steps of about
---                 1.4 deg; harmonics from that sit near 48 dB down, fine
---                 for a test tone.
+--                 (38,702,809 for 440 Hz; error below 0.001 Hz).
+--                 Table steps of 1.4 deg put harmonics near -48 dB.
 --                 Clock domain: clk_i. sample_o changes one clock after
 --                 step_i; it is 0 while enable_i = '0'.
 --

@@ -10,39 +10,31 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    PS/2 mouse driver on top of ps2_host.
---                 Start-up: the mouse may finish its self-test before
---                 the FPGA is configured, so its AA is not awaited.
---                 STARTUP_CYCLES after en_i rises: send FF (reset),
---                 expect FA, AA, 00; send F4 (enable data reporting),
---                 expect FA. A wrong byte, no byte within
---                 RESP_TIMEOUT_CYCLES (the self-test after FF takes up
---                 to about 500 ms) or a send error counts a retry and
---                 starts over after the start-up delay.
---                 Streaming (default 100 reports/s): 3-byte packets
---                   byte 1: bit 0 left, 1 right, 2 middle button,
---                           bit 3 always '1', bit 4 X sign, 5 Y sign,
---                           bit 6 X overflow, 7 Y overflow
---                   byte 2: dx low 8 bits, byte 3: dy low 8 bits
---                 dx and dy are 9-bit two's complement (Y up is
---                 positive). A first byte without bit 3 means framing
---                 slipped: it is dropped until a byte with bit 3 comes.
---                 A byte arriving more than PACKET_GAP_CYCLES after the
---                 previous one also starts a new packet (bytes of one
---                 packet are about 1 ms apart, packets about 10 ms).
---                 Packets with an overflow bit are dropped. AA then 00
---                 as the first two bytes of a packet means the mouse was
---                 plugged in again (an AA first byte always has the Y
---                 overflow bit, so it is never a real packet): start
---                 over from FF.
---                 Motion: dx_o / dy_o show the motion summed since the
---                 last take_i, including a packet completing this cycle;
---                 take_i clears the sums at the same edge, so no packet
---                 is lost or counted twice. Sums saturate at 16 bits.
---                 x_total_o / y_total_o wrap (bring-up page).
---                 state_o codes: 0 off (en_i low), 1 start-up delay,
---                 2 send FF, 3 FF on the wire, 4 wait FA, 5 wait AA,
---                 6 wait 00, 7 send F4, 8 F4 on the wire, 9 wait FA,
---                 10 streaming.
+--                 Start-up (the power-on AA may come before configuration,
+--                 so it is not awaited): STARTUP_CYCLES after en_i rises,
+--                 send FF (reset), expect FA, AA, 00; send F4 (enable
+--                 reporting), expect FA. A wrong byte, a send error or no
+--                 byte within RESP_TIMEOUT_CYCLES (the self-test after FF
+--                 takes up to about 500 ms) counts a retry and starts over
+--                 after the start-up delay.
+--                 Streaming, 100 packets/s of 3 bytes. Byte 1: bit 0 left,
+--                 1 right, 2 middle, 3 always '1', 4 X sign, 5 Y sign,
+--                 6 X overflow, 7 Y overflow; byte 2: dx 7:0; byte 3:
+--                 dy 7:0. dx, dy are 9-bit two's complement, Y up
+--                 positive.
+--                 A first byte without bit 3 is dropped (slipped
+--                 framing); a gap over PACKET_GAP_CYCLES also starts a new
+--                 packet (bytes about 1 ms apart, packets 10 ms). Overflow
+--                 packets are dropped. AA 00 as the first two bytes means
+--                 a replug (an AA first byte has Y overflow set, so it is
+--                 never a real packet): start over from FF.
+--                 dx_o / dy_o: motion summed since the last take_i,
+--                 including a packet completing this cycle; take_i clears
+--                 the sums at the same edge, so nothing is lost or counted
+--                 twice. Sums saturate at 16 bits; x/y_total_o wrap.
+--                 state_o: 0 off, 1 start-up delay, 2 send FF, 3 FF on the
+--                 wire, 4 wait FA, 5 wait AA, 6 wait 00, 7 send F4, 8 F4
+--                 on the wire, 9 wait FA, 10 streaming.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std

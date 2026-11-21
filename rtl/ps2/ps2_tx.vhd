@@ -9,29 +9,24 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    PS/2 transmitter (host to device). Even when the host
---                 sends, the device makes the clock; the host only asks
---                 for it:
---                   TX_INHIBIT  pull the clock low for INHIBIT_CYCLES
---                               (150 us), which stops the device and
---                               tells it a command is coming
---                   TX_START    also pull data low (the start bit) for
---                               RELEASE_CYCLES, then let the clock go
---                   TX_BITS     the device now clocks; after each falling
---                               edge (clock low, the device reads on the
---                               rising edge) present the next bit: falls
---                               1..8 data LSB first, 9 odd parity, 10
---                               release data (stop bit '1')
---                   TX_ACK_DATA wait for the device to pull data low
---                   TX_ACK_CLK  wait for its last falling clock edge
---                   TX_RELEASE  wait until both lines are high again
---                 then done_o pulses. If the whole exchange takes longer
---                 than TIMEOUT_CYCLES (20 ms), both lines are released
---                 and err_o pulses instead.
---                 Outputs are pull requests ('1' = drive the line low);
---                 the top level makes them open drain.
---                 Clock domain: clk_i (system). Command port: data_i is
---                 taken when valid_i and ready_o are both '1'.
+-- Description:    PS/2 transmitter (host to device). The device still
+--                 makes the clock; the host only requests it:
+--                 TX_INHIBIT: clock low for INHIBIT_CYCLES (150 us), which
+--                 tells the device a command is coming.
+--                 TX_START: data low too (start bit) for RELEASE_CYCLES,
+--                 then release the clock.
+--                 TX_BITS: after each falling edge (the device reads on
+--                 the rising edge) present the next bit: falls 1..8 data
+--                 LSB first, 9 odd parity, 10 release data (stop '1').
+--                 TX_ACK_DATA, TX_ACK_CLK, TX_RELEASE: wait for the
+--                 device to pull data low, for its last falling edge,
+--                 then for both lines high; then done_o pulses.
+--                 If the whole exchange exceeds TIMEOUT_CYCLES (20 ms),
+--                 both lines are released and err_o pulses instead.
+--                 Outputs are pull requests ('1' = drive low), made open
+--                 drain by the top level.
+--                 Clock domain: clk_i (system). data_i is taken when
+--                 valid_i and ready_o are both '1'.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
 --

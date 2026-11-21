@@ -1,4 +1,4 @@
-"""Run the self-checking testbenches in Vivado xsim, batch mode, no GUI.
+"""Run the self-checking testbenches in Vivado xsim (batch mode).
 
 Usage:
     python scripts/run_sim.py            run every testbench in sim/
@@ -7,33 +7,27 @@ Usage:
     python scripts/run_sim.py --changed  run only the testbenches whose inputs changed since
                                          they last passed (the others are reported as skipped)
 
-Every testbench prints one line "TB_RESULT <name> PASS checks=<n>" when it finishes cleanly.
-A testbench passes only if that line appears and xsim reports no errors or failures.
-A "RUN_VARIANTS: NAME=value NAME=value" line in a testbench header runs it once per setting;
-one setting may set several generics, joined by commas ("BOOT_ART=false,CHECK_FRAMES=12").
+A testbench passes only if it prints "TB_RESULT <name> PASS checks=<n>" and xsim reports no
+errors or failures. A header line "RUN_VARIANTS: NAME=value NAME=value" runs it once per
+setting; commas join several generics in one setting ("BOOT_ART=false,CHECK_FRAMES=12").
 
---changed: every passing run is recorded in <SIM_WORK>/passed.json with a fingerprint of its
-inputs: the testbench, every design file and package it reaches (component declarations and
-"use work." clauses, followed transitively), the golden and build/ data files it names, its
-generics and this script. A run is skipped only if that fingerprint is unchanged.
+--changed: each pass is recorded in <SIM_WORK>/passed.json with a fingerprint of the
+testbench, every design file it reaches (components and "use work." clauses, transitively),
+the golden and build/ files it names, its generics and this script.
 
 Environment (optional):
     SIM_WORK   work directory (default build/sim), so several runs can go in parallel
     SIM_ONLY   comma-separated path fragments; only RTL, models and testbenches whose
                path contains one are compiled (packages always are), e.g. "common/,ps2"
-    SIM_GENERIC  space-separated NAME=value settings; each replaces the testbench's
-               RUN_VARIANTS for this run (one run per setting), e.g. "BOOT_ART=false"
-    SIM_JOBS   simulations running at the same time (default: every CPU core). Elaboration
-               is sequential (xelab already compiles in parallel); each simulation starts as
-               soon as its snapshot is ready, in its own directory next to the work directory
-               (same depth, so the testbenches' "../../" paths still hold), sharing xsim.dir
+    SIM_GENERIC  space-separated NAME=value settings replacing RUN_VARIANTS, e.g.
+               "BOOT_ART=false"
+    SIM_JOBS   parallel simulations (default: every CPU core). Elaboration is sequential;
+               each simulation runs in its own directory next to the work directory (same
+               depth, so the testbenches' "../../" paths hold), sharing xsim.dir
     VIVADO_BIN Vivado bin directory (default D:/Xilinx/2025.1/Vivado/bin)
 
-Speed: snapshots are elaborated with xelab --O3 (about 8% faster runs than the default --O2,
-measured on tb_game_core), and the slowest testbenches (SLOW_FIRST) are elaborated first so
-the system test starts right after compilation instead of after every other elaboration. The
-system test itself runs as two variants side by side (the boot path, and the whole session
-with the art preloaded), and --changed skips runs whose inputs did not change.
+Speed: xelab --O3 (about 8% faster than --O2 on tb_game_core); the slowest testbenches
+(SLOW_FIRST) are elaborated first; the system test runs as two variants side by side.
 """
 
 import hashlib
@@ -142,11 +136,9 @@ def run(cmd, log_name, cwd=None):
 
 
 def compile_all(files):
-    """The design (rtl/, packages included) is VHDL-93; the testbenches,
-    models and sim packages use VHDL-2008 (protected types, external names). Both go into the
-    same work library, the design first. The file list goes in a project file (--prj), not on
-    the command line: about 100 absolute paths can pass Windows' 8,191-character limit when the
-    repository sits in a deep folder."""
+    """The design (rtl/) is VHDL-93, sim/ is VHDL-2008; both go into one work
+    library, the design first. The file list goes in a --prj file because about 100 absolute
+    paths can pass Windows' 8,191-character command-line limit."""
     rtl = [f for f in files if (ROOT / "rtl") in Path(f).parents]
     sim = [f for f in files if f not in rtl]
     for label, kind, group in (("rtl", "vhdl", rtl), ("sim", "vhdl2008", sim)):
@@ -193,8 +185,8 @@ def elaborate(name, generic=None):
     if code != 0 or "ERROR" in out:
         print(out[-3000:])
         return "elaboration failed"
-    # An entity left out of the compile (e.g. by SIM_ONLY) becomes a black box with 'U'
-    # outputs; the simulation then tends to hang instead of failing, so stop here
+    # An entity left out (e.g. by SIM_ONLY) would be a black box with 'U' outputs and the
+    # simulation would hang instead of failing, so stop here
     boxes = [l for l in out.splitlines() if "VRFC 10-4940" in l]
     if boxes:
         print("\n".join(boxes))
@@ -203,10 +195,9 @@ def elaborate(name, generic=None):
 
 
 def simulate(tag):
-    """Runs one snapshot in its own directory, so parallel runs do not share xsim's journal
-    and waveform files. xsim looks for the snapshot under xsim.dir/ in its working directory
-    (--xsimdir does not change that), so the snapshot (about 1 MB) is copied there. The log
-    goes to the work directory as before."""
+    """Runs one snapshot in its own directory, so parallel runs do not share journal
+    and waveform files. xsim only looks under xsim.dir/ of its working directory (--xsimdir
+    does not change that), so the snapshot (about 1 MB) is copied there."""
     rundir = WORK.parent / (WORK.name + "_run_" + tag)
     shutil.rmtree(rundir, ignore_errors=True)
     shutil.copytree(WORK / "xsim.dir" / (tag + "_snap"), rundir / "xsim.dir" / (tag + "_snap"))

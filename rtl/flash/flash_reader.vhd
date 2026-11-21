@@ -9,35 +9,26 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Single-bit SPI (mode 0) reader for the Cmod's 4 MB
---                 configuration flash, used after configuration when its
---                 pins are user I/O. SCK reaches the flash through user
---                 pin E19 (Cmod manual), so STARTUPE2 is not needed. The
---                 fitted part may be a Macronix MX25L3233F (current boards)
---                 or a Micron N25Q032A (Cmod manual); both answer READ ID
---                 (0x9F) and READ (0x03, 24-bit address, up to 50 MHz)
---                 the same way. Only these two read commands exist here:
---                 the design can never write or erase the flash.
---                 Request: req_id_i = '1' sends 0x9F, '0' sends 0x03 and
---                 req_addr_i; then req_len_i bytes are read and handed
---                 out on a valid/ready port (data_last_o marks the last).
---                 SCK timing, SCK_DIV = 4 (25 MHz): one SCK period is
---                 phases 0..3 of the system clock. SCK and MOSI change
---                 together at the start of phase 0 (SCK falls), SCK rises
---                 at the start of phase 2, and MISO is taken from the IOB
---                 input register that sampled the pin at the start of
---                 phase 3: 30 ns after the falling edge, leaving room for
---                 the flash's output delay (8 ns) plus pin and board
---                 delays, and 10 ns before the next falling edge.
---                 Back-pressure: the received byte waits in an output
---                 register. If the previous byte has still not been taken
---                 when the next one is complete, SCK stops (low, CS still
---                 low; the flash allows a stopped clock) until it is.
---                 CS_n is held high for 2 x SCK_DIV clocks between
---                 commands and goes low SCK_DIV clocks before the first
---                 SCK edge.
---                 Clock domain: clk_i (system). Throughput at 25 MHz SCK:
---                 3.1 MB/s while the consumer keeps up.
+-- Description:    Single-bit SPI (mode 0) reader for the 4 MB
+--                 configuration flash, used after configuration. SCK is on
+--                 user pin E19, so no STARTUPE2. Only READ ID (0x9F) and
+--                 READ (0x03, 24-bit address, up to 50 MHz), identical on
+--                 the Macronix MX25L3233F and Micron N25Q032A; it can
+--                 never write or erase.
+--                 Request: req_id_i = '1' sends 0x9F, else 0x03 and
+--                 req_addr_i; req_len_i bytes come back on a valid/ready
+--                 port, data_last_o on the last.
+--                 SCK_DIV = 4 (25 MHz): SCK falls and MOSI changes at
+--                 phase 0, SCK rises at phase 2, and the IOB register
+--                 samples MISO at phase 3: 30 ns after the fall (flash
+--                 output delay 8 ns plus board delays), 10 ns before the
+--                 next fall.
+--                 If the output byte is still untaken when the next one is
+--                 complete, SCK stops low (CS stays low) until it is.
+--                 CS_n is high 2 x SCK_DIV clocks between commands and
+--                 low SCK_DIV clocks before the first SCK edge.
+--                 Clock domain: clk_i (system). Throughput 3.1 MB/s at
+--                 25 MHz SCK.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
 --

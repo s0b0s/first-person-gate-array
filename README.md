@@ -1,21 +1,19 @@
 # First-Person Gate Array
 
-A first-person shooter game built entirely out of digital logic on a small FPGA board. There is no
-processor anywhere in the design: no soft CPU in the FPGA and no microcontroller on the side.
-The 3D renderer, the monsters, the game rules, the keyboard and mouse interface and the sound
-are all state machines and memories written in VHDL.
+A first-person shooter game built entirely from digital logic on a small FPGA board, with no
+processor anywhere (no soft CPU, no microcontroller). The 3D renderer, monsters, game rules,
+keyboard and mouse interface and sound are all state machines and memories written in VHDL.
 
 ## What the game is
 
-You walk through a textured 3D maze, open doors, pick up keys, health, ammo and weapons, and
-fight monsters that see you, chase you and shoot back. There are three levels, the last one
-ending with a boss. Later levels have rooms with different floor and ceiling heights, steps,
-ramps and pits, flickering and glowing lights, outdoor areas with a sky, and animated slime
-walls. Firing a gun makes noise that wakes up monsters in nearby rooms, unless they are set
-to lie in ambush.
+Walk through a textured 3D maze, open doors, collect keys, health, ammo and weapons, and fight
+monsters that see you, chase you and shoot back. Three levels, the last ending with a boss.
+Later levels add floor and ceiling heights, steps, ramps and pits, flickering and glowing
+lights, outdoor areas with a sky, and animated slime walls. Gunfire wakes monsters in nearby
+rooms, except those lying in ambush.
 
-The screen also shows a status bar, a minimap and a full-screen automap, along with title,
-briefing and score screens. Sound effects and music play in stereo.
+There is a status bar, a minimap, a full-screen automap, title, briefing and score screens,
+and stereo sound effects and music.
 
 ## How it runs
 
@@ -42,9 +40,8 @@ The modules plug into a small custom carrier PCB. Inside the FPGA, the main bloc
 | Audio mixer | Mixes 8 sound effect voices and a music track |
 | SRAM and flash controllers | Shared memory access and loading game data at boot |
 
-Two frames are kept in SRAM: the game draws the next frame into one while the monitor shows
-the other. A frame takes about 3 to 6 ms to draw out of the 16.8 ms frame (the 25 MHz pixel
-clock gives 59.5 Hz).
+Two frames live in SRAM: the game draws one while the monitor shows the other. Drawing takes
+about 3 to 6 ms of the 16.8 ms frame (the 25 MHz pixel clock gives 59.5 Hz).
 
 ## Controls
 
@@ -76,11 +73,10 @@ The design grew in steps, each ending in a bitstream that builds and meets timin
 
 ## How it was checked
 
-A Python model of the whole game (in `tools/model/`) is the reference. It generates the
-textures, levels and sounds, and it produces "golden" outputs: whole frames, game states and
-audio samples. Every hardware block has a self-checking simulation testbench that compares
-its output with the model, pixel for pixel and bit for bit. The largest test boots the
-complete design from a simulated flash chip and plays a scripted session.
+A Python model of the whole game (`tools/model/`) is the reference. It generates the
+textures, levels and sounds and the "golden" frames, game states and audio samples. Every
+hardware block has a self-checking testbench that matches the model bit for bit. The largest
+test boots the complete design from a simulated flash chip and plays a scripted session.
 
 ## Repository layout
 
@@ -96,15 +92,14 @@ complete design from a simulated flash chip and plays a scripted session.
 
 ## Building
 
-You need Vivado 2025.1 (its simulator, xsim, runs the testbenches) and Python 3.9 or newer.
-The Python tools use only the standard library, so building and simulating need no packages.
-The one exception is the UART debug tool (`tools/uart/debug_uart.py`), which needs `pyserial`.
-Either install it with `pip install -r requirements.txt`, or, if you use
-[uv](https://docs.astral.sh/uv/), run that script as `uv run tools/uart/debug_uart.py ...` and
-uv fetches `pyserial` by itself. Run everything from the repository root.
+You need Vivado 2025.1 (xsim runs the testbenches) and Python 3.9 or newer. The Python tools
+use only the standard library, except the UART debug tool (`tools/uart/debug_uart.py`), which
+needs `pyserial`: `pip install -r requirements.txt`, or run it with
+[uv](https://docs.astral.sh/uv/) as `uv run tools/uart/debug_uart.py ...`. Run everything from
+the repository root.
 
-On a fresh clone, run the first two steps before anything else. They write the art, level
-and game-data files into `build/`, which the testbenches and the flash image read.
+On a fresh clone, run the first two steps first: they write the art, level and game-data
+files into `build/` that the testbenches and the flash image read.
 
 | Step | Command |
 | --- | --- |
@@ -116,12 +111,11 @@ and game-data files into `build/`, which the testbenches and the flash image rea
 | Check the code style | `python tools/style/check_vhdl_style.py` and `python tools/style/check_vhdl_structure.py` |
 | Build the bitstream and flash image | `vivado -mode batch -source scripts/build.tcl -tclargs shooter_top` |
 
-The build writes `build/shooter_top/shooter_top.bit` (to load straight into the FPGA) and
-`shooter_top.mcs` (to program into flash, so the game boots on its own). Two smaller designs
-build the same way: `bringup_top` shows test pages for checking the board and its wiring, and
-`game_top` is the first playable maze.
+The build writes `build/shooter_top/shooter_top.bit` (load straight into the FPGA) and
+`shooter_top.mcs` (program into flash so the game boots on its own). `bringup_top` (board and
+wiring test pages) and `game_top` (the first playable maze) build the same way.
 
 ## Art and sound
 
-All textures, sprites, sounds and music are original, generated by the Python scripts in
-`tools/model/`. No assets from other games are used.
+All textures, sprites, sounds and music are original, generated by `tools/model/`. No assets
+from other games are used.

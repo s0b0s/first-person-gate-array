@@ -9,19 +9,15 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Single-clock first-word-fall-through FIFO with
---                 valid/ready on both sides. Storage is a simple
---                 dual-port RAM (block RAM when large) read every cycle at
---                 the next read pointer, so the head entry is always
---                 waiting on out_data_o.
---                 Empty-to-non-empty: a word written at edge k is read
---                 out of the RAM at edge k + 1, so out_valid_o rises two
---                 edges after the write (out_valid is registered as
---                 "next read pointer differs from the old write pointer",
---                 which avoids reading a RAM word in the same cycle it is
---                 written).
---                 Capacity is 2^DEPTH_BITS - 1 words (one slot is kept
---                 empty to tell full from empty).
+-- Description:    Single-clock first-word-fall-through FIFO, valid/ready
+--                 on both sides. A simple dual-port RAM (block RAM when
+--                 large) is read every cycle at the next read pointer, so
+--                 the head word always waits on out_data_o.
+--                 out_valid_o rises two edges after a write into an empty
+--                 FIFO: it is registered against the old write pointer,
+--                 so a RAM word is never read in the cycle it is written.
+--                 Capacity 2^DEPTH_BITS - 1 words (one slot stays empty
+--                 to tell full from empty).
 --                 Clock domain: clk_i. Throughput: one word in and one
 --                 out per cycle.
 --

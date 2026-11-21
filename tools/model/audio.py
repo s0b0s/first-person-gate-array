@@ -1,22 +1,20 @@
 """Sound effects, music and the bit-accurate mixer model.
 
-Assets (original, synthesized here from integer noise and simple waves): 18 sound effects and
+Assets (original, synthesized from integer noise and simple waves): 18 sound effects and
 3 music loops, 11,025 Hz, 8-bit unsigned (128 = silence), stored in flash.
 
 Mixer (one output sample every 2,048 system clocks = 48,828.125 Hz):
     8 effect voices + 1 music voice. Each voice: position Q.16 in its sound, advancing by
-    STEP = round(11025 / 48828.125 * 65536) = 14798 per output sample; the sample used is
-    byte[position >> 16] - 128 (nearest, signed). An effect voice ends at the sound's length;
-    music loops.
-    Effect voice gains: left = (vol * (31 - pan)) >> 5, right = (vol * (31 + pan)) >> 5
-    (vol 0..63, pan -31..31). Music gain: MUSIC_VOL, halved while more than 4 effect voices
-    play.
-    mix = sum of sample * gain over the voices (per channel); out = sat16((mix * master) >> 4)
-    with master 0..63 (default 32).
-Voice allocation (DOOM rule): a new sound takes the free voice with the lowest index; if none
-is free it replaces the playing sound with the lowest priority, if that priority is lower
-than the new sound's (lowest index on ties); otherwise the new sound is dropped. Commands
-take effect at the start of the next output sample.
+    STEP = round(11025 / 48828.125 * 65536) = 14798 per output sample; sample =
+    byte[position >> 16] - 128 (nearest, signed). Effects end at the sound's length; music
+    loops.
+    Effect gains: left = (vol * (31 - pan)) >> 5, right = (vol * (31 + pan)) >> 5
+    (vol 0..63, pan -31..31). Music gain: MUSIC_VOL, halved while more than 4 effects play.
+    mix = sum of sample * gain per channel; out = sat16((mix * master) >> 4), master 0..63
+    (default 32).
+Voice allocation (DOOM rule): the free voice with the lowest index; if none is free, replace
+the lowest-priority playing sound (lowest index on ties) if its priority is lower than the
+new one's, else drop the new sound. Commands take effect at the next output sample.
 """
 
 import math

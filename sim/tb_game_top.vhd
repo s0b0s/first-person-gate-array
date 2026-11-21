@@ -9,21 +9,13 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    System testbench for the maze game: from the 12 MHz
---                 oscillator (real MMCM model) through flash boot, the game
---                 update, the renderer and the SRAM, with the board models
---                 (SRAM, SPI flash holding build/gamedata.bin at 0x220000,
---                 PS/2 keyboard and mouse, VGA monitor).
---                 Checks:
---                 - level 1 loads from flash (status register 7 = 1)
---                 - the first frame on screen (start pose, no input) equals
---                   the Python model's frame for that pose, pixel for pixel
---                   (sim/golden/frame4_0.txt), read from the front buffer
---                 - holding W on the keyboard moves the player forward
---                   (east) and keeps x inside the start room, with no late
---                   frames and no line fetch overruns; the next frames
---                   swap normally
---                 - VGA timing is clean
+-- Description:    System testbench for the maze game from the 12 MHz
+--                 oscillator (real MMCM model) with SRAM, SPI flash
+--                 (build/gamedata.bin at 0x220000), PS/2 and VGA models.
+--                 Checks: level 1 loads (status register 7 = 1); the first
+--                 front buffer equals sim/golden/frame4_0.txt; holding W moves
+--                 the player east inside the start room with no late frames or
+--                 line fetch overruns; VGA timing is clean.
 --                 About 0.11 s of simulated time.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,

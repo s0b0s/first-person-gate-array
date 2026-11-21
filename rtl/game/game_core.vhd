@@ -9,20 +9,17 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Game core: one Game.step of tools/model/game.py
---                 (with actors.py) per frame, bit for bit, including every
---                 random() call in order, the sound commands, the HUD word
---                 and the sprite table. Replaces game_seq in the game top.
+-- Description:    One Game.step of tools/model/game.py (with actors.py) per
+--                 frame, bit for bit, including every random() call in
+--                 order, sound commands, HUD word and sprite table.
 --
 --                 Flow per frame (snapshot_valid_i after frame_start_i):
 --                   CORE_STEP  sounds cleared, fire edge, debug toggle,
---                              flow switch (TITLE, BRIEFING, PAUSED, DEAD,
---                              SCORE, ENDING are a few registers; BRIEFING
---                              go and a DEAD restart load a level here)
+--                              flow switch (BRIEFING go and DEAD restart
+--                              load a level here)
 --                   PLAYING, in the model's order:
 --                     1 CORE_PLAY  level clock, turn, duck and peek easing;
---                                  sin/cos of the new angle (CORE_P_SIN,
---                                  CORE_P_COS)
+--                                  sin/cos of the new angle
 --                     2 CORE_MOVE  x then y: box test (4 map reads), solid
 --                                  actors (32 actor reads), flush clamp
 --                     3 CORE_PEEK  camera box test, offset shrinks by 2
@@ -30,17 +27,13 @@
 --                                  secret and toxic floor
 --                     5 CORE_USE   door, locked door or exit switch ahead
 --                     6 CORE_WPN   weapon select, cooldown, fire; CORE_HS_*
---                                  hitscan against the last frame's spans;
---                                  after a shot CORE_AL_* (sound alert,
---                                  Game.alert): flood fill from the
---                                  player's cell over open cells (walls and
---                                  closed doors stop it; a 4096 x 12 queue
---                                  BRAM and a 4096 x 1 visited RAM, cleared
---                                  again through the queue), then every
---                                  sleeping, living monster in a reached
---                                  cell that is in a LOOK state and not an
---                                  ambusher wakes as in LOOK (sight sound,
---                                  chase state)
+--                                  hitscan against last frame's spans;
+--                                  after a shot CORE_AL_* (Game.alert):
+--                                  flood fill from the player's cell over
+--                                  open cells (4096 x 12 queue BRAM, 4096
+--                                  x 1 visited RAM cleared via the queue),
+--                                  then each sleeping, living, non-ambush
+--                                  monster in LOOK in a reached cell wakes
 --                     7 CORE_ACT_* actors 0..31 (LOOK, CHASE, FLY, timers)
 --                     8 CORE_DOORS door table, then CORE_WORLD (boss timer,
 --                                  flashes, message timer, death check)
@@ -48,17 +41,12 @@
 --                              for its light) into the back half of the
 --                              sprite RAM; key positions
 --                   CORE_CRC_* CRC-32 of the 91 state words, 8 bytes each
---                   CORE_OUT   all outputs registered, render_start_o
---                              pulse, sprite RAM halves swap, sound
---                              commands go out
+--                   CORE_OUT   outputs registered, render_start_o pulse,
+--                              sprite RAM halves swap, sounds go out
 --
---                 Subroutines: the model calls helpers from several places
---                 (LOS from LOOK, CHASE and the SHOOT action; SOUND from
---                 everywhere). None of them is ever active twice at once,
---                 so each has its own return-state register (*_ret); a
---                 call stores the state to come back to and jumps in, and
---                 a call as the last thing a subroutine does passes its own
---                 return state on (a tail call, e.g. DAMAGE -> SOUND).
+--                 Subroutines: none is ever active twice at once, so each
+--                 has its own return-state register (*_ret); a tail call
+--                 passes its own return state on (DAMAGE -> SOUND).
 --                   CORE_WAIT     1-clock read of map, span or z port
 --                   CORE_BOX      box (2 x 2 cells) against solid cells
 --                   CORE_LOS      Bresenham line of sight, map per cell
@@ -68,39 +56,29 @@
 --                   CORE_ENTER    actor enters a state, runs its action
 --                   CORE_SPAWN    new actor in the first free slot
 --
---                 Memories: actor table 32 x 64 LUT RAM (one write port
---                 shared with the loader while it loads, a read port for
---                 the core, one for the state read-out); sprite table 2 x
---                 32 x 64 LUT RAM (double buffered, 1-clock read on
---                 spr_*); sine ROM (registered read). The map, span and
---                 z-buffer ports are 1-clock reads.
---                 Number formats: player Q6.16 (24-bit signed working
---                 copies), actors Q6.10, sin/cos Q2.16.
---                 Multiplies: the pan (rx * -sin + ry * cos) and the peek
---                 offset (off * -sin, off * cos) use one shared 24 x 18
---                 multiplier (1 clock; Vivado keeps a second copy fused
---                 with the pan sum, so 2 DSP48); every other product is a
---                 shift-add by a small constant.
---                 Timing helpers: the actor RAM read port 1 and its write
---                 port are registered (each read takes CORE_WAIT), and the
---                 distance, deltas and sound volume of the working actor
---                 (a_*) are computed in registers one clock behind it (see
---                 their process).
---                 The packed actor word is the model's (actors.py, game_pkg
---                 ACTOR_*: x 15:0, y 31:16, state 38:32, timer 44:39,
---                 health 56:45, type 59:57, flags 62:60 active, solid,
---                 awake; 63 ambush: deaf to sound alerts).
---                 Clock domain: clk_i (system). Measured on the golden
---                 session (tb_game_core): about 1,300 clocks per frame
---                 (PLAYING average 1,324, worst 1,456 without a load); a
---                 level load adds the loader's time plus about 4,200 clocks
---                 (actor totals, 4096-tile secret count).
---                 Coding: one clocked process (the core_state machine)
---                 owns every game register, as plain signals. Strobes that
---                 must act in the clock of their state (alert queue and
---                 visited-bit writes, the map write, the CRC feed, the sine
---                 ROM address) are concurrent decodes of core_state; tile,
---                 actor and arithmetic helpers are concurrent signals.
+--                 Memories: actor table 32 x 64 LUT RAM (write port shared
+--                 with the loader, read ports for the core and the state
+--                 read-out); sprite table 2 x 32 x 64 LUT RAM (double
+--                 buffered, 1-clock read); sine ROM (registered). Map,
+--                 span and z-buffer ports are 1-clock reads.
+--                 Formats: player Q6.16 (24-bit signed working copies),
+--                 actors Q6.10, sin/cos Q2.16. Actor word as game_pkg
+--                 ACTOR_*; bit 63 ambush (deaf to sound alerts).
+--                 Multiplies: pan (rx * -sin + ry * cos) and peek offset
+--                 share one 24 x 18 multiplier (1 clock, 2 DSP48 as Vivado
+--                 duplicates it into the pan sum); other products are
+--                 shift-adds by small constants.
+--                 Timing: actor RAM read port 1 and the write port are
+--                 registered (each read takes CORE_WAIT); the working
+--                 actor's distance, deltas and volume (a_*) are registered
+--                 one clock behind it.
+--                 Strobes that act in their state's clock (alert queue,
+--                 visited bits, map write, CRC feed, sine ROM address) are
+--                 concurrent decodes of core_state.
+--                 Clock domain: clk_i (system). Golden session
+--                 (tb_game_core): PLAYING average 1,324 clocks per frame,
+--                 worst 1,456; a level load adds the loader's time plus
+--                 about 4,200 clocks (actor totals, secret count).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, game_pkg,
 --                 game_tables_pkg, render_pkg (SIN_TABLE), render_types_pkg,
@@ -215,8 +193,7 @@ architecture arch of game_core is
 	constant MSG_TIME: natural := 120; -- Frames a message shows (2 s)
 	constant BOSS_TIME: natural := 180; -- Frames from the boss's death to the level end
 	constant LEVELS: natural := 3;
-	-- Floor and ceiling heights (units, 64 per tile): step-up limit, headroom of
-	-- the player and of the monsters (both 40), gravity
+	-- Heights (units, 64 per tile): step-up limit, player and monster headroom (both 40), gravity
 	constant STEP_MAX: natural := 24;
 	constant BODY_H: natural := 40; -- PLAYER_H = ACTOR_H = 40
 	constant FALL_ACC: natural := 2;
@@ -261,8 +238,7 @@ architecture arch of game_core is
 	constant ITEM_BASE: natural := 38; -- art.py: first item / effect frame
 	constant WEAPON_BASE: natural := 55; -- art.py: first weapon frame
 
-	-- Flag bits of the packed actor word (game_pkg ACTOR_FLAGS_*, plus the
-	-- ambush bit 63)
+	-- Actor word flag bits (game_pkg ACTOR_FLAGS_*, plus ambush bit 63)
 	constant ACTOR_ACTIVE: natural := ACTOR_FLAGS_LO;
 	constant ACTOR_SOLID: natural := ACTOR_FLAGS_LO + 1;
 	constant ACTOR_AWAKE: natural := ACTOR_FLAGS_LO + 2;
@@ -336,8 +312,8 @@ architecture arch of game_core is
 	-- Sound command: pan & volume & id, the low bits of snd_data_o (SND_PAN, SND_VOL, SND_ID)
 	type snd_queue_t is array (0 to 3) of std_logic_vector(SND_PRI_LO - 1 downto 0);
 	type actor_ram_t is array (0 to 31) of std_logic_vector(63 downto 0);
-	-- Sound alert flood fill: cells in visit order (block RAM) and visited bits
-	-- (distributed RAM; BRAM is the scarcest resource of the full design)
+	-- Sound alert flood fill: visit-order queue (BRAM) and visited bits (LUT RAM;
+	-- BRAM is the scarcest resource)
 	type cell_ram_t is array (0 to 4095) of std_logic_vector(11 downto 0);
 	type vis_ram_t is array (0 to 4095) of std_logic;
 	type spr_ram_t is array (0 to 63) of std_logic_vector(63 downto 0);
@@ -349,9 +325,8 @@ architecture arch of game_core is
 		return signed(unsigned'("00" & v & "000000")); -- v << 6, two zero headroom bits on top
 	end function;
 
-	-- Game.in_cell() with half size HALF: one of the 2 x 2 cells of the box
-	-- at (x, y) is (cx, cy). Unmasked, as the model: bits 23:16 of x -/+ HALF
-	-- (a box past the map edge gives -1 or 64, which matches no door)
+	-- Game.in_cell() with half size HALF: (cx, cy) is one of the box's 2 x 2 cells.
+	-- Unmasked as the model: past the map edge gives -1 or 64, matching no door
 	function in_cell(x: pos_t; y: pos_t; cx: unsigned(5 downto 0); cy: unsigned(5 downto 0)) return boolean is
 		variable x0, x1, y0, y1: pos_t;
 	begin
@@ -397,8 +372,8 @@ architecture arch of game_core is
 		end case;
 	end function;
 
-	-- Flicker of effects frame n (render.light_mods): ((n * 40503) >> 7) & 7 < 3, as a
-	-- 256 x 1 constant table so the multiply never reaches the logic
+	-- Flicker of effects frame n (render.light_mods): ((n * 40503) >> 7) & 7 < 3,
+	-- as a 256 x 1 constant table (no multiplier)
 	function make_flick return flick_t is
 		variable t: flick_t;
 	begin
@@ -563,9 +538,9 @@ architecture arch of game_core is
 	signal fx_out: std_logic_vector(FX_BITS - 1 downto 0) := (others => '0');
 	signal spr_count_out: std_logic_vector(5 downto 0) := (others => '0');
 	signal crc_out: std_logic_vector(31 downto 0) := (others => '0');
-	-- Sound alert (Game.alert): queue head and tail (also the clear
-	-- index afterwards), queue read address, current cell (y & x), neighbor
-	-- 0..3 (+x, -x, +y, -y), neighbor cell, visited-RAM read address
+	-- Sound alert: queue head and tail (tail is the clear index afterwards), queue
+	-- read address, cell (y & x), neighbor 0..3 (+x, -x, +y, -y), neighbor cell,
+	-- visited-RAM address
 	signal qhead, qtail: unsigned(12 downto 0) := (others => '0');
 	signal qra, cur, ncell, vaddr: unsigned(11 downto 0) := (others => '0');
 	signal nk: unsigned(1 downto 0) := (others => '0');
@@ -615,9 +590,8 @@ architecture arch of game_core is
 	signal crc_init, crc_valid: std_logic;
 	signal crc_byte: std_logic_vector(7 downto 0);
 	signal crc: std_logic_vector(31 downto 0);
-	-- Door table entry of cell maddr (8: none), whether that door is fully
-	-- open, and the first idle entry (8: none), registered: every reader comes
-	-- at least one clock after the address or the table last changed
+	-- Door entry of cell maddr (8: none), its fully-open flag, first idle entry
+	-- (8: none); registered, as every reader is a clock after the change
 	signal didx: natural range 0 to 8 := 8;
 	signal dopen: std_logic := '0';
 	signal dfree: natural range 0 to 8 := 8;
@@ -709,12 +683,10 @@ begin
 	end process;
 
 	------------------------------------------------------------------
-	-- Actor table, 32 x 64 LUT RAM. One write port (the loader owns it
-	-- while the core waits for a load), registered one clock in the state
-	-- machine (timing: the write enable is decided late in the clock).
-	-- Every core read takes the CORE_WAIT clock after its address is set,
-	-- so a read never comes before a write that was decided earlier.
-	-- Reads: port 1 at aaddr for the core, port 2 for the state words
+	-- Actor table, 32 x 64 LUT RAM. One write port (the loader's during a load),
+	-- registered one clock as the write enable is decided late. Core reads go
+	-- through CORE_WAIT, so they never pass an earlier write. Port 1 at aaddr
+	-- for the core, port 2 for the state words
 	------------------------------------------------------------------
 	process(clk_i)
 	begin
@@ -725,10 +697,9 @@ begin
 		end if;
 	end process;
 
-	-- Port 1 is registered: data of aaddr one clock later (after CORE_WAIT).
-	-- The three scan tests are registered with it (px, py, bx, by and di do
-	-- not change during a scan): actor blocks the move box, item under the
-	-- player, actor in door di's cell
+	-- Port 1 is registered (data one clock later, after CORE_WAIT), with three
+	-- scan tests (inputs are stable during a scan): actor blocks the move box,
+	-- item under the player, actor in door di's cell
 	aw1 <= aram(to_integer(aaddr));
 	aw1_x <= q16(unsigned(aw1(ACTOR_X_HI downto ACTOR_X_LO)));
 	aw1_y <= q16(unsigned(aw1(ACTOR_Y_HI downto ACTOR_Y_LO)));
@@ -782,8 +753,8 @@ begin
 	en_dur <= unsigned(STATE_TABLE(to_integer(en_s))(STATE_DUR_HI downto STATE_DUR_LO));
 	sp_dur <= unsigned(STATE_TABLE(to_integer(sp_state))(STATE_DUR_HI downto STATE_DUR_LO));
 
-	-- Alert queue and visited bits: write in the clock of the state that
-	-- asks, read one clock after the address register (like the map)
+	-- Alert queue and visited bits: write in the asking state's clock, read one
+	-- clock after the address register
 	process(clk_i)
 	begin
 		if rising_edge(clk_i) then
@@ -840,17 +811,14 @@ begin
 	end process;
 
 	------------------------------------------------------------------
-	-- Helpers of the working actor a, one clock behind it (timing: they
-	-- keep the distance arithmetic off the state decode). Every user is
-	-- at least one clock after the last change of a_x, a_y, px or py:
-	-- dist(a), (px >> 6) - a_x, (py >> 6) - a_y; the sound volume takes
-	-- three clocks (axis distances, distance, volume), CORE_SND waits two
+	-- Helpers of the working actor a, registered one clock behind it to keep the
+	-- arithmetic off the state decode; users come a clock after a_x, a_y, px or
+	-- py change. Sound volume takes three clocks; CORE_SND waits two
 	------------------------------------------------------------------
 	a_dx <= resize(px(23 downto 6), 19) - signed(resize(a_x, 19));
 	a_dy <= resize(py(23 downto 6), 19) - signed(resize(a_y, 19));
-	-- Sound distance d = dx + dy - min / 2 in 1/64 tiles (dx, dy =
-	-- |difference| >> 10 in Q.16); volume 63 up to 200, 0 from 1200,
-	-- ((1200 - d) * 65) >> 10 in between (65 = 64 + 1), at most 63
+	-- Sound distance d = dx + dy - min / 2 in 1/64 tiles; volume 63 up to 200, 0
+	-- from 1200, else min(63, ((1200 - d) * 65) >> 10)
 	snd_min <= sdx when (sdx < sdy) else sdy;
 	vol_t <= resize(1200 - sdist, 11);
 	vol_p <= shift_left(resize(vol_t, 18), 6) + vol_t;
@@ -970,8 +938,7 @@ begin
 		end if;
 	end process;
 
-	-- CRC-32 of the state words: 8 bytes per word, low byte first (cword
-	-- shifts right one byte per CORE_CRC_B clock)
+	-- CRC-32 of the state words, 8 bytes each, low first (cword shifts per byte)
 	crc_init <= '1' when (core_state = CORE_CRC0) else '0';
 	crc_valid <= '1' when (core_state = CORE_CRC_B) else '0';
 	crc_byte <= cword(7 downto 0);
@@ -989,22 +956,21 @@ begin
 	------------------------------------------------------------------
 	-- Combinational helpers of the state machine
 	------------------------------------------------------------------
-	-- Random numbers: x^16 + x^15 + x^13 + x^4 + 1 (taps 15, 14, 12, 3 of
-	-- the old state), shift left; random() returns the low byte of the new state
+	-- Random: x^16 + x^15 + x^13 + x^4 + 1 (taps 15, 14, 12, 3), shift left;
+	-- random() is the new state's low byte
 	lfsr_n <= lfsr(14 downto 0) & (lfsr(15) xor lfsr(14) xor lfsr(12) xor lfsr(3));
 	go <= snap(SNAP_USE) or (snap(SNAP_FIRE) and not prev_fire);
 	eye_t <= to_unsigned(16, 7) when (snap(SNAP_DUCK) = '1') else to_unsigned(32, 7);
 	peek_t <= to_signed(16, 6) when ((snap(SNAP_PEEK_R) = '1') and (snap(SNAP_PEEK_L) = '0')) else
 		to_signed(-16, 6) when ((snap(SNAP_PEEK_R) = '0') and (snap(SNAP_PEEK_L) = '1')) else
 		to_signed(0, 6);
-	-- Velocity: vx = move cs - strafe sn, vy = move sn + strafe cs (cs is on
-	-- rom_data in CORE_P_VEL)
+	-- vx = move cs - strafe sn, vy = move sn + strafe cs (cs on rom_data in CORE_P_VEL)
 	vel_x <= times(snap(SNAP_MOVE_HI downto SNAP_MOVE_LO), rom_data) -
 		times(snap(SNAP_STRAFE_HI downto SNAP_STRAFE_LO), sn);
 	vel_y <= times(snap(SNAP_MOVE_HI downto SNAP_MOVE_LO), sn) +
 		times(snap(SNAP_STRAFE_HI downto SNAP_STRAFE_LO), rom_data);
-	-- Flush clamps: right / lower side 1 short of the cell the box ran
-	-- into, left / upper side on that cell's far edge
+	-- Flush clamps: right / lower side 1 short of the blocking cell, left / upper
+	-- side on its far edge
 	flush_xp <= ((bx + HALF) and x"FF0000") - HALF - 1;
 	flush_xn <= ((bx - HALF) and x"FF0000") + 65536 + HALF;
 	flush_yp <= ((by + HALF) and x"FF0000") - HALF - 1;
@@ -1022,8 +988,7 @@ begin
 	nb_cell(11 downto 6) <= cur(11 downto 6) + 1 when (nk = "10") else
 		cur(11 downto 6) - 1 when (nk = "11") else
 		cur(11 downto 6);
-	-- Box sides around (bx, by); bits 21:16 of b -/+ half are (b +/- half)
-	-- >> 16 masked to 0..63
+	-- Box sides around (bx, by); cell index = bits 21:16 of b -/+ half
 	box_x0 <= bx - CAM_HALF when (bsmall = '1') else bx - HALF;
 	box_x1 <= bx + CAM_HALF when (bsmall = '1') else bx + HALF;
 	box_y0 <= by - CAM_HALF when (bsmall = '1') else by - HALF;
@@ -1044,11 +1009,10 @@ begin
 	arm_21 <= shift_right(shift_left(resize(dmg, 10), 4) + shift_left(resize(dmg, 10), 2) + resize(dmg, 10), 6);
 	arm_save <= resize(pl_armor, 10) when (arm_21 > pl_armor) else arm_21;
 
-	-- Tile word on map_data_i: Game.solid() (a wall unless it is a door,
-	-- specials 1..3, whose table entry is fully open), the heights
-	-- (floor_h * 8, 64 - ceil_h * 8) and Game.blocks() without the solid
-	-- test: a step up of more than STEP_MAX (ramps never) or less headroom
-	-- than BODY_H for a body at bz
+	-- Tile word on map_data_i: Game.solid() (wall unless a fully open door,
+	-- specials 1..3), heights (floor_h * 8, 64 - ceil_h * 8) and Game.blocks()
+	-- without solid: step up over STEP_MAX (ramps never) or headroom under BODY_H
+	-- for a body at bz
 	map_sp <= to_integer(unsigned(map_data_i(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)));
 	map_floor <= unsigned(map_data_i(TILE_FLOORH_HI downto TILE_FLOORH_LO)) & "000";
 	map_ceil <= to_unsigned(64, 7) - (unsigned(map_data_i(TILE_CEILH_HI downto TILE_CEILH_LO)) & "000");
@@ -1073,19 +1037,18 @@ begin
 		lerr - resize(ldy, 9) when (los_sx = '1') else
 		lerr + resize(ldx, 9) when (los_sy = '1') else
 		lerr;
-	-- The step lands on the target's column / row (timing: both outcomes are
-	-- compared from registers, los_sx / los_sy only pick one)
+	-- The step lands on the target's column / row (both outcomes from registers;
+	-- los_sx / los_sy pick one)
 	los_tx <= '1' when (((los_sx = '1') and (lx + unsigned(resize(lsx, 6)) = lx1)) or
 		((los_sx = '0') and (lx = lx1))) else '0';
 	los_ty <= '1' when (((los_sy = '1') and (ly + unsigned(resize(lsy, 6)) = ly1)) or
 		((los_sy = '0') and (ly = ly1))) else '0';
 
-	-- Fireball: one velocity step (mod 2^16); health holds its direction
-	-- 0..15, the FIRE_VEL row
+	-- Fireball: one velocity step (mod 2^16); health holds its FIRE_VEL row 0..15
 	fly_x <= a_x + unsigned(to_signed(FIRE_VEL(to_integer(a_health(3 downto 0)))(0), 16));
 	fly_y <= a_y + unsigned(to_signed(FIRE_VEL(to_integer(a_health(3 downto 0)))(1), 16));
-	-- actors.direction16(): direction 0..15 toward (atx, aty), compares of
-	-- small multiples only (5 ay < ax, 3 ay < 2 ax, 2 ay < 3 ax, ay < 5 ax)
+	-- actors.direction16(): direction 0..15 toward (atx, aty) from compares of
+	-- small multiples (5 ay < ax, 3 ay < 2 ax, 2 ay < 3 ax, ay < 5 ax)
 	dir_ax <= resize(unsigned(abs(atx)), 22);
 	dir_ay <= resize(unsigned(abs(aty)), 22);
 	dir_sub <= to_unsigned(0, 4) when (shift_left(dir_ay, 2) + dir_ay < dir_ax) else
@@ -1103,10 +1066,9 @@ begin
 		to_signed(-31, 6) when (lat < -31) else
 		lat(5 downto 0);
 
-	-- Light offsets of the four light types for effects frame fxn
-	-- (render.light_mods): steady 0, flicker -5 when FLICK, strobe -8 when
-	-- bit 4, glow -(triangle(n mod 32) / 2); the muzzle flash adds 2 to all
-	-- four. Type k at 5k + 4 .. 5k (5-bit signed)
+	-- Light offsets for effects frame fxn (render.light_mods): steady 0, flicker -5
+	-- when FLICK, strobe -8 when bit 4, glow -(triangle(n mod 32) / 2); muzzle
+	-- flash adds 2 to all. Type k at 5k + 4 .. 5k (signed)
 	lm_f <= to_signed(2, FX_LMOD_W) when (flash /= 0) else to_signed(0, FX_LMOD_W);
 	lm_tri <= fxn(3 downto 1) when (fxn(4) = '0') else not fxn(3 downto 1); -- triangle / 2
 	lm_next(FX_LMOD_W - 1 downto 0) <= std_logic_vector(lm_f);
@@ -1127,10 +1089,9 @@ begin
 		std_logic_vector(spr_lsum(3 downto 0));
 
 	------------------------------------------------------------------
-	-- State machine: one Game.step per frame (see the header for the
-	-- flow). Every read of the map, span, z or actor port goes through
-	-- CORE_WAIT: the state sets the address and wret, CORE_WAIT gives the
-	-- memory its clock, wret sees the data.
+	-- State machine: one Game.step per frame. Map, span, z and actor reads go
+	-- through CORE_WAIT: set the address and wret, CORE_WAIT waits a clock, wret
+	-- sees the data.
 	------------------------------------------------------------------
 	process(clk_i, rst_i)
 	begin
@@ -1343,8 +1304,7 @@ begin
 
 			case core_state is
 				--------------------------------------------------------------
-				-- Level load: request, wait (the loader writes the actor
-				-- RAM meanwhile), reset_level_state(), totals
+				-- Level load: request, wait (loader writes the actor RAM), reset, totals
 				--------------------------------------------------------------
 				when CORE_INIT =>
 					-- Game.__init__ loads level 1 (and stays on TITLE)
@@ -2065,11 +2025,9 @@ begin
 					end if;
 
 				--------------------------------------------------------------
-				-- Sound alert (Game.alert), after the shot's hitscans:
-				-- breadth-first flood fill from the player's cell over the 4
-				-- neighbors that are not solid (walls, closed doors), then the
-				-- actor pass, then the visited bits are cleared through the
-				-- queue. The RAM writes are the al_* decodes above.
+				-- Sound alert (Game.alert), after the shot's hitscans: breadth-first fill
+				-- from the player's cell over non-solid neighbors, then the actor pass, then
+				-- the visited bits are cleared through the queue (al_* decodes write)
 				--------------------------------------------------------------
 				when CORE_AL0 =>
 					-- The player's cell is queued and marked this clock
@@ -2195,9 +2153,8 @@ begin
 					core_state <= CORE_AL_CLR;
 
 				--------------------------------------------------------------
-				-- 7. Actors 0..31 (Game.actor_step): load the record into the
-				-- working copy a_*, run the per-frame action, count the timer
-				-- down, write it back
+				-- 7. Actors 0..31 (Game.actor_step): load into a_*, run the per-frame
+				-- action, count the timer down, write back
 				--------------------------------------------------------------
 				when CORE_ACTORS =>
 					ai <= (others => '0');
@@ -2493,8 +2450,7 @@ begin
 					core_state <= CORE_END;
 
 				--------------------------------------------------------------
-				-- End of every step: sprite table, key positions, checksum,
-				-- outputs
+				-- End of every step: sprite table, key positions, checksum, outputs
 				--------------------------------------------------------------
 				when CORE_END =>
 					-- Effects frame of this step: (t_sec * 60 + t_frames) mod 256, t_sec * 60 as
@@ -2708,8 +2664,7 @@ begin
 					core_state <= CORE_WAIT;
 
 				when CORE_BOX_D =>
-					-- Game.blocks(): solid, or (not for the peek camera box,
-					-- which only tests solid cells) too high a step or too
+					-- Game.blocks(): solid, or (not for the camera box) too high a step or too
 					-- little headroom for a body at bz
 					if ((map_solid = '1') or ((bsmall = '0') and (map_hblk = '1'))) then
 						hit <= '1';
@@ -2892,9 +2847,8 @@ begin
 					end if;
 
 				when CORE_SND =>
-					-- Game.sound(): at most 4 per step; an actor's sound gets a
-					-- volume from its distance (0 drops it) and a pan from its
-					-- sideways offset (two products on the shared multiplier)
+					-- Game.sound(): at most 4 per step; an actor's sound gets volume from its
+					-- distance (0 drops it) and pan from its sideways offset (shared multiplier)
 					core_state <= snd_ret;
 					if (sq_n /= 4) then
 						if (snd_act = '0') then
@@ -3011,9 +2965,8 @@ begin
 					core_state <= CORE_LOS;
 
 				when CORE_A_SHOOT3 =>
-					-- Hit chance max(40, 200 - (dist >> 7)), then 3 * (1 + (random & 3)).
-					-- From dist >> 7 = 160 on the floor of 40 applies; closer,
-					-- random + (dist >> 7) < 200 is random < 200 - (dist >> 7)
+					-- Hit chance max(40, 200 - (dist >> 7)), then 3 * (1 + (random & 3)); for
+					-- dist >> 7 < 160 the test is random + (dist >> 7) < 200
 					core_state <= en_ret;
 					if (los = '1') then
 						lfsr <= lfsr_n;

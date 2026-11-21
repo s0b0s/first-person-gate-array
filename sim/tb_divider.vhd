@@ -10,13 +10,11 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for divider (33 / 24 bits,
---                 24-bit saturating quotient) against the golden vectors
---                 in sim/golden/divider.txt, written by
---                 tools/model/build_assets.py: every deltaDist, lineHeight
---                 and rowDist division of the renderer test poses plus
---                 edge cases (divide by 0 and 1, saturation boundaries).
---                 Also checks the latency (done_o NUM_BITS + 1 clocks
---                 after start_i) and that busy_o covers the division.
+--                 24-bit saturating quotient) against sim/golden/divider.txt
+--                 (tools/model/build_assets.py): the renderer poses'
+--                 deltaDist, lineHeight and rowDist divisions plus divide
+--                 by 0 and 1 and saturation edges. Also checks latency
+--                 (done_o NUM_BITS + 1 clocks after start_i) and busy_o.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 std.textio, tb_pkg, divider

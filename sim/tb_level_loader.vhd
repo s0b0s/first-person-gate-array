@@ -10,19 +10,15 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for level_loader with the real
---                 flash_reader and sim/models/spi_flash_model.vhd. The
---                 flash is preloaded through the model's back door with
---                 build/gamedata.bin (tools/flash_image/make_gamedata.py)
---                 at FLASH_DATA_BASE. Tests:
---                 1. Load level id 1: all 4096 map writes, each address
---                    once, equal level 1 (map_init_pkg); start pose
---                    x = 9.5, y = 8.5 (Q6.16), angle 0; done pulses.
---                 2. Load a missing id (7): error_o, no done, no writes.
---                 3. Bad magic (first byte changed): error_o.
---                 4. Load id 1 again after the errors: works.
---                 The done monitor copies its check counts to done_checks
---                 and done_errors; the stimulus process adds them at the
---                 end.
+--                 flash_reader and spi_flash_model, preloaded with
+--                 build/gamedata.bin at FLASH_DATA_BASE. Tests:
+--                 1. Level 1: 4096 map writes, each address once, equal to
+--                    map_init_pkg; start x = 9.5, y = 8.5 (Q6.16), angle 0.
+--                 2. Missing id 7: error_o, no done, no writes.
+--                 3. Bad magic: error_o.
+--                 4. Level 1 again after the errors: works.
+--                 The done monitor hands its counts over on done_checks and
+--                 done_errors.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 level_loader, flash_reader, spi_flash_model, hw_pkg,

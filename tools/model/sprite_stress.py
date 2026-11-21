@@ -1,11 +1,10 @@
-"""Synthetic stress cases for the sprite engine testbench (sim/tb_sprite_engine.vhd).
+"""Synthetic stress cases for sim/tb_sprite_engine.vhd.
 
-The session cases in sim/golden/sprite_cases.txt (from build_assets.py) draw few sprite pixels,
-so this adds cases built to reach the corners of tools/model/sprites.py: a full table of 32
-entries, sprites right at the near limit (cover the whole screen, clipped on every side),
-sprites behind the camera or just below DEPTH_MIN, equal depths (stable order), fullbright and
-distance-darkened ones, sprites past the screen edges, and a z-buffer with near walls in some
-columns. The expected images come from sprites.draw_sprites, same file format.
+The session cases (sim/golden/sprite_cases.txt) draw few sprite pixels, so these reach the
+corners of tools/model/sprites.py: a full 32-entry table, sprites at the near limit (whole
+screen, clipped on every side), behind the camera or just below DEPTH_MIN, equal depths
+(stable order), fullbright and darkened, past the screen edges, and near walls in the
+z-buffer. Expected images come from sprites.draw_sprites, same file format.
 
 Usage: python tools/model/sprite_stress.py     (needs build/art.bin; run build_assets.py first)
 """

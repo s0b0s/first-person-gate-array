@@ -9,15 +9,12 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Byte-serial CRC-32 for the game core's per-frame state
---                 checksum (game.state_crc() in tools/model/game.py, which
---                 is zlib.crc32): reflected polynomial 0xEDB88320, register
---                 preset to all ones by init_i, one byte per clock while
---                 valid_i is high (least significant bit first, as zlib),
---                 crc_o is the register inverted (the final xor), so it is
---                 the CRC of every byte fed since the last init_i.
---                 The 8 shift steps of one byte are unrolled into one XOR
---                 network (each result bit is an XOR of at most 8 + 8 bits).
+-- Description:    Byte-serial CRC-32 (zlib.crc32, as game.state_crc() in
+--                 tools/model/game.py) for the per-frame state checksum.
+--                 Reflected polynomial 0xEDB88320, preset to all ones by
+--                 init_i, one byte per clock while valid_i is high, LSB
+--                 first; crc_o is the inverted register. The 8 shift steps
+--                 unroll into one XOR network.
 --                 Clock domain: clk_i (system). Latency: crc_o includes a
 --                 byte one clock after it was fed.
 --
@@ -49,9 +46,8 @@ architecture arch of core_crc is
 
 	signal crc: unsigned(31 downto 0) := (others => '1'); -- zlib CRC-32 starts from all ones
 
-	-- One byte through the bit-serial reflected CRC: xor the byte into the
-	-- low end, then 8 times shift right and xor the polynomial when the
-	-- bit shifted out is 1
+	-- One byte of the reflected CRC: xor it into the low end, then 8 shifts
+	-- right, xoring POLY when the bit shifted out is 1
 	function crc_byte(c: unsigned(31 downto 0); b: std_logic_vector(7 downto 0)) return unsigned is
 		variable x: unsigned(31 downto 0);
 	begin

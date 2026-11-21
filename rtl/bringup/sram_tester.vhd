@@ -9,24 +9,18 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    SRAM self-test, run as an SRAM arbiter master
---                 over the byte range FIRST..LAST, repeating forever:
---                   WALK  walking ones on the data bus: bytes FIRST..
---                         FIRST+7 get 01, 02, 04 .. 80
---                   ADDR  address in address: every byte gets
---                         a(7:0) xor a(15:8) xor a(18:16), so a stuck or
---                         swapped address line shows as a mismatch
---                   LFSR  pseudo-random bytes from a 16-bit LFSR
---                         (x^16 + x^15 + x^13 + x^4 + 1, XAPP052), with a
---                         new seed every pass
---                 Each phase writes the whole range, then reads it back.
---                 Reads are issued as fast as the arbiter grants them and
---                 checked in order as they return (reads return in
---                 request order), so the expected value is recomputed
---                 from a check counter and a second LFSR that advance on
---                 each returned byte.
---                 Reports passes, errors (saturating), the first failing
---                 address and the first expected/read pair.
+-- Description:    SRAM self-test over bytes FIRST..LAST as an SRAM arbiter
+--                 master, repeating forever; each phase writes the range,
+--                 then reads it back:
+--                 WALK: walking ones, bytes FIRST..FIRST+7 get 01 .. 80.
+--                 ADDR: each byte gets a(7:0) xor a(15:8) xor a(18:16),
+--                 so a stuck or swapped address line shows.
+--                 LFSR: x^16 + x^15 + x^13 + x^4 + 1 (XAPP052), new seed
+--                 each pass.
+--                 Reads issue as fast as granted and return in order, so
+--                 a check counter and a second LFSR recompute the
+--                 expected byte. Reports passes, errors (saturating), and
+--                 the first failing address and expected/read pair.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std

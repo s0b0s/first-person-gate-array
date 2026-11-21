@@ -9,16 +9,11 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Sequential binary to BCD converter (double dabble) for the
---                 overlay's numbers: a 24-bit value becomes 8 decimal digits
---                 (digit k in bits 4k + 3 .. 4k, digit 0 = ones).
---                 Each of the 24 steps first adds 3 to every digit that is
---                 5 or more, then shifts the digits left by one bit with the
---                 next value bit (most significant first) coming in at the
---                 bottom; after 24 steps the digits hold the decimal value.
---                 Interface: pulse start_i with value_i; done_o pulses with
---                 digits_o valid 25 clocks later; digits_o holds until the
---                 next start.
+-- Description:    Sequential double-dabble converter for the overlay: a
+--                 24-bit value becomes 8 BCD digits (digit k in bits
+--                 4k + 3 .. 4k, digit 0 = ones), one value bit per clock.
+--                 Pulse start_i with value_i; done_o pulses 25 clocks later
+--                 with digits_o valid, held until the next start.
 --                 Clock domain: clk_i. Latency 25 clocks.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std

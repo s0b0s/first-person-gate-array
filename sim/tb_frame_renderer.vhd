@@ -9,40 +9,25 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for frame_renderer (walls, then
---                 sprites, then overlay) against whole frames of the model
---                 (tools/model/frame.py via build_assets.py:
---                 sim/golden/frame_cases.txt): a briefing screen, the first
---                 two playing frames after the level 1 load (back to back,
---                 so the minimap's seen set grows), a frame with sprites
---                 and an opening door, a debug-overlay frame, and
---                 two frames of the level-3 heights session (stairs, the
---                 ramp hall), where sprites stand on raised floors and the
---                 sprite engine clips against render_top's clip lists.
---                 Per case it loads the tile map and sprite table into
---                 behavioral RAMs (1-clock reads), packs the camera, door
---                 table, HUD word, key positions and debug counters, and
---                 treats the framebuffer as filled with (expected xor 5A),
---                 so every pixel the renderer fails to write shows as a
---                 mismatch.
---                 Cases with clear = 1 pulse seen_clear_i first (as after a
---                 level load); start_i comes on the same clock (even cases)
---                 or 100 clocks later, during the clear (odd cases), to
---                 cover both ways a start waits for the clear.
---                 Art reads go to a behavioral arbiter port (random grants,
---                 read data SRAM_LATENCY clocks after the grant) serving
+-- Description:    Self-checking testbench for frame_renderer (walls,
+--                 sprites, overlay) against whole model frames in
+--                 sim/golden/frame_cases.txt (tools/model/frame.py): a
+--                 briefing screen, the first two level 1 frames back to
+--                 back (the minimap's seen set grows), sprites with an
+--                 opening door, a debug overlay, and two level 3 heights
+--                 frames (sprites on raised floors, clipped against
+--                 render_top's clip lists).
+--                 Tile map and sprite table sit in 1-clock RAMs; unwritten
+--                 framebuffer pixels read as (expected xor 5A), so any
+--                 missed write is a mismatch. Cases with clear = 1 pulse
+--                 seen_clear_i first, with start_i on the same clock (even
+--                 cases) or 100 clocks later (odd cases). Art reads get
+--                 random grants and data SRAM_LATENCY clocks later from
 --                 build/art.bin at ART_BASE; the pixel port is ready
---                 READY_PCT percent of the clocks.
---                 Checks per case: whole image equal, buffer bit of every
---                 write, one done_o, busy_o low after it, and (3D frames)
---                 the hitscan span list equal to the model's.
---                 Prints the busy clocks (seen clear included) and
---                 cycles_o (render time only) per case.
---                 The write process keeps the pixels written in the current
---                 case in the signal img (-1 = not written, cleared through
---                 clear_store before each case); the expected image is a
---                 variable of the stimulus process, and a pixel not written
---                 reads as its (expected xor 5A) fill value.
+--                 READY_PCT percent of clocks.
+--                 Checks per case: whole image, buffer bit of every write,
+--                 one done_o, busy_o low after it, and (3D frames) the
+--                 hitscan spans. Prints busy clocks and cycles_o.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, std.textio, tb_pkg, frame_renderer and
@@ -173,8 +158,7 @@ architecture arch of tb_frame_renderer is
 	signal cycles: std_logic_vector(23 downto 0);
 	signal dones: natural := 0;
 	signal bad_buf: natural := 0;
-	-- Pixels written in the current case (-1 = not written); driven by the
-	-- write process, cleared when clear_store is true on a clock edge
+	-- Pixels written in this case (-1 = not written); cleared while clear_store
 	signal img: written_t := (others => -1);
 	signal clear_store: boolean := false;
 	signal bad_addr: natural := 0;
@@ -286,10 +270,9 @@ begin
 		end if;
 	end process;
 
-	-- SRAM master port: the grant comes combinationally (like sram_arbiter),
-	-- read data SRAM_LATENCY clocks later, from art.bin at ART_BASE (the
-	-- file is read inside the process: xsim leaves an architecture-level
-	-- constant filled from a file at zero)
+	-- SRAM master port: combinational grant (like sram_arbiter), data
+	-- SRAM_LATENCY clocks later from art.bin at ART_BASE. The file is read
+	-- inside the process: xsim leaves a file-filled architecture constant zero.
 	m_gnt <= m_req and gnt_ok;
 
 	process
@@ -543,8 +526,7 @@ begin
 				t(i) := u(hv, 24);
 			end loop;
 			tiles <= t;
-			-- E expected image; the framebuffer starts as its complement pattern
-			-- (applied when comparing: a pixel not written reads as it)
+			-- E expected image; unwritten pixels compare as (expected xor 5A)
 			readline(gf, l);
 			for y in 0 to 239 loop
 				readline(gf, l);

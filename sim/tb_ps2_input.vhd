@@ -9,27 +9,22 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for the whole PS/2 input block
---                 (ps2_input) with a keyboard model and a mouse model on
---                 open-drain lines. System clock 10 MHz (CLK_HZ generic)
---                 and a 2 ms mouse start-up delay keep it short; the
---                 PS/2 timing is real.
+-- Description:    Self-checking testbench for ps2_input with keyboard and
+--                 mouse models on open-drain lines. A 10 MHz clock and 2 ms
+--                 mouse start-up delay keep it short; PS/2 timing is real.
 --                 Tests:
---                 - enable low: lines released, mouse off; enable high:
---                   full mouse start-up (FF, FA AA 00, F4, FA)
---                 - make and break codes, E0 keys, fake shift E0 12, the
---                   E1 Pause sequence, Right Shift, a keyboard parity
---                   error counted
---                 - snapshot fields: move, strafe, run, fire, duck, peek,
---                   arrow-key turn, and the edge bits (use, weapon_sel,
---                   weapon_cycle, automap, menu, debug) set only on the
---                   first frame of a press
---                 - mouse packets: negative dx, two packets summed in one
---                   frame, an overflow packet dropped, a slipped framing
---                   byte, a packet resynchronized after a long gap,
---                   buttons; running totals
+--                 - enable low releases the lines; enable high runs the mouse
+--                   start-up (FF, FA AA 00, F4, FA)
+--                 - make/break, E0 keys, fake shift E0 12, E1 Pause, Right
+--                   Shift, a counted keyboard parity error
+--                 - snapshot fields (move, strafe, run, fire, duck, peek, turn)
+--                   and edge bits (use, weapon_sel, weapon_cycle, automap,
+--                   menu, debug) set only on the first frame of a press
+--                 - mouse: negative dx, two packets in one frame, overflow
+--                   dropped, slipped framing byte, resync after a gap, buttons,
+--                   running totals
 --                 - AA 00 from a replugged mouse restarts the start-up
---                 - byte histories, and enable low clearing the keys
+--                 - byte histories; enable low clears the keys
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 game_pkg, ps2_device_model, ps2_input

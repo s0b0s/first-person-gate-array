@@ -1,12 +1,11 @@
-"""The project's VHDL file header block, in one place (one format for every file).
+"""The VHDL file header block format, in one place.
 
     block(...)        builds a header block from its fields
-    rewrite(path)     rewrites the header of an existing .vhd file into this format, keeping
-                      its date, description, dependencies, revision and limitations
+    rewrite(path)     rewrites an existing .vhd header into this format, keeping its date,
+                      description, dependencies, revision and limitations
 
-Used by tools/model/export.py, tools/font/make_font.py and tools/bringup/make_page.py for the
-generated files, and run once over rtl/ and sim/ (python tools/style/headers.py) to convert
-the hand-written ones.
+Used by export.py, make_font.py and make_page.py for generated files;
+"python tools/style/headers.py" converts the hand-written ones under rtl/ and sim/.
 """
 
 import re

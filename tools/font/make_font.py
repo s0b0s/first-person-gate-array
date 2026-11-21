@@ -1,13 +1,11 @@
-"""Build the 8x8 font ROM used for on-screen text (bring-up pages, HUD, debug overlay).
+"""Build the 8x8 font ROM for on-screen text (bring-up pages, HUD, debug overlay).
 
-The glyphs below were drawn by hand for this project (5 x 7 pixel shapes placed in the
-top-left of an 8 x 8 cell, leaving one blank column on the right and one blank row at the
-bottom as spacing). Codes 0x20 to 0x5F have their own glyphs; lowercase 0x60 to 0x7E reuse
-the uppercase shapes; 0x7F is a solid block; control codes 0x00 to 0x1F are blank except
-0x01 (a small right arrow) and 0x02 (a hollow box).
+Hand-drawn 5 x 7 glyphs in the top-left of each 8 x 8 cell (one blank column and row for
+spacing). 0x20-0x5F have glyphs; 0x60-0x7E reuse the uppercase shapes; 0x7F is a solid
+block; 0x00-0x1F are blank except 0x01 (small right arrow) and 0x02 (hollow box).
 
 Output: rtl/display/font_rom.vhd, a synchronous ROM of 128 characters x 8 rows x 8 bits
-(1 KB, one BRAM18 or 32 LUTs worth of distributed ROM, Vivado decides).
+(1 KB; Vivado picks BRAM or distributed ROM).
 
 Usage: python tools/font/make_font.py
 """

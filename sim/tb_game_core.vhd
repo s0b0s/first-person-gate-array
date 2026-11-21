@@ -9,50 +9,39 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for game_core against the golden
---                 traces of tools/model/game.py, 1,500 frames each:
---                 TRACE = 2: sim/golden/game2_trace.txt, the
---                 autopilot session (title, briefing, level 1 with fights,
---                 pickups, doors, a death and restart);
---                 TRACE = 4: sim/golden/game4_trace.txt, the
---                 heights session on level 3 (stairs, a ramp, a raised hall
---                 with a lower ceiling, a step up, falls, fights, a death
---                 and restart). In it level 3 plays as level 1, so the
---                 loader model supplies build/level3.bin when the core asks
---                 for level 1.
---                 TRACE = 5: sim/golden/game4d_trace.txt, 451 scripted frames
---                 on the directed test map (build/level9.bin): steps of 16
---                 and 24 (exactly the climb limit), falls, a ramp rising
---                 toward -y, the 40-unit headroom limit.
---                 TRACE = 6: sim/golden/game5a_trace.txt, 164 scripted frames
---                 on the directed alert map (build/level10.bin): a shot wakes
---                 only the Grunt around the corner (not the one behind a
---                 closed door, not the ambusher); after the door opens, a
---                 second shot wakes the far Grunt.
+-- Description:    Self-checking testbench for game_core against golden
+--                 traces of tools/model/game.py (in sim/golden/):
+--                 TRACE = 2: game2_trace.txt, 1,500 frames of autopilot
+--                 (title, briefing, level 1 fights, pickups, doors, death
+--                 and restart).
+--                 TRACE = 4: game4_trace.txt, 1,500 frames of the level 3
+--                 heights session (stairs, ramp, low ceiling, falls,
+--                 fights, death); level 3 plays as level 1, so the loader
+--                 supplies build/level3.bin for level 1.
+--                 TRACE = 5: game4d_trace.txt, 451 frames on the test map
+--                 (build/level9.bin): steps of 16 and 24 (the climb
+--                 limit), falls, a ramp toward -y, 40-unit headroom.
+--                 TRACE = 6: game5a_trace.txt, 164 frames on the alert map
+--                 (build/level10.bin): a shot wakes only the Grunt around
+--                 the corner, not the one behind a closed door nor the
+--                 ambusher; after the door opens a second shot wakes it.
 --                 RUN_VARIANTS: TRACE=2 TRACE=4 TRACE=5 TRACE=6
 --                 Models around the core:
---                 - tile map, 4096 x 24 bits, one clock of read latency;
---                   written by the testbench loader and by the core
---                 - loader: on load_req_o it reads build/level<n>.bin
---                   (tools/model/level.py, Level.binary(): 12,288 tile bytes,
---                   start x u32, start y u32, angle u16, actor count u16,
---                   8-byte actor records), writes the map and all 32 actor
---                   slots (unused ones zero) with some delay, then pulses
---                   load_done_i
---                 - span and wall z memories (1-clock reads) holding the
---                   renderer output of the PREVIOUS frame (the trace's I
---                   line: spans, then the wall z of the 7 shotgun columns;
---                   other columns read 65535)
---                 Each frame: frame_start, the snapshot 2 clocks later,
---                 wait for render_start, then compare all 91 state words
---                 (S), the CRC (R), the sprite table (P), the sound
---                 commands in order (N), the HUD word and the screen
---                 tint (H: 20 HUD fields, then the tint), the effects
---                 register fx_o (X: light offsets of the four light types,
---                 animation frame), and the
---                 renderer registers against the state words (the eye
---                 register is min(127, z + eye) of word 5). Sprite entries
---                 carry the floor height (7th field of P). Prints the
+--                 - tile map, 4096 x 24 bits, 1-clock reads
+--                 - loader: on load_req_o reads build/level<n>.bin
+--                   (Level.binary(): 12,288 tile bytes, start x u32,
+--                   y u32, angle u16, actor count u16, 8-byte actor
+--                   records), writes map and all 32 actor slots (unused
+--                   zero), then pulses load_done_i
+--                 - span and wall z memories (1-clock reads) with the
+--                   PREVIOUS frame's renderer output (trace line I; wall z
+--                   only for the 7 shotgun columns, others read 65535)
+--                 Each frame: frame_start, snapshot 2 clocks later, wait
+--                 for render_start, then compare the 91 state words (S),
+--                 CRC (R), sprite table (P, 7th field floor height), sound
+--                 commands in order (N), 20 HUD fields and tint (H), fx_o
+--                 (X: four light offsets, animation frame) and renderer
+--                 registers (eye = min(127, z + eye) of word 5). Prints
 --                 clocks per frame (snapshot to render_start).
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,

@@ -9,15 +9,13 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Sample memory of the audio mixer, 4096 bytes:
+-- Description:    Audio mixer sample memory, 4096 bytes:
 --                   0..2303     nine 256-byte rings (voice v at v * 256;
---                               voices 0..7 effects, 8 music), refilled
---                               from flash while a sound plays
---                   2304..3647  the first 64 bytes ("head") of each of the
---                               21 items (18 sounds, 3 music tracks) at
---                               2304 + item * 64, loaded once at start-up,
---                               so a sound can start on the next output
---                               sample without waiting for the flash
+--                               0..7 effects, 8 music), refilled from flash
+--                   2304..3647  64-byte head of each of the 21 items (18
+--                               sounds, 3 music) at 2304 + item * 64,
+--                               loaded at start-up so a sound starts
+--                               without waiting for the flash
 --                 Port A writes (flash data), port B reads (the mixer).
 --                 Clock domain: clk_i. Read latency 1 clock.
 --

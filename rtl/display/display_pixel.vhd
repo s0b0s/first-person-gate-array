@@ -10,28 +10,20 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    Pixel-domain color path of the display controller.
---                 Pipeline (S0 = vga_timing's registered counters):
---                   S0: line buffer address from (h, v): half = rendered
---                       line bit 0 = v(1), x = h / 2 (pixel doubling)
---                   S1: line buffer byte arrives; the test pattern (if
---                       selected) replaces it; result addresses the
---                       palette
---                   S2: 18-bit palette color arrives; tint, then 2x2
---                       ordered dither down to OUT_BITS per channel
---                   S3: output registers (IOB) for color and both syncs
---                 Syncs and the visible flag travel down the same three
---                 registers, so they stay aligned with the color.
---                 Dither: d = Bayer 2x2 {0, 2, 3, 1} at (h mod 2, v mod 2)
---                 indexed as 2 * (v mod 2) + (h mod 2);
---                 out = min(15, (c6 + d) / 4). Each game pixel covers one
---                 2x2 block, so the four screen pixels average to about
---                 c6 / 4: 6 bits of shading from a 4-bit DAC.
---                 Tint: c = (3 * c + T) / 4 per channel toward T.
---                 Test patterns (game_pkg): color bands with one band per
---                 output bit (bypassing palette and dither), 2x2 checker
---                 with a white border, 8-pixel grid, palette gradient.
---                 Output enable: vga_t_o (one bit per pin, '1' = high
---                 impedance) follows out_en_i, registered like the data.
+--                   S0: line buffer address = v(1) & h / 2
+--                   S1: line byte (or test pattern) addresses the palette
+--                   S2: palette color; tint, then 2x2 dither to OUT_BITS
+--                   S3: IOB output registers for color and syncs
+--                 Syncs and the visible flag are delayed alongside.
+--                 Dither: d = Bayer {0, 2, 3, 1}[2 * (v mod 2) + (h mod 2)],
+--                 out = min(15, (c6 + d) / 4). A 2x2 game pixel averages
+--                 to about c6 / 4: 6-bit shading from a 4-bit DAC.
+--                 Tint: c = (3 * c + T) / 4 per channel.
+--                 Test patterns (game_pkg): one band per output bit
+--                 (no palette or dither), checker with white border,
+--                 8-pixel grid, palette gradient.
+--                 vga_t_o ('1' = high-Z, one bit per pin) follows
+--                 out_en_i, registered like the data.
 --                 Clock domain: clk_i (pixel, 25 MHz). Latency 3 clocks
 --                 from the counters to the pins.
 --

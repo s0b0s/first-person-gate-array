@@ -1,6 +1,5 @@
-"""Procedural sprite art: monsters, items, fireballs and first-person weapons.
+"""Procedural sprite art (original): monsters, items, fireballs and first-person weapons.
 
-Original art, drawn from simple shaded shapes, so there are no licensing questions.
 Index 255 is transparent. 61 frames, 197,632 bytes:
 
     0..37   monsters, 64 x 64: Grunt 0..8, Fiend 9..17, Brute 18..26, Boss 27..37
@@ -9,12 +8,12 @@ Index 255 is transparent. 61 frames, 197,632 bytes:
     38..54  items and effects, 32 x 32 (see ITEM_FRAMES)
     55..60  first-person weapons, 64 x 64 (see WEAPON_FRAMES)
 
-Storage in SRAM (copied from flash at boot to ART_BASE = 0x40000): frames one after the
-other, column-major (texel (u, v) at offset + u * height + v), so a sprite column is a run of
-consecutive bytes. FRAME_TABLE gives (offset from ART_BASE, width, height) per frame.
+In SRAM (copied from flash at boot to ART_BASE = 0x40000) frames are packed column-major
+(texel (u, v) at offset + u * height + v), so a sprite column is consecutive bytes.
+FRAME_TABLE gives (offset from ART_BASE, width, height) per frame.
 
-A texel is one world unit (1/64 tile), the same scale as wall texels, so a 64 x 64 monster
-frame stands one tile tall and the renderer's wall texture step works for sprites too.
+A texel is one world unit (1/64 tile), like wall texels, so a 64 x 64 monster stands one
+tile tall and the wall texture step works for sprites too.
 """
 
 from palette import ramp_index, TRANSPARENT

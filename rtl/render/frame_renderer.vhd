@@ -9,32 +9,22 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    The renderer: one frame into the back buffer, in
---                 the order of tools/model/frame.py:
---                   1. walls, floors, ceilings (render_top: ray engine +
---                      column rasterizer); the z-buffer and the minimap
---                      seen bits are written on the way
+-- Description:    Renders one frame into the back buffer, in the order of
+--                 tools/model/frame.py:
+--                   1. walls, floors, ceilings (render_top), writing the
+--                      z-buffer and minimap seen bits
 --                   2. sprites, far to near (sprite_engine)
 --                   3. 2D overlay (overlay)
---                 On the text screens (title, briefing, score, ending)
---                 only the overlay runs; it fills the whole screen.
---                 Shared resources, one user at a time by phase:
---                   - pixel write port: walls, then sprites, then overlay
---                   - SRAM art reads (master 1): sprites, then overlay
---                   - tile map port B: floor casting (walls), then the
---                     minimap (overlay)
---                   - z-buffer read port: the sprite engine during the
---                     sprite phase, the game core (hitscan, last frame's
---                     walls) while the renderer is idle
---                 Seen bits: 4096 x 1 RAM written by the ray engine, read
---                 by the overlay, cleared on seen_clear_i (4,096 clocks;
---                 start_i waits for the clear to finish).
---                 Heights: render_top keeps each column's clip list (the
---                 open row window after every height edge); the sprite
---                 engine is its only reader (sprite phase), so its clip
---                 ports connect straight through.
---                 Frame inputs (camera, door table, HUD, buf) must be
---                 stable from start_i until done_o.
+--                 Text screens (title, briefing, score, ending) run only
+--                 the overlay.
+--                 Shared by phase: pixel write port, SRAM art reads
+--                 (master 1), tile map port B (floor cast, then minimap),
+--                 z-buffer read (sprites, else game core hitscan).
+--                 Seen bits: 4096 x 1 RAM, cleared on seen_clear_i in
+--                 4,096 clocks; start_i waits for the clear.
+--                 Clip lists go straight from render_top to the sprite
+--                 engine, their only reader.
+--                 Frame inputs must be stable from start_i to done_o.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -424,9 +414,8 @@ begin
 		);
 
 	------------------------------------------------------------------
-	-- Shared ports by phase. Ready goes to every engine; only the
-	-- engine of the current phase drives valid, so only it sees a
-	-- transfer. Read data (SRAM, map) is shared the same way.
+	-- Shared ports by phase. Ready and read data go to every engine;
+	-- only the current phase's engine drives valid, so only it transfers.
 	------------------------------------------------------------------
 	pix_valid_o <= w_pix_valid when (phase = P_WALLS) else
 		s_pix_valid when (phase = P_SPRITES) else

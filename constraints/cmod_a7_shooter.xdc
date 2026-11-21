@@ -1,9 +1,8 @@
 ## --------------------------------------------------------------------------
 ## First-Person Gate Array - Cmod A7-35T constraints
-## Pin map: frozen, because the carrier PCB is drawn from it; moving a pin
-## means changing the PCB. Pmod port JA is deliberately NOT assigned (one JA
-## VCC pin only feeds 3.3 V to the PCB through a jumper).
-## Top-level port names match rtl/top/bringup_top.vhd (and later the game top).
+## Pin map is fixed by the carrier PCB. Pmod JA is NOT assigned (one JA VCC
+## pin only feeds 3.3 V to the PCB through a jumper).
+## Port names match the top-level entities in rtl/top/.
 ## --------------------------------------------------------------------------
 
 ## Configuration and bitstream (boot from the on-board QSPI flash)
@@ -25,9 +24,8 @@ create_generated_clock -name clk_sys [get_pins clocks/cmt/CLKOUT0]
 create_generated_clock -name clk_pix [get_pins clocks/cmt/CLKOUT1]
 create_generated_clock -name clk_sram_rd [get_pins clocks/cmt/CLKOUT2]
 
-## The system and pixel domains meet only in the display controller, through
-## synchronizers and dual-clock RAMs. clk_sram_rd stays with clk_sys: the SRAM
-## capture path between them must be timed.
+## System and pixel domains meet only in the display controller (synchronizers,
+## dual-clock RAMs). clk_sram_rd stays with clk_sys: the SRAM capture path is timed.
 set_clock_groups -asynchronous -group [get_clocks {clk_sys clk_sram_rd}] -group [get_clocks clk_pix]
 
 ## --------------------------------------------------------------------------
@@ -43,8 +41,7 @@ set_property -dict { PACKAGE_PIN B18 IOSTANDARD LVCMOS33 } [get_ports {btn[1]}]
 set_property -dict { PACKAGE_PIN J17 IOSTANDARD LVCMOS33 } [get_ports uart_txd_in]
 set_property -dict { PACKAGE_PIN J18 IOSTANDARD LVCMOS33 } [get_ports uart_rxd_out]
 
-## QSPI flash, used as user I/O after configuration. SCK is the extra
-## connection on E19 (Cmod A7 manual), so no STARTUPE2 is needed.
+## QSPI flash as user I/O after configuration; SCK is on E19, so no STARTUPE2
 set_property -dict { PACKAGE_PIN K19 IOSTANDARD LVCMOS33 IOB TRUE } [get_ports qspi_cs_n]
 set_property -dict { PACKAGE_PIN E19 IOSTANDARD LVCMOS33 IOB TRUE } [get_ports qspi_sck]
 set_property -dict { PACKAGE_PIN D18 IOSTANDARD LVCMOS33 IOB TRUE } [get_ports {qspi_dq[0]}]
@@ -90,9 +87,9 @@ set_property SLEW FAST [get_ports {sram_a[*] sram_dq[*] sram_oe_n sram_we_n}]
 ## --------------------------------------------------------------------------
 ## DIP pins to the carrier PCB (23 used; JA and the other DIP pins unassigned)
 ## --------------------------------------------------------------------------
-## PS/2 through the level shifter: open drain ('0' or 'Z'), the shifter's
-## 10 kohm resistors are the pull-ups. Shifter channel An (3.3 V side) maps to
-## Bn (5 V side), which goes to the Pmod PS2 socket (Pmod pin 1 Data, 3 Clock).
+## PS/2 through the level shifter: open drain ('0' or 'Z'), its 10 kohm
+## resistors are the pull-ups. Channel An (3.3 V) maps to Bn (5 V) on the Pmod
+## PS2 socket (Pmod pin 1 Data, 3 Clock).
 ## DIP 1 kb_clk: A4/B4, keyboard Clock
 set_property -dict { PACKAGE_PIN M3 IOSTANDARD LVCMOS33 DRIVE 8 } [get_ports kb_clk]
 ## DIP 2 kb_dat: A3/B3, keyboard Data
@@ -102,9 +99,8 @@ set_property -dict { PACKAGE_PIN A16 IOSTANDARD LVCMOS33 DRIVE 8 } [get_ports ms
 ## DIP 4 ms_dat: A1/B1, mouse Data
 set_property -dict { PACKAGE_PIN K3 IOSTANDARD LVCMOS33 DRIVE 8 } [get_ports ms_dat]
 
-## Pmod I2S2, DAC row only (Pmod pins 1 MCLK, 2 LRCK, 3 SCLK, 4 SDIN). The DIP
-## order runs SDIN to MCLK so the four PCB traces run in parallel without
-## crossing.
+## Pmod I2S2, DAC row only (Pmod pins 1 MCLK, 2 LRCK, 3 SCLK, 4 SDIN). DIP
+## order SDIN to MCLK keeps the four PCB traces from crossing.
 ## DIP 17 -> I2S2 pin 4
 set_property -dict { PACKAGE_PIN M1 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TRUE } [get_ports i2s_sdin]
 ## DIP 18 -> I2S2 pin 3
@@ -117,8 +113,8 @@ set_property -dict { PACKAGE_PIN M2 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 IOB TR
 ## PWR_SENSE: the PCB 3.3 V net; pulled down so a missing jumper reads '0'
 set_property -dict { PACKAGE_PIN W3 IOSTANDARD LVCMOS33 PULLDOWN TRUE } [get_ports pwr_sense]
 
-## Pmod VGA: slow edges for unterminated traces, all registers in IOBs so
-## every bit changes at the same time
+## Pmod VGA: slow edges for unterminated traces, IOB registers so all bits
+## change together
 set_property -dict { PACKAGE_PIN V3 IOSTANDARD LVCMOS33 } [get_ports vga_vs]
 set_property -dict { PACKAGE_PIN W5 IOSTANDARD LVCMOS33 } [get_ports vga_hs]
 set_property -dict { PACKAGE_PIN V4 IOSTANDARD LVCMOS33 } [get_ports {vga_g[3]}]
@@ -138,36 +134,30 @@ set_property -dict { SLEW SLOW DRIVE 8 IOB TRUE } [get_ports {vga_*}]
 ## --------------------------------------------------------------------------
 ## I/O timing
 ## --------------------------------------------------------------------------
-## SRAM: every SRAM-facing register sits in an IOB (OLOGIC/ILOGIC, checked by
-## scripts/build.tcl, which stops if one is not), so its pin timing is fixed
-## by the silicon, not by placement. Vivado cannot chain the address output
-## path into the data input path, so the read window is checked by hand from
-## the routed clock-to-pad and input delays, allowing 0.5 ns of board trace each
-## way and 1 ns for the SRAM's input load:
+## SRAM: every SRAM-facing register is in an IOB (scripts/build.tcl stops if
+## not), so pin timing is fixed by the silicon. Vivado cannot chain the address
+## output path into the data input path, so the read window is checked by hand
+## from the routed clock-to-pad and input delays, allowing 0.5 ns of board trace
+## each way and 1 ns for the SRAM's input load:
 ##   read setup (slow corner): data at the capture flip-flop by 23.24 ns, needed
 ##     by 26.40 (edge 20 + 1.04 phase + 5.86 clock delay, less 0.5): +3.2 ns
 ##   read hold (fast corner): old data holds tOHA = 2 ns past the next address,
 ##     to 25.36 ns, needed until 23.73 (edge 23.43 plus 0.3): +1.6 ns
 ##   write: WE_n low 10 ns at CYCLES = 2 (tPWE 8 ns)
-## The paths between the IOB registers and the fabric (including the
-## clk_sram_rd capture register into clk_sys) stay fully timed.
+## Paths between the IOB registers and the fabric (including clk_sram_rd into
+## clk_sys) stay timed.
 set_false_path -to [get_ports {sram_a[*] sram_dq[*] sram_oe_n sram_we_n sram_ce_n}]
 set_false_path -from [get_ports {sram_dq[*]}]
 
-## Asynchronous or slow external interfaces: every one of these signals
-## either goes through a 3-flop synchronizer (inputs) or comes from an IOB
-## register whose timing the receiving device does not depend on at the
-## nanosecond level (VGA monitor locks to the syncs, the I2S DAC runs from
-## MCLK with tens of ns of margin, LEDs).
+## Asynchronous or slow interfaces: inputs go through 3-flop synchronizers;
+## outputs come from registers whose receivers do not care about nanoseconds
+## (the monitor locks to the syncs, the I2S DAC has tens of ns of margin, LEDs).
 set_false_path -from [get_ports {btn[*] uart_txd_in pwr_sense kb_clk kb_dat ms_clk ms_dat}]
 set_false_path -to [get_ports {led[*] led0_* uart_rxd_out vga_* i2s_* kb_clk kb_dat ms_clk ms_dat}]
-## SPI flash at 25 MHz: SCK, CS_n and MOSI change in the middle of 40 ns bit
-## times and MISO is sampled 30 ns after the falling SCK edge (flash
-## tV = 8 ns), so nanosecond-level I/O delays do not matter.
+## SPI flash at 25 MHz: SCK, CS_n and MOSI change mid-bit (40 ns bits) and
+## MISO is sampled 30 ns after falling SCK (flash tV = 8 ns).
 set_false_path -to [get_ports {qspi_cs_n qspi_sck qspi_dq[*]}]
 set_false_path -from [get_ports {qspi_dq[*]}]
 
-## Note on the CDC report: it lists sram_dq[*] and qspi_dq[1] as unclocked
-## inputs (CDC-1) because of the false paths above. Both are expected and
-## safe: SRAM read data is captured by IOB registers inside the hand-checked
-## window above, and flash MISO is sampled 30 ns after SCK falls (mid-bit).
+## The CDC report lists sram_dq[*] and qspi_dq[1] as unclocked inputs (CDC-1)
+## because of these false paths; both are safe for the reasons above.

@@ -12,18 +12,12 @@
 -- Description:    Shares one sram_arbiter master port between two clients
 --                 (shooter_top: master 1 = boot art copy / frame renderer,
 --                 master 3 = UART debug port / replay unit).
---                 Read data comes back on the shared rvalid a fixed time
---                 after the grant, in order, so it must go to the client
---                 that issued the read. The mux keeps an owner and counts
---                 the owner's reads in flight; ownership may move to the
---                 other client only when that count is zero, so every
---                 rvalid belongs to the current owner.
---                 Selection (combinational, so a grant still comes in the
---                 same cycle as the request, like the arbiter's):
---                   reads in flight          -> owner (the other waits)
---                   none, both requesting    -> the client that is not
---                                               the owner (alternates)
---                   none, one requesting     -> that client
+--                 Ownership moves only when the owner has no reads in
+--                 flight, so every shared rvalid belongs to the owner.
+--                 Selection (combinational, same-cycle grant):
+--                   reads in flight       -> owner
+--                   none, both requesting -> the non-owner (alternates)
+--                   none, one requesting  -> that client
 --                 Clock domain: clk_i (system). No added latency.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
@@ -99,8 +93,7 @@ begin
 	a_rvalid_o <= m_rvalid_i when (owner = '0') else '0';
 	b_rvalid_o <= m_rvalid_i when (owner = '1') else '0';
 
-	-- A grant moves ownership to the selected client (only possible with
-	-- no reads in flight, see sel); a read grant adds one in flight, an
+	-- A grant moves ownership to sel; a read grant adds one in flight, an
 	-- rvalid retires one
 	process(clk_i, rst_i)
 		variable p: unsigned(3 downto 0);

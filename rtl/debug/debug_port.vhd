@@ -20,18 +20,14 @@
 --                   'S' a0 a1 a2 l0 l1 l2    write SRAM, then l data
 --                                            bytes     -> 'K'
 --                   anything else                      -> '?'
---                 Registers 0..31 are the status words on status_i (read
---                 only, the same words as the bring-up page); 32..39 are
---                 control words on ctrl_o (read/write, reset to
---                 CTRL_INIT); others read as 0. A length of 0 means 2^24.
---                 SRAM access goes through an arbiter master port, one
---                 byte at a time (the UART is the bottleneck: 10 us per
---                 byte at 1 Mbaud, an SRAM access is 20 ns).
---                 A command that stops half-way (no byte for TIMEOUT_MS)
---                 is dropped so the port never hangs.
---                 Coding: one clocked process for the state machine and
---                 its registers; the UART and SRAM
---                 handshake outputs are decoded from the state.
+--                 Registers 0..31: status_i words (read only, as the
+--                 bring-up page); 32..39: ctrl_o words (read/write, reset
+--                 to CTRL_INIT); others read 0. Length 0 means 2^24.
+--                 SRAM goes through an arbiter master port one byte at a
+--                 time (the UART is the bottleneck). A command with no
+--                 byte for TIMEOUT_MS is dropped so the port never hangs.
+--                 One clocked state machine; UART and SRAM handshake
+--                 outputs are decoded from the state.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, hw_pkg,

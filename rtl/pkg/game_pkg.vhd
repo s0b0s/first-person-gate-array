@@ -9,15 +9,13 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Shared interface definitions:
---                 render size, bit positions of the packed words that cross
+-- Description:    Shared interface definitions: render size, SRAM arbiter
+--                 master numbers and bit layouts of the packed words passed
 --                 between blocks (input snapshot, key vector, tile word,
---                 actor record, state table entry) and SRAM arbiter master
---                 numbers. Packed words are std_logic_vectors so they can
---                 be stored in BRAM and sent over the UART unchanged.
---                 Every block and the Python model (tools/model) rely on
---                 these layouts: change both together, and only with the
---                 whole team.
+--                 actor record, state table entry). Packed words are plain
+--                 vectors so they fit in BRAM and go over the UART as is.
+--                 The Python model (tools/model) uses the same layouts:
+--                 change both together.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
 --
@@ -58,8 +56,7 @@ package game_pkg is
 	constant SRAM_MASTERS: natural := 4;
 
 	------------------------------------------------------------------
-	-- Key-state vector from the PS/2 keyboard decoder (one bit per key,
-	-- '1' while held). Scan code set 2 codes are in ps2_keyboard.
+	-- Key-state vector from ps2_keyboard ('1' while held)
 	------------------------------------------------------------------
 	constant KEY_W: natural := 0;
 	constant KEY_A: natural := 1;

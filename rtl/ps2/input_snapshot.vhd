@@ -9,35 +9,28 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Latches the per-frame input snapshot (40 bits, field
---                 positions SNAP_* in game_pkg) on
---                 frame_start_i, so the game and the replay recorder see
---                 actions, not keys:
---                   turn    (mouse dx this frame >>> MOUSE_SHIFT)
---                           + KEY_TURN if Right held - KEY_TURN if Left
---                           held, saturated to 12-bit signed,
---                           positive = clockwise (turn right)
---                   move    +1 W or Up, -1 S or Down, 0 both or neither
---                   strafe  +1 D, -1 A, 0 both or neither
---                   held    run (either Shift), fire (left button or
---                           either Ctrl), duck C, peek_l Q, peek_r E
---                   edges   pressed now and not at the previous frame
---                           start: use Space, weapon_sel 1/2/3 (lowest
---                           number wins), weapon_cycle right button,
---                           automap Tab, menu Esc, debug F1
---                   39:28   zero
---                 take_o is frame_start_i: the mouse driver returns the
---                 motion summed since the last frame on mouse_dx_i in
---                 the same cycle and clears its sum at that edge.
---                 Pipeline: at frame_start_i the inputs (mouse sum, keys,
---                 buttons, and the keys of the previous frame start) are
---                 registered; the snapshot is computed from those
---                 registers and latched one cycle later. The split keeps
---                 the mouse driver's saturating sum and the turn
---                 arithmetic out of the same clock cycle (together they
+-- Description:    Latches the 40-bit per-frame input snapshot (fields
+--                 SNAP_* in game_pkg) on frame_start_i, so the game and
+--                 the replay recorder see actions, not keys:
+--                 turn: mouse dx >>> MOUSE_SHIFT, +/- KEY_TURN for
+--                 Right/Left held, saturated to 12-bit signed, positive =
+--                 clockwise.
+--                 move: +1 W or Up, -1 S or Down; strafe: +1 D, -1 A
+--                 (0 for both or neither).
+--                 held: run (either Shift), fire (left button or either
+--                 Ctrl), duck C, peek_l Q, peek_r E.
+--                 edges (pressed since the previous frame start): use
+--                 Space, weapon_sel 1/2/3 (lowest wins), weapon_cycle
+--                 right button, automap Tab, menu Esc, debug F1.
+--                 Bits 39:28 zero.
+--                 take_o is frame_start_i: the mouse driver shows its sum
+--                 on mouse_dx_i that cycle and clears it at that edge.
+--                 Inputs are registered at frame_start_i and the snapshot
+--                 latched one cycle later, keeping the mouse sum and the
+--                 turn arithmetic in separate cycles (together they
 --                 missed 100 MHz by 0.74 ns).
---                 Clock domain: clk_i (system). snapshot_o and the
---                 valid_o pulse appear two cycles after frame_start_i.
+--                 Clock domain: clk_i (system). snapshot_o and valid_o
+--                 two cycles after frame_start_i.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, game_pkg
 --
@@ -74,7 +67,7 @@ end input_snapshot;
 architecture arch of input_snapshot is
 	signal snapshot: std_logic_vector(SNAP_BITS - 1 downto 0) := (others => '0');
 	signal snapshot_next: std_logic_vector(SNAP_BITS - 1 downto 0);
-	-- Stage 1: inputs sampled at frame_start_i
+	-- Pipeline stage 1: inputs sampled at frame_start_i
 	signal dx_q: std_logic_vector(15 downto 0) := (others => '0');
 	signal keys_q: std_logic_vector(KEYS_N - 1 downto 0) := (others => '0');
 	signal keys_prev_q: std_logic_vector(KEYS_N - 1 downto 0) := (others => '0');
@@ -94,7 +87,7 @@ architecture arch of input_snapshot is
 		return "00";
 	end function;
 begin
-	-- Stage 2: the snapshot from the registered inputs
+	-- Pipeline stage 2: the snapshot from the registered inputs
 	process(keys_q, keys_prev_q, buttons_q, dx_q, right_prev_q)
 		variable turn: signed(17 downto 0);
 		variable k: std_logic_vector(KEYS_N - 1 downto 0);

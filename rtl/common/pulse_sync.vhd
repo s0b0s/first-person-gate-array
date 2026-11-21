@@ -9,14 +9,11 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Carries single-cycle event pulses from clock domain A to
---                 clock domain B (a toggle: a two-phase handshake without
---                 the acknowledge, fine when pulses are far apart). Each
---                 pulse_i flips a toggle flip-flop in domain A; domain B
---                 passes the toggle through a 3-stage synchronizer and
---                 one more flip-flop, and pulse_o is high for one clk_b_i
---                 cycle whenever the last two differ (a 4-stage edge
---                 detector).
+-- Description:    Carries single-cycle pulses from domain A to domain B:
+--                 each pulse_i flips a toggle flip-flop in A; B passes the
+--                 toggle through a 3-stage synchronizer and one more
+--                 flip-flop, and pulse_o is high for one clk_b_i cycle
+--                 when those two differ.
 --                 Clock domains: clk_a_i (input side), clk_b_i (output).
 --                 Latency: 1 clk_a_i cycle plus 3 to 4 clk_b_i cycles.
 --
@@ -27,8 +24,7 @@
 -- Revision 1.00 - First working version
 -- Additional Comments:
 --                 Pulses must be at least 5 clk_b_i cycles apart or they
---                 merge (two flips cancel). The display uses it for line
---                 and frame events, which are thousands of cycles apart.
+--                 merge (two flips cancel).
 --------------------------------------------------------------------------
 library IEEE;
 use IEEE.std_logic_1164.all;

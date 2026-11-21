@@ -1,14 +1,14 @@
-"""Bit-accurate model of the 2D overlay.
+"""Bit-accurate model of the 2D overlay, drawn after walls and sprites.
 
-Everything is drawn with four primitives into the 320 x 240 framebuffer after walls and sprites:
+Four primitives:
     rect(x, y, w, h, color)                 solid fill
     text(x, y, scale, color, string)        8x8 font (rtl/display/font_rom.vhd), scale 1 or 2,
-                                            only lit font pixels are written (transparent)
+                                            only lit font pixels are written
     blit(x, y, frame)                       an art frame scaled x2, texel 255 transparent,
                                             clipped to the screen
     map(x, y, cell, seen, actors)           minimap / automap: cell x cell pixels per tile
-Layouts are fixed and driven by the HUD values from the game (game.Game.hud()). Numbers are
-printed right-aligned in a fixed width with leading spaces, so a layout never moves.
+Fixed layouts driven by the HUD values (game.Game.hud()); numbers are right-aligned in fixed
+widths so nothing moves.
 
 Screens by game flow:
     TITLE, BRIEFING, SCORE, ENDING    full-screen text pages (no 3D view)
@@ -118,9 +118,9 @@ def draw_map(cv, x0, y0, cell, tiles, seen, keys, px, py, cs, sn):
 
 
 def draw_overlay(image, hud, cam, tiles, seen, keys, blob, table, debug_values=(0, 0, 0, 0)):
-    """Draws the overlay for the game's flow state into image (the 3D view already drawn).
-    cam = (player x, player y, angle) in Q6.16 (the map marker uses the player, not the
-    peek camera); keys = [(item kind 6 or 7, tile x, tile y)] of keys still on the floor."""
+    """Draws the overlay for the game's flow state into image (3D view already drawn).
+    cam = (player x, player y, angle) in Q6.16 (the player, not the peek camera); keys =
+    [(item kind 6 or 7, tile x, tile y)] of keys still on the floor."""
     cv = Canvas(image)
     flow = hud["flow"]
     if flow == 0:   # TITLE

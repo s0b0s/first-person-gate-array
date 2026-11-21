@@ -1,14 +1,14 @@
 """Game palette and light table.
 
 Palette: 256 entries of 18-bit color (6 bits per channel).
-    0..15     the 16 basic colors of the bring-up palette (text and test pages use them)
+    0..15     the 16 basic colors of the bring-up palette (text and test pages)
     16..255   15 ramps of 16 shades, ramp r at 16 r .. 16 r + 15, darkest first
-    255       (brightest shade of ramp 15) is reserved as the sprite transparent index
+    255       (brightest of ramp 15) is reserved as the sprite transparent index
 
-Light table: LIGHT[level][index] for level 0 (darkest) .. 15 (full). Level 15 maps every index
-to itself. Lower levels scale the color by (level + 1) / 16 and pick the shade of the same
-ramp with the closest brightness, so hues stay put as walls fade into the dark (DOOM's
-COLORMAP idea). Basic colors 0..15 pick the closest color in the whole palette.
+Light table: LIGHT[level][index], level 0 (darkest) .. 15 (identity). Lower levels scale the
+color by (level + 1) / 16 and pick the closest-brightness shade of the same ramp, so hues
+hold as walls fade (DOOM's COLORMAP idea). Basic colors 0..15 pick the closest color in the
+whole palette.
 """
 
 BASIC = [

@@ -9,35 +9,28 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    The full game: title, briefing, three
---                 levels with monsters, items, weapons, keys and doors,
---                 score screens, ending; HUD, minimap and automap; sound
---                 effects and music; deterministic replay. game_top stays
---                 as the maze-only design.
+-- Description:    The full game: title, briefing, three levels with
+--                 monsters, items, weapons, keys and doors, score screens,
+--                 ending; HUD, minimap, automap; sound and music;
+--                 deterministic replay.
 --                 Boot: the asset loader copies the sprite art from flash
---                 into SRAM (about 64 ms, screen black), then the game
---                 runs. Levels load when the game core asks (briefing,
---                 restart): map and actor records from flash, then the
---                 game core finishes the level reset and the renderer
---                 clears the minimap's seen bits.
---                 Every frame: the buffer
---                 manager pulses frame_start at the start line; ps2_input
---                 latches the input snapshot; the replay unit passes it
---                 on (or replaces it in play mode); game_core runs one
---                 step and pulses render_start; frame_renderer draws
---                 walls, sprites and overlay into the back buffer; when
---                 the last pixel has left the pixel FIFO the frame is done
---                 and the buffers swap at vblank. The step's sound
---                 commands go to the audio mixer.
---                 Tile map port B: the asset loader while it loads, the
---                 game core while it steps, otherwise the renderer (floor
---                 casting, then the minimap); the three never overlap.
---                 SRAM masters: 0 display; 1 art (boot art copy, then the
---                 frame renderer's sprite and weapon reads, through
---                 sram_port_mux); 2 pixel FIFO; 3 UART debug port and
---                 replay unit (sram_port_mux).
+--                 into SRAM (about 64 ms, screen black). Levels load when
+--                 the game core asks (briefing, restart), then the core
+--                 finishes the level reset and the renderer clears the
+--                 minimap's seen bits.
+--                 Each frame: frame_start at the start line, ps2_input
+--                 latches the snapshot, the replay unit passes or replaces
+--                 it, game_core steps and pulses render_start,
+--                 frame_renderer draws the back buffer; once the pixel
+--                 FIFO is empty the buffers swap at vblank. Step sounds go
+--                 to the audio mixer.
+--                 Tile map port B: asset loader, then game core step, else
+--                 the renderer (floor casting, minimap); never overlapping.
+--                 SRAM masters: 0 display; 1 boot art copy, then sprite
+--                 and weapon reads (sram_port_mux); 2 pixel FIFO; 3 UART
+--                 and replay unit (sram_port_mux).
 --                 Flash: flash_arbiter, audio refills first, then loader.
---                 UART control registers (ctrl word n = register 32 + n):
+--                 UART control registers:
 --                   32 bit 0 test tone instead of the mixer, bit 7 test
 --                      pattern override with bits 6:4, bits 13:12 tint
 --                      override (0 = the game's tint), bit 16 freeze (no
@@ -858,9 +851,8 @@ begin
 	------------------------------------------------------------------
 	-- SRAM: two port muxes, arbiter, controller, pins
 	------------------------------------------------------------------
-	-- Master 1: the asset loader writes the art at boot; afterwards the
-	-- frame renderer reads it (they never overlap, the mux keeps read
-	-- data with the right client anyway)
+	-- Master 1: art writes at boot, then renderer reads (never overlapping;
+	-- the mux still routes read data to the right client)
 	art_mux: sram_port_mux
 		port map (
 			clk_i => clk_sys,
@@ -910,8 +902,8 @@ begin
 			m_rvalid_i => m_rvalid(MASTER_LOADER)
 		);
 
-	-- Packed master buses, master 3 leftmost. The pixel FIFO only writes, at
-	-- '0' & buf & (y * 320 + x); the display only reads.
+	-- Packed master buses, master 3 leftmost. Pixel FIFO writes go to
+	-- '0' & buf & (y * 320 + x).
 	m_req <= dbg_req & fifo_valid & art_req & d_req;
 	m_we <= dbg_we & '1' & art_we & '0';
 	m_addr <= dbg_addr & ('0' & fifo_data(PIXW_BUF) & fifo_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)) &
@@ -1084,12 +1076,10 @@ begin
 	-- Boot and level loads
 	------------------------------------------------------------------
 	-- B_START pulses the art job; B_ART waits for it (a failed copy still
-	-- runs the game, with garbage sprites, and lights the blue LED);
-	-- B_RUN serves the game core's level requests. A request can come in
-	-- any state (the core asks for level 1 right after reset, during the
-	-- art copy), so it is latched in level_pending and started once the
-	-- loader is free. The loader's done or error both release the game
-	-- core, which then finishes the level reset on whatever the map holds.
+	-- runs, with garbage sprites and the blue LED); B_RUN serves level
+	-- requests. A request can come any time (level 1 arrives during the art
+	-- copy), so level_pending holds it until the loader is free. Done or
+	-- error both release the game core, which resets on whatever the map holds.
 	process(clk_sys, rst_sys)
 	begin
 		if (rst_sys = '1') then
@@ -1266,10 +1256,8 @@ begin
 	------------------------------------------------------------------
 	freeze <= ctrl(16);
 
-	-- A game frame starts at the buffer manager's start line. The buffer
-	-- manager asks once and then waits for frame_done, so a request that
-	-- comes while no frame may start (boot art copy, freeze) is kept in
-	-- frame_owed and served as soon as frames may start again
+	-- The buffer manager asks once per frame, then waits for frame_done; a
+	-- request while no frame may start (art copy, freeze) waits in frame_owed
 	process(clk_sys, rst_sys)
 	begin
 		if (rst_sys = '1') then
@@ -1582,9 +1570,8 @@ begin
 			tx_count_o => tx_count
 		);
 
-	-- Status words (UART register n = word n); 0..24 keep their game_top
-	-- meaning, with the camera in words 1..3 (the frame capture renders
-	-- from it)
+	-- Status words (UART register n = word n); 0..24 as in game_top, with the
+	-- camera (used by frame capture) in words 1..3
 	values(0 * 32 + 31 downto 0 * 32) <= BUILD_ID;
 	values(1 * 32 + 31 downto 1 * 32) <= "0000000000" & cam_x; -- Camera x, Q6.16
 	values(2 * 32 + 31 downto 2 * 32) <= "0000000000" & cam_y; -- Camera y, Q6.16

@@ -9,26 +9,19 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Behavioral single-bit SPI flash (mode 0) standing in for
---                 the Cmod's MX25L3233F / N25Q032A:
---                 - 0x9F READ ID: returns the 3 ID bytes (generic, default
---                   C2 20 16 = Macronix MX25L3233F), then 0xFF
---                 - 0x03 READ: 3 address bytes, then data from that
---                   address on, wrapping at 4 MB
---                 Any other command is reported as an error (the design
---                 must never write or erase).
---                 MOSI is sampled on rising SCK; MISO changes after each
---                 falling SCK: 'X' at once, the new bit after T_V (8 ns),
---                 and 'Z' while CS_n is high.
---                 Timing checks (severity error, counted in errors_o):
---                 SCK period >= T_SCK_MIN (20 ns = 50 MHz READ limit),
---                 CS_n low to first rising SCK >= T_CSS, CS_n high time
---                 between commands >= T_CSH, SCK low when CS_n changes
---                 (mode 0), MOSI stable T_DS before rising SCK.
---                 Memory: flash_mem in spi_flash_model_pkg. Bytes never
---                 written return flash_pattern(address), so testbenches
---                 can predict any read; testbenches may also write bytes
---                 (back door). One flash model per simulation.
+-- Description:    Single-bit SPI flash (mode 0) for the Cmod's
+--                 MX25L3233F / N25Q032A. Commands: 0x9F READ ID (3 ID
+--                 bytes, default C2 20 16, then 0xFF) and 0x03 READ (3
+--                 address bytes, data wraps at 4 MB); any other is an
+--                 error (the design never writes or erases).
+--                 MOSI sampled on rising SCK; MISO 'X' at falling SCK,
+--                 valid T_V (8 ns) later, 'Z' while CS_n is high.
+--                 Timing checks (counted in errors_o): SCK period >=
+--                 T_SCK_MIN (20 ns, 50 MHz READ limit), T_CSS, T_CSH,
+--                 SCK low at CS_n edges, MOSI setup T_DS.
+--                 Memory: flash_mem in spi_flash_model_pkg; unwritten
+--                 bytes read flash_pattern(address), and testbenches may
+--                 write bytes (back door). One model per simulation.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std
 --

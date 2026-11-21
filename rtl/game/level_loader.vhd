@@ -9,32 +9,21 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Loads a level from the game data in flash into the tile
---                 map BRAM (port B writes) and returns its start pose.
---                 The game
---                 data at FLASH_DATA_BASE (tools/flash_image/
---                 make_gamedata.py) starts with a header and directory,
---                 all little endian:
---                   0..7 "FPGADATA", 8..9 version, 10..11 entry count N,
---                   then N entries of 12 bytes: u32 id, u32 offset (from
---                   the start of the image), u32 length
---                 A level item is 4096 tile words of 3 bytes (index
---                 y * 64 + x), then start x and start y (u32, Q6.16) and
---                 the start angle (u16): 12,298 bytes.
---                 Three flash_reader requests, one per state pair:
---                   LD_HDR_REQ / LD_HDR_DATA    12 header bytes, check
---                                               magic
---                   LD_DIR_REQ / LD_DIR_DATA    12 N directory bytes, find
---                                               id
---                   LD_ITEM_REQ / LD_ITEM_DATA  the level item; every
---                                               third byte writes one tile
---                                               word
---                 Bad magic, N = 0 or a missing id set error_o (held until
---                 the next start) and end without done_o.
---                 Coding: one clocked process for the state machine and
---                 its registers.
---                 Clock domain: clk_i (system). Time is set by the flash:
---                 about 4 ms for a level at 25 MHz SCK.
+-- Description:    Loads a level from flash game data into the tile map BRAM
+--                 (port B writes) and returns its start pose.
+--                 Game data at FLASH_DATA_BASE (tools/flash_image/
+--                 make_gamedata.py), little endian: 0..7 "FPGADATA",
+--                 8..9 version, 10..11 entry count N, then N 12-byte
+--                 entries (u32 id, u32 offset from image start, u32
+--                 length). A level item (12,298 bytes) is 4096 3-byte tile
+--                 words (index y * 64 + x), start x and y (u32, Q6.16) and
+--                 start angle (u16).
+--                 Three flash_reader requests: header (check magic),
+--                 directory (find id), level item (every third byte
+--                 writes a tile word). Bad magic, N = 0 or a missing id
+--                 set error_o (held until the next start), no done_o.
+--                 Clock domain: clk_i (system). About 4 ms per level at
+--                 25 MHz SCK.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, hw_pkg,
 --                 render_types_pkg

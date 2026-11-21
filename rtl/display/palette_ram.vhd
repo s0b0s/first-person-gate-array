@@ -9,12 +9,10 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    256 x 18-bit palette (6 bits per channel: R 17:12,
---                 G 11:6, B 5:0), written in the system domain and read
---                 in the pixel domain. Power-on contents come from
---                 palette_pkg. The display controller only lets writes
---                 through during vertical blanking, so a palette change
---                 never shows half-way down the screen.
+-- Description:    256 x 18-bit palette (R 17:12, G 11:6, B 5:0), written
+--                 in the system domain, read in the pixel domain.
+--                 Power-on contents from palette_pkg. Writes are gated to
+--                 vertical blanking by the display controller.
 --                 Clock domains: wr_clk_i (system), rd_clk_i (pixel).
 --                 Read latency: 1 rd_clk_i cycle.
 --

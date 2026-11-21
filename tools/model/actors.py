@@ -1,9 +1,8 @@
 """Actor types, the state table and the actor record.
 
-DOOM's idea: every enemy, item and projectile is a record that walks through a table of
-states. Each state names a sprite frame, a duration in frames (60 per second; 63 = forever),
-an action and the next state. Entry actions run once when a state is entered; LOOK, CHASE and
-FLY run on every frame spent in their state.
+Every enemy, item and projectile walks through a table of states (as in DOOM). A state names
+a sprite frame, a duration in frames (60 per second; 63 = forever), an action and the next
+state. Entry actions run once on entry; LOOK, CHASE and FLY run every frame in their state.
 
 Actor record (64 bits, BRAM, 32 actors):
     15:0  x, Q6.10 tiles       31:16 y, Q6.10       38:32 state (0..127)

@@ -10,21 +10,15 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for uart_tx and uart_rx:
---                 1. 1,000,000 baud loopback (tx1 -> rx1): 256 bytes sent
---                    back to back through valid/ready, received in order,
---                    no idle gap between frames.
---                 2. Bit timing on the tx1 line: every bit of a 0x55 frame
---                    lasts 1000 ns.
+--                 1. 1 Mbaud loopback (tx1 -> rx1): 256 bytes back to back,
+--                    in order, no idle gap between frames.
+--                 2. tx1 bit timing: every bit of a 0x55 frame is 1000 ns.
 --                 3. 115,200 baud loopback (tx2 -> rx2): 8 bytes.
---                 4. rx3 (1,000,000 baud) driven by a testbench serial
---                    source running 3% slow and 3% fast: all bytes right.
---                 5. Framing error: a frame with a low stop bit gives
---                    frame_err and no byte; the line held low (break)
---                    does not produce bytes; after it returns high the
---                    next byte is received normally.
---                 The path 1 sender and the path 2 stimulus copy their
---                 check counts to their own signals; the path 3 process
---                 adds them to its own at the end.
+--                 4. rx3 (1 Mbaud) from a source 3% slow and 3% fast.
+--                 5. A low stop bit gives frame_err and no byte; a break gives
+--                    no bytes; the next byte after it is received normally.
+--                 The path 1 sender and path 2 stimulus hand their counts to
+--                 the path 3 process on their own signals.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 uart_tx, uart_rx

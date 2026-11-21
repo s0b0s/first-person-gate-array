@@ -9,13 +9,11 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Reset synchronizer: the reset output asserts
---                 at once (asynchronously) when arst_i goes high and is
---                 released synchronously, STAGES rising edges of clk_i
---                 after arst_i goes low. Asserting a reset cannot cause
---                 metastability; releasing it can, so only the release
---                 goes through the shift register. A '0' is shifted in
---                 behind a chain preset to all ones.
+-- Description:    Reset synchronizer: rst_o asserts asynchronously with
+--                 arst_i and releases synchronously STAGES clk_i edges
+--                 after arst_i falls (only the release can cause
+--                 metastability). A '0' shifts into a chain preset to all
+--                 ones.
 --                 Clock domain: clk_i. Release latency: STAGES cycles.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164

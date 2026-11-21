@@ -9,18 +9,14 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Helpers shared by the self-checking testbenches:
---                 - check, a procedure that counts one check in the
---                   caller's checks and errors variables and reports a
---                   failed check with severity error. Each checking
---                   process keeps its own two counters; a process other
---                   than the finishing one copies them onto its own pair
---                   of signals, and the finishing process waits 1 ns (so
---                   the last copies have arrived) and adds those to its
---                   own counts before calling tb_finish.
---                 - tb_finish prints "TB_RESULT <name> PASS checks=<n>"
---                   (scripts/run_sim.py looks for it) or a failure, then
---                   stops the simulation.
+-- Description:    Helpers for the self-checking testbenches:
+--                 - check: counts one check in the caller's checks and
+--                   errors variables; reports a failure (severity error).
+--                   Each checking process keeps its own counters; other
+--                   processes copy theirs onto signals, and the finishing
+--                   process waits 1 ns and adds them before tb_finish.
+--                 - tb_finish: prints "TB_RESULT <name> PASS checks=<n>"
+--                   (parsed by scripts/run_sim.py) or a failure, then stops.
 --                 - hex and integer formatting for messages.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,

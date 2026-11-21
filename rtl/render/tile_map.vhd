@@ -9,18 +9,13 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    The 64 x 64 tile map (24-bit tile words, fields TILE_*
---                 in game_pkg),
---                 index y * 64 + x. Two ports on one clock:
---                   port A: read only, the ray engine's DDA walk
---                   port B: read/write, shared by the level loader
---                           (writes), the game sequencer and the floor
---                           caster (reads); the game top level gives it to
---                           one of them at a time
---                 Both reads are registered (data one clock after the
---                 address). Power-on contents are level 1 from
---                 map_init_pkg, so the game runs even before (or without)
---                 a load from flash.
+-- Description:    64 x 64 tile map, 24-bit words (fields TILE_* in
+--                 game_pkg), index y * 64 + x.
+--                   port A: read only, ray engine DDA walk
+--                   port B: read/write, level loader, game sequencer and
+--                           floor caster, one at a time
+--                 Reads registered (1 clock). Powers up with level 1 from
+--                 map_init_pkg, so the game runs without a flash load.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -50,8 +45,7 @@ entity tile_map is
 end tile_map;
 
 architecture arch of tile_map is
-	-- Only port B writes, so the array is a signal written by one process
-	-- and read by both (Vivado infers one dual-port block RAM)
+	-- Only port B writes, so a plain signal infers one dual-port BRAM
 	signal ram: tile_array_t := LEVEL1_TILES;
 begin
 	process(clk_i)

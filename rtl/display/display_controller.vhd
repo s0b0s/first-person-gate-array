@@ -15,30 +15,22 @@
 --                   line_fetcher                system domain
 --                   line_buffer, palette_ram    written in system, read
 --                                               in pixel domain
---                 This is the design's only clock-domain crossing (the
---                 XDC declares clk_sys and clk_pix asynchronous).
---                 Everything that crosses:
---                 1. Pixel to system, single-cycle events through
---                    pulse_sync (toggle + 3-stage synchronizer):
---                    - next line: at h = 0 of scanline 2r (r = 0..238),
---                      when line r starts showing, fetch line r + 1
---                    - first line: at h = 0 of scanline 523 (2 lines
---                      before the frame), fetch line 0
---                    - vblank: at h = 0 of scanline 480 (frame swap point)
---                    Line numbers are counted on the system side, so no
---                    multi-bit value crosses this way.
---                 2. Line buffer and palette RAMs (dual clock): the
---                    fetcher writes only the half not being shown;
---                    palette writes are accepted (pal_ready_o) only
---                    between the vblank and first-line events.
---                 3. System to pixel, quasi-static settings (pattern,
---                    tint, blank), registered in the system domain, then
---                    through 3-stage synchronizers, then
---                    latched at the start of vertical blanking so they
---                    change only between frames; pcb_on goes through a
---                    synchronizer straight to the output enables.
+--                 The design's only clock-domain crossing:
+--                 1. Pixel to system events via pulse_sync, at h = 0 of:
+--                    - scanline 2r (r = 0..238): fetch line r + 1
+--                    - scanline 523 (2 before the frame): fetch line 0
+--                    - scanline 480: vblank (swap point)
+--                    Line numbers are counted on the system side.
+--                 2. Dual-clock RAMs: the fetcher writes only the line
+--                    buffer half not shown; palette writes are accepted
+--                    (pal_ready_o) only from vblank to the first-line
+--                    event.
+--                 3. System to pixel settings (pattern, tint, blank):
+--                    registered, 3-flop synchronized, latched at vblank
+--                    so they change only between frames. pcb_on is
+--                    synchronized straight to the output enables.
 --                 Clock domains: clk_sys_i (100 MHz), clk_pix_i (25 MHz),
---                 declared asynchronous in the XDC.
+--                 asynchronous in the XDC.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, game_pkg,
 --                 hw_pkg, vga_timing, display_pixel, line_fetcher,
@@ -208,9 +200,8 @@ architecture arch of display_controller is
 	signal ev_next_pix: std_logic := '0';
 	signal ev_first_pix: std_logic := '0';
 	signal ev_vblank_pix: std_logic := '0';
-	-- Settings bits: 5:3 pattern, 2:1 tint, 0 blank. settings_sys is a
-	-- system-domain register so each synchronizer starts from a flip-flop
-	-- (logic in front of a synchronizer could glitch while it samples)
+	-- Settings bits: 5:3 pattern, 2:1 tint, 0 blank. settings_sys registers
+	-- them so no glitchy logic feeds a synchronizer
 	signal settings_in: std_logic_vector(5 downto 0);
 	signal settings_sys: std_logic_vector(5 downto 0) := (others => '0');
 	signal settings_sync: std_logic_vector(5 downto 0);

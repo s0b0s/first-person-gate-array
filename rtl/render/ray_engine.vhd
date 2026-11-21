@@ -9,70 +9,54 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Ray engine: for screen columns 0..319 casts one
---                 ray through the 64 x 64 tile map (DDA) front to back and
---                 emits the column as a run of spans (floor, ceiling and
---                 textured spans) for the column rasterizer, plus the clip
---                 entries of every height edge (sprite clipping) and the
---                 column's z. Bit-exact with column() and class Column in
---                 tools/model/render.py (the specification; its docstring
---                 gives the span rules).
+-- Description:    For columns 0..319, casts one ray through the 64 x 64
+--                 tile map (DDA) front to back and emits the column as
+--                 spans (floor, ceiling, textured) for the rasterizer, a
+--                 clip entry per height edge and the column z. Bit exact
+--                 with column() and class Column in tools/model/render.py
+--                 (its docstring gives the span rules).
 --
---                 Fixed-point formats (render_pkg):
---                   position Q6.16 (22 bits), angle 10 bits, sin/cos,
---                   plane and ray Q2.16 signed (18 bits), deltaDist Q8.16
---                   (24 bits, saturated), sideDist and distances Q16.16 in
---                   32 bits, lineHeight Q12.8, screen rows Q.8, heights in
---                   units (64 per tile), eye 0..127.
---                 Every "x >> n" of the model is an arithmetic shift of a
---                 two's complement product, taken as a bit slice of the
---                 full-width product (floor, like Python).
+--                 Formats (render_pkg): position Q6.16 (22 bits), angle 10
+--                 bits, sin/cos/plane/ray Q2.16 signed, deltaDist Q8.16
+--                 (24 bits, saturated), sideDist and distances Q16.16 (32
+--                 bits), lineHeight Q12.8, rows Q.8, heights in units (64
+--                 per tile), eye 0..127. Every model "x >> n" is a bit
+--                 slice of the full product (floor, like Python).
 --
---                 One FSM (ray_state, one clocked process). Per frame
---                 (RAY_F*): sin, cos, plane; the camera's tile (and, on a
---                 ramp, the tile its ramp rises to) gives the starting
---                 light, floor F and ceiling C of every column.
---                 Per column (RAY_C*): ray, deltaDist (two dividers),
---                 sideDist.
---                 DDA (RAY_STEP, RAY_CHECK, RAY_TILE: 3 clocks per cell;
---                 equal side distances step in y). A ramp tile being left
---                 first runs its 7 sub-edges (RAY_RK) at
---                 (sd - dd) + ((k * dd) >> 3).
---                 A new open tile whose floor or ceiling differs (RAY_OPEN;
---                 a ramp needs its neighbor tile, RAY_RN*) is a height edge;
---                 a wall, a closed door or the 128th cell ends the column.
---                 Height edge and wall (one "event", RAY_E* then RAY_X*):
---                   E0..E3  lineHeight = N_LH / d (32-bit divisor) while
---                           the shared multiplier gives the texture
---                           column and tex_step
---                   E4, E5  five rows at once: row(h) =
---                           ((30720 + ((lh * (eye - h)) >> 6)) + 127) >> 8
---                           for F, C, Fn, Cn and 64 (texture anchor),
---                           on five small dedicated multipliers
---                   E6..E8  the window rules, one per clock: floor span,
---                           ceiling span, then riser and upper wall
---                           (edge) or the wall (final); clip entry
---                           (z, top, bottom), a
---                           closed window as (z, 1, 0); up to 16 per
---                           column, then the last one is rewritten
---                   X*      the up-to-four spans go out in model order;
---                           a textured span first gets v0 =
+--                 One FSM:
+--                   RAY_F*  per frame: sin, cos, plane; camera tile (and
+--                           its ramp neighbor) gives starting light, F, C
+--                   RAY_C*  per column: ray, deltaDist (two dividers),
+--                           sideDist
+--                   DDA     3 clocks per cell; ties step in y. Leaving a
+--                           ramp runs its 7 sub-edges (RAY_RK) at
+--                           (sd - dd) + ((k * dd) >> 3). An open tile with
+--                           other heights is an edge (ramps read their
+--                           neighbor, RAY_RN*); a wall, closed door or the
+--                           128th cell ends the column.
+--                 Event (edge or wall, RAY_E* then RAY_X*):
+--                   E0..E3  lineHeight = N_LH / d; shared multiplier gives
+--                           texture column and tex_step meanwhile
+--                   E4, E5  row(h) = ((30720 + ((lh * (eye - h)) >> 6))
+--                           + 127) >> 8 for F, C, Fn, Cn, 64 (texture
+--                           anchor), five small multipliers in parallel
+--                   E6..E8  window rules, one per clock: floor, ceiling,
+--                           riser and upper wall (edge) or wall (final);
+--                           clip entry (z, top, bottom), closed = (z, 1, 0),
+--                           at most 16 per column (the last is rewritten)
+--                   X*      up to four spans in model order; textured v0 =
 --                           ((y0 * 256 + 128 - top) * tex_step) >> 8
---                 About 60 clocks per height edge (the divide is 34) and 3
---                 per DDA cell; under 200,000 clocks for the golden frames.
+--                 About 60 clocks per edge (divide 34), 3 per cell; under
+--                 200,000 clocks for the golden frames.
 --
---                 Light (render.py Frame.light): a tile's light is
---                 clamp(light + lmod(light type), 0, 15), lmod from fx_i
---                 (the camera tile and every open tile the walk enters);
---                 spans then take clamp(light - min(15, d >> 18) - side).
---                 Interfaces: frame inputs stable from start_i to done_o; map
---                 read port with 1-clock latency (cells, ramp neighbors);
---                 descriptor out (valid/ready, render_types_pkg layout, one
---                 span each, DESC_LAST on the last span of a column; the
---                 fields a kind does not use are 0); clip and clip-count
---                 writes; z-buffer write once per column after its last
---                 span; seen bits of every cell the DDA enters; done_o after
---                 the last column.
+--                 Light: tile light = clamp(light + lmod(type), 0, 15),
+--                 lmod from fx_i; span light = clamp(light - min(15,
+--                 d >> 18) - side).
+--                 Interfaces: frame inputs stable start_i to done_o; map
+--                 read 1-clock latency; descriptors valid/ready (unused
+--                 fields 0, DESC_LAST ends a column); clip and count
+--                 writes; z-buffer write after each column's last span;
+--                 seen bit per entered cell.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, render_pkg,
@@ -194,8 +178,7 @@ architecture arch of ray_engine is
 	);
 
 	subtype row_t is signed(15 downto 0); -- Screen row, far outside 0..239 allowed
-	-- Span rows as naturals: an array of unsigned would make every "unsigned & unsigned"
-	-- in this unit ambiguous
+	-- Naturals: an unsigned array would make "unsigned & unsigned" ambiguous here
 	type rows4_t is array (0 to 3) of natural range 0 to 255;
 
 	------------------------------------------------------------------
@@ -326,9 +309,8 @@ architecture arch of ray_engine is
 	signal pos_y: unsigned(21 downto 0);
 	signal eye: signed(8 downto 0);
 
-	-- Door table lookup for the current cell: open amount << 10, registered (door_hit is
-	-- the compare of this clock; RAY_DOOR reads door_open at least two clocks after
-	-- RAY_STEP moved the cell, so the register always holds the current cell's entry)
+	-- Door open amount << 10 for the current cell, registered: RAY_DOOR reads it
+	-- at least two clocks after RAY_STEP moved the cell
 	signal door_hit: unsigned(16 downto 0);
 	signal door_open: unsigned(16 downto 0) := (others => '0');
 	signal map_addr: std_logic_vector(11 downto 0);
@@ -363,8 +345,7 @@ architecture arch of ray_engine is
 	signal span_light: unsigned(3 downto 0); -- ... clamped at 0
 	signal span_desc: std_logic_vector(DESC_BITS - 1 downto 0); -- Descriptor of span slot
 
-	-- Floor of step q of a ramp: base + j * diff, j = q (rising toward +)
-	-- or 7 - q; diff is the per-step rise (the rise is a multiple of 8)
+	-- Floor of ramp step q: base + j * diff, j = q (rising toward +) or 7 - q
 	function step_height(base: unsigned(6 downto 0); diff: signed(3 downto 0); pos: std_logic;
 		q: unsigned(2 downto 0)) return unsigned is
 		variable j: unsigned(2 downto 0);
@@ -428,8 +409,8 @@ begin
 	-- RAY_F1 reads cos = sin(angle + 1/4 turn), every other state sin
 	sin_addr <= unsigned(angle_i) + 256 when (ray_state = RAY_F1) else unsigned(angle_i);
 
-	-- First matching entry of the door table (an unused entry has open 0): the loop
-	-- runs from the last entry down, so the lowest matching entry is assigned last
+	-- First matching door entry (unused entries have open 0): looping down from
+	-- the last entry lets the lowest match win
 	process(doors_i, mx, my)
 	begin
 		door_hit <= (others => '0');
@@ -452,8 +433,7 @@ begin
 	end process;
 
 	------------------------------------------------------------------
-	-- Shared multiplier: 33 x 25 signed, product two clocks after the
-	-- operands
+	-- Shared multiplier: 33 x 25 signed, 2-clock latency
 	------------------------------------------------------------------
 	process(clk_i)
 	begin
@@ -475,9 +455,8 @@ begin
 	end process;
 
 	------------------------------------------------------------------
-	-- Row products lh * (eye - h) for F, C, Fn, Cn and 64: five small
-	-- multipliers (21 x 9 bits) side by side, so an edge's rows take one
-	-- clock instead of five trips through the shared multiplier
+	-- Row products lh * (eye - h) for F, C, Fn, Cn and 64: five 21 x 9
+	-- multipliers, so all rows take one clock
 	------------------------------------------------------------------
 	lh_s <= signed('0' & lh);
 
@@ -545,8 +524,8 @@ begin
 	------------------------------------------------------------------
 	-- Fields of ntile
 	------------------------------------------------------------------
-	-- Tile light after the light type's offset: clamp(light + lmod(type), 0, 15),
-	-- lmod signed 5-bit (FX_LMOD_W) at fx(5k + 4 .. 5k) for light type k = t(13:12)
+	-- clamp(light + lmod(type), 0, 15); lmod signed 5-bit at fx(5k + 4 .. 5k),
+	-- light type k = t(13:12)
 	with ntile(13 downto 12) select
 		nt_lmod <= signed(fx_i(4 downto 0)) when "00",
 			signed(fx_i(9 downto 5)) when "01",
@@ -614,8 +593,7 @@ begin
 	frac_x <= '0' & pos_x(15 downto 0) when (rx < 0) else to_unsigned(65536, 17) - pos_x(15 downto 0);
 	frac_y <= '0' & pos_y(15 downto 0) when (ry < 0) else to_unsigned(65536, 17) - pos_y(15 downto 0);
 
-	-- Only the fraction of (pos + (d * ray >> 16)) matters: low 16 bits of pos
-	-- plus bits 31:16 of the product
+	-- Fraction of pos + (d * ray >> 16): pos(15:0) + product(31:16)
 	along_x <= pos_x(15 downto 0) + unsigned(mul_p(31 downto 16));
 	along_y <= pos_y(15 downto 0) + unsigned(mul_p(31 downto 16));
 	hit_col <= along_y(15 downto 10) when (ev_side = '0') else along_x(15 downto 10);
@@ -631,9 +609,8 @@ begin
 
 	z_sat <= to_unsigned(65535, 16) when (ev_d(31 downto 22) /= 0) else ev_d(21 downto 6);
 
-	-- Window rules (RAY_E6 .. RAY_E8). The span tests compare against each
-	-- operand of max/min separately (max(a, b) <= y is a <= y and b <= y), two short
-	-- compares in parallel instead of a compare after a max/min (timing)
+	-- Window rules (RAY_E6 .. RAY_E8). For timing, max(a, b) <= y is tested as
+	-- a <= y and b <= y (two short compares in parallel)
 	floor_top <= smax(rf, wtop);
 	ceil_bot <= smin(rc - 1, wbot);
 	riser_top <= smax(rt, wtop);
@@ -881,8 +858,7 @@ begin
 					ray_state <= RAY_C5;
 
 				when RAY_C5 =>
-					-- dd_go reaches the dividers one clock after RAY_C4, so busy is
-					-- still low in the first cycle here
+					-- dd_go reaches the dividers a clock late: busy is low on the first cycle
 					if ((ddx_busy = '0') and (dd_go = '0')) then
 						ddx <= unsigned(ddx_q);
 						ddy <= unsigned(ddy_q);
@@ -929,8 +905,7 @@ begin
 				-- DDA
 				------------------------------------------------------------
 				when RAY_STEP =>
-					-- The ramp axis's sideDist before this step reaches the far
-					-- edge of the tile being left; its near edge is dd before it
+					-- Ramp axis sideDist = far edge of the tile being left; near edge = it - dd
 					if (axis = '0') then
 						near <= signed(resize(sdx, 34)) - signed(resize(ddx, 34));
 						acc <= resize(ddx, 27);
@@ -980,8 +955,7 @@ begin
 					end if;
 
 				when RAY_RK =>
-					-- Sub-edge k of the ramp being left, if it lies between where
-					-- the tile was entered and where the walk leaves it
+					-- Sub-edge k of the ramp being left, if between entry and exit
 					if ((rk_d <= signed(resize(denter, 34))) or (rk_d >= signed(resize(dnext, 34)))) then
 						if (k = 7) then
 							ray_state <= RAY_TILE;
@@ -1141,8 +1115,7 @@ begin
 				when RAY_E1 =>
 					if (mul_v = '1') then
 						if (ev_given = '0') then
-							-- Texture column, mirrored on +x-going x faces and
-							-- -y-going y faces
+							-- Texture column, mirrored on +x-going x and -y-going y faces
 							if (((ev_side = '0') and (rx > 0)) or ((ev_side = '1') and (ry < 0))) then
 								tex_col <= 63 - hit_col;
 							else
@@ -1188,7 +1161,6 @@ begin
 
 				when RAY_E6 =>
 					-- Floor span: rows max(rf, wtop) .. wbot, then wbot = rf - 1
-					-- (one window rule per clock keeps each compare chain short)
 					if ((rf <= wbot) and (wtop <= wbot)) then
 						sv <= "0001";
 						sy0(0) <= to_integer(unsigned(floor_top(7 downto 0)));
@@ -1232,16 +1204,14 @@ begin
 					if (ev_final = '1') then
 						closed <= '1';
 					else
-						-- Upper wall where the ceiling steps down; the window
-						-- top then moves to upper_top
+						-- Upper wall where the ceiling steps down; window top = upper_top
 						if ((ev_cn < cur_c) and (wtop <= rb - 1) and (wtop <= wbot)) then
 							sv(3) <= '1';
 							sy0(3) <= to_integer(unsigned(wtop(7 downto 0)));
 							sy1(3) <= to_integer(unsigned(upper_bot(7 downto 0)));
 						end if;
 						wtop <= upper_top;
-						-- Clip entry: the window behind this edge; 16 at most,
-						-- then the last one is rewritten
+						-- Clip entry: window behind this edge; past 16 the last is rewritten
 						if (upper_top > wbot) then
 							closed <= '1';
 							clip_data <= x"00" & x"01" & std_logic_vector(z_sat); -- Bottom 0, top 1: closed
@@ -1263,8 +1233,7 @@ begin
 					ray_state <= RAY_X0;
 
 				------------------------------------------------------------
-				-- Span output, model order: floor, ceiling, riser or wall,
-				-- upper wall
+				-- Span output, model order: floor, ceiling, riser or wall, upper wall
 				------------------------------------------------------------
 				when RAY_X0 =>
 					-- The last span of a closing event carries DESC_LAST

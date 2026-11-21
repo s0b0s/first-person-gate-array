@@ -11,20 +11,17 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for flash_reader against
 --                 spi_flash_model (which checks SCK speed, CS timing,
---                 mode 0 and MOSI setup). The board adds 3 ns from the
---                 FPGA's pins to the flash and 2 ns back, on top of the
---                 flash's 8 ns output delay.
---                 Requests (every byte compared with the model's memory,
---                 data_last_o only on the last byte, nothing after it):
+--                 mode 0, MOSI setup). Board delays: 3 ns to the flash,
+--                 2 ns back, plus the flash's 8 ns output delay.
+--                 Requests (bytes compared with the model, data_last_o
+--                 only on the last byte, nothing after it):
 --                 - READ ID, 3 bytes (C2 20 16) and 5 bytes (then FF FF)
---                 - READ 1 byte at 0, 16 at 0x220000 (game data start),
---                   8 at the top of the 4 MB, 16 bytes written through
---                   the back door
---                 - READ 300 bytes at 0x123456 with random back-pressure,
---                   including stalls of hundreds of clocks
---                 Also: SCK is 25 MHz, req_ready_o stays low while busy
---                 (a request held during a command waits for the end),
---                 and the model counts one completed command per request.
+--                 - READ 1 byte at 0, 16 at 0x220000, 8 at the top of
+--                   4 MB, 16 written through the back door
+--                 - READ 300 bytes at 0x123456 with random back-pressure
+--                   and stalls of hundreds of clocks
+--                 Also: SCK 25 MHz, req_ready_o low while busy, one
+--                 completed model command per request.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, tb_pkg, flash_reader, spi_flash_model
@@ -227,8 +224,7 @@ begin
 		variable t0: time;
 		variable checks, errors: natural := 0;
 
-		-- Issue one request, wait for all its bytes, compare with the
-		-- model's memory (or the ID bytes)
+		-- One request; compare all its bytes with the model memory (or ID)
 		procedure do_read(id: std_logic; addr: natural; len: natural; name: string) is
 			variable want: natural;
 		begin
@@ -249,8 +245,7 @@ begin
 				wait until rising_edge(clk);
 				exit when (busy = '0');
 			end loop;
-			-- The last byte may still wait in the output register while the
-			-- consumer stalls
+			-- The last byte may wait in the output register during a stall
 			for i in 1 to 20000 loop
 				exit when (rx_count >= len);
 				wait until rising_edge(clk);
