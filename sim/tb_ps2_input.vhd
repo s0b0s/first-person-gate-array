@@ -37,6 +37,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -118,7 +119,6 @@ architecture arch of tb_ps2_input is
 	constant PAUSE_SEQ: bytes_t := (x"E1", x"14", x"77", x"E1", x"F0", x"14", x"F0", x"77");
 	constant HELD_KEYS: bytes_t := (x"23", x"21", x"15", x"24", x"14", x"1C");
 	constant EDGE_KEYS: bytes_t := (x"29", x"1E", x"26", x"0D", x"76", x"05");
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -265,6 +265,7 @@ begin
 		variable s: std_logic_vector(39 downto 0);
 		variable t0: time;
 		variable xt: integer;
+		variable checks, errors: natural := 0;
 
 		procedure kb_tx(b: std_logic_vector(7 downto 0); mode: natural := 0) is
 			variable before: natural;
@@ -296,68 +297,69 @@ begin
 			wait until rising_edge(clk);
 			frame_start <= '0';
 			wait until rising_edge(clk);
-			chk.check(snapshot_valid = '0', "snapshot not valid one cycle after frame start");
+			check(snapshot_valid = '0', "snapshot not valid one cycle after frame start",
+				checks, errors);
 			wait until rising_edge(clk);
 			snap := snapshot;
-			chk.check(snapshot_valid = '1', "snapshot valid two cycles after frame start");
+			check(snapshot_valid = '1', "snapshot valid two cycles after frame start", checks, errors);
 		end procedure;
 	begin
 		-- Disabled: everything released, mouse off
 		wait until (rst = '0');
 		wait for 1 ms;
-		chk.check((kb_clk_pull = '0') and (kb_dat_pull = '0') and (ms_clk_pull = '0') and
-			(ms_dat_pull = '0'), "lines released while disabled");
-		chk.check(unsigned(mstate) = 0, "mouse off while disabled");
-		chk.check(ms_rx_count = 0, "nothing sent to the mouse while disabled");
+		check((kb_clk_pull = '0') and (kb_dat_pull = '0') and (ms_clk_pull = '0') and
+			(ms_dat_pull = '0'), "lines released while disabled", checks, errors);
+		check(unsigned(mstate) = 0, "mouse off while disabled", checks, errors);
+		check(ms_rx_count = 0, "nothing sent to the mouse while disabled", checks, errors);
 
 		-- Mouse start-up
 		enable <= '1';
 		t0 := now;
 		wait until (unsigned(mstate) = STREAMING) for 50 ms;
-		chk.check(unsigned(mstate) = STREAMING, "mouse streaming after start-up");
-		chk.check((ms_rx_count = 2) and (ms_rx_byte = x"F4") and (ms_rx_perr = 0),
-			"mouse got FF then F4");
-		chk.check(ms_hist(31 downto 0) = x"FAAA00FA", "mouse replies FA AA 00 FA, got " &
-			to_hex(ms_hist(31 downto 0)));
-		chk.check(unsigned(retries) = 0, "no start-up retries");
+		check(unsigned(mstate) = STREAMING, "mouse streaming after start-up", checks, errors);
+		check((ms_rx_count = 2) and (ms_rx_byte = x"F4") and (ms_rx_perr = 0),
+			"mouse got FF then F4", checks, errors);
+		check(ms_hist(31 downto 0) = x"FAAA00FA", "mouse replies FA AA 00 FA, got " &
+			to_hex(ms_hist(31 downto 0)), checks, errors);
+		check(unsigned(retries) = 0, "no start-up retries", checks, errors);
 		tb_print("mouse start-up took " & time'image(now - t0));
 
 		-- Keyboard make and break
 		kb_tx(x"1D");
-		chk.check(keys(KEY_W) = '1', "W held");
+		check(keys(KEY_W) = '1', "W held", checks, errors);
 		frame(s);
-		chk.check(move_of(s) = 1, "W moves forward");
+		check(move_of(s) = 1, "W moves forward", checks, errors);
 		kb_tx(x"F0");
 		kb_tx(x"1D");
-		chk.check(keys(KEY_W) = '0', "W released");
+		check(keys(KEY_W) = '0', "W released", checks, errors);
 
 		-- Extended keys
 		kb_tx(x"E0");
 		kb_tx(x"72");
-		chk.check(keys(KEY_DOWN) = '1', "Down held");
+		check(keys(KEY_DOWN) = '1', "Down held", checks, errors);
 		frame(s);
-		chk.check(move_of(s) = -1, "Down moves back");
+		check(move_of(s) = -1, "Down moves back", checks, errors);
 		kb_tx(x"1D");
 		frame(s);
-		chk.check(move_of(s) = 0, "W and Down cancel");
+		check(move_of(s) = 0, "W and Down cancel", checks, errors);
 		kb_tx(x"F0");
 		kb_tx(x"1D");
 		kb_tx(x"E0");
 		kb_tx(x"F0");
 		kb_tx(x"72");
-		chk.check(unsigned(keys) = 0, "all keys released");
+		check(unsigned(keys) = 0, "all keys released", checks, errors);
 
 		-- Fake shift and Pause are ignored; Right Shift works
 		kb_tx(x"E0");
 		kb_tx(x"12");
-		chk.check(keys(KEY_LSHIFT) = '0', "E0 12 fake shift ignored");
+		check(keys(KEY_LSHIFT) = '0', "E0 12 fake shift ignored", checks, errors);
 		for i in PAUSE_SEQ'range loop
 			kb_tx(PAUSE_SEQ(i));
 		end loop;
-		chk.check(unsigned(keys) = 0, "Pause sequence changes no key");
+		check(unsigned(keys) = 0, "Pause sequence changes no key", checks, errors);
 		kb_tx(x"59");
 		frame(s);
-		chk.check(s(SNAP_RUN) = '1', "Right Shift runs");
+		check(s(SNAP_RUN) = '1', "Right Shift runs", checks, errors);
 		kb_tx(x"F0");
 		kb_tx(x"59");
 
@@ -370,17 +372,17 @@ begin
 		kb_tx(x"E0");
 		kb_tx(x"74"); -- Right arrow
 		frame(s);
-		chk.check(strafe_of(s) = 1, "D strafes right");
-		chk.check((s(SNAP_DUCK) = '1') and (s(SNAP_PEEK_L) = '1') and (s(SNAP_PEEK_R) = '1'),
-			"duck and peek bits");
-		chk.check(s(SNAP_FIRE) = '1', "Ctrl fires");
-		chk.check(turn_of(s) = 6, "Right arrow turns +6, got " & integer'image(turn_of(s)));
-		chk.check(s(39 downto 28) = x"000", "spare bits zero");
+		check(strafe_of(s) = 1, "D strafes right", checks, errors);
+		check((s(SNAP_DUCK) = '1') and (s(SNAP_PEEK_L) = '1') and (s(SNAP_PEEK_R) = '1'),
+			"duck and peek bits", checks, errors);
+		check(s(SNAP_FIRE) = '1', "Ctrl fires", checks, errors);
+		check(turn_of(s) = 6, "Right arrow turns +6, got " & integer'image(turn_of(s)), checks, errors);
+		check(s(39 downto 28) = x"000", "spare bits zero", checks, errors);
 		kb_tx(x"1C"); -- A as well
 		kb_tx(x"E0");
 		kb_tx(x"6B"); -- Left arrow as well
 		frame(s);
-		chk.check((strafe_of(s) = 0) and (turn_of(s) = 0), "opposite keys cancel");
+		check((strafe_of(s) = 0) and (turn_of(s) = 0), "opposite keys cancel", checks, errors);
 		for i in HELD_KEYS'range loop
 			kb_tx(x"F0");
 			kb_tx(HELD_KEYS(i));
@@ -391,7 +393,7 @@ begin
 		kb_tx(x"E0");
 		kb_tx(x"F0");
 		kb_tx(x"6B");
-		chk.check(unsigned(keys) = 0, "all keys released again");
+		check(unsigned(keys) = 0, "all keys released again", checks, errors);
 
 		-- Edge bits: set on the first frame of a press only
 		kb_tx(x"29"); -- Space
@@ -401,13 +403,13 @@ begin
 		kb_tx(x"76"); -- Esc
 		kb_tx(x"05"); -- F1
 		frame(s);
-		chk.check(s(SNAP_USE) = '1', "use on press");
-		chk.check(wsel_of(s) = 2, "weapon 2 wins over 3");
-		chk.check((s(SNAP_AUTOMAP) = '1') and (s(SNAP_MENU) = '1') and (s(SNAP_DEBUG) = '1'),
-			"automap, menu, debug edges");
+		check(s(SNAP_USE) = '1', "use on press", checks, errors);
+		check(wsel_of(s) = 2, "weapon 2 wins over 3", checks, errors);
+		check((s(SNAP_AUTOMAP) = '1') and (s(SNAP_MENU) = '1') and (s(SNAP_DEBUG) = '1'),
+			"automap, menu, debug edges", checks, errors);
 		frame(s);
-		chk.check((s(SNAP_USE) = '0') and (wsel_of(s) = 0) and (s(SNAP_AUTOMAP) = '0') and
-			(s(SNAP_MENU) = '0') and (s(SNAP_DEBUG) = '0'), "edges clear while held");
+		check((s(SNAP_USE) = '0') and (wsel_of(s) = 0) and (s(SNAP_AUTOMAP) = '0') and
+			(s(SNAP_MENU) = '0') and (s(SNAP_DEBUG) = '0'), "edges clear while held", checks, errors);
 		for i in EDGE_KEYS'range loop
 			kb_tx(x"F0");
 			kb_tx(EDGE_KEYS(i));
@@ -415,10 +417,10 @@ begin
 
 		-- Keyboard parity error is counted
 		kb_tx(x"1D", 1);
-		chk.check(unsigned(kb_errs(7 downto 0)) = 1, "keyboard parity error counted");
-		chk.check(keys(KEY_W) = '0', "bad byte not decoded");
-		chk.check(kb_hist(15 downto 0) = x"F005", "keyboard history newest bytes F0 05, got " &
-			to_hex(kb_hist(15 downto 0)));
+		check(unsigned(kb_errs(7 downto 0)) = 1, "keyboard parity error counted", checks, errors);
+		check(keys(KEY_W) = '0', "bad byte not decoded", checks, errors);
+		check(kb_hist(15 downto 0) = x"F005", "keyboard history newest bytes F0 05, got " &
+			to_hex(kb_hist(15 downto 0)), checks, errors);
 
 		-- Mouse: negative dx, positive dy (packets are flags, dx, dy; flags bit 3 is always
 		-- set, bit 4 is the X sign, bit 6 X overflow, bits 1..0 the right and left buttons)
@@ -426,13 +428,13 @@ begin
 		ms_tx(x"18"); -- bit 3, X sign
 		ms_tx(x"F6"); -- dx = -10
 		ms_tx(x"05"); -- dy = +5
-		chk.check(to_integer(signed(x_total)) = -10, "x total -10, got " &
-			integer'image(to_integer(signed(x_total))));
-		chk.check(to_integer(signed(y_total)) = 5, "y total +5");
+		check(to_integer(signed(x_total)) = -10, "x total -10, got " &
+			integer'image(to_integer(signed(x_total))), checks, errors);
+		check(to_integer(signed(y_total)) = 5, "y total +5", checks, errors);
 		frame(s);
-		chk.check(turn_of(s) = -5, "dx -10 turns -5, got " & integer'image(turn_of(s)));
+		check(turn_of(s) = -5, "dx -10 turns -5, got " & integer'image(turn_of(s)), checks, errors);
 		frame(s);
-		chk.check(turn_of(s) = 0, "motion cleared after a frame");
+		check(turn_of(s) = 0, "motion cleared after a frame", checks, errors);
 
 		-- Two packets in one frame add up
 		ms_tx(x"08");
@@ -442,21 +444,22 @@ begin
 		ms_tx(x"1E"); -- +30
 		ms_tx(x"00");
 		frame(s);
-		chk.check(turn_of(s) = 25, "two packets summed, got " & integer'image(turn_of(s)));
+		check(turn_of(s) = 25, "two packets summed, got " & integer'image(turn_of(s)), checks, errors);
 
 		-- Overflow packet dropped
 		xt := to_integer(signed(x_total));
 		ms_tx(x"48"); -- X overflow
 		ms_tx(x"10");
 		ms_tx(x"10");
-		chk.check(to_integer(signed(x_total)) = xt, "overflow packet dropped");
+		check(to_integer(signed(x_total)) = xt, "overflow packet dropped", checks, errors);
 
 		-- Slipped framing byte dropped, next packet good
 		ms_tx(x"00"); -- bit 3 clear: not a first byte
 		ms_tx(x"08");
 		ms_tx(x"04");
 		ms_tx(x"00");
-		chk.check(to_integer(signed(x_total)) = xt + 4, "resynchronized after a bad first byte");
+		check(to_integer(signed(x_total)) = xt + 4, "resynchronized after a bad first byte",
+			checks, errors);
 
 		-- A lone first byte, then silence: the next byte starts a packet
 		ms_tx(x"09");
@@ -464,50 +467,52 @@ begin
 		ms_tx(x"08");
 		ms_tx(x"02");
 		ms_tx(x"00");
-		chk.check(to_integer(signed(x_total)) = xt + 6, "resynchronized after a gap");
-		chk.check(buttons = "000", "buttons from the resynchronized packet");
+		check(to_integer(signed(x_total)) = xt + 6, "resynchronized after a gap", checks, errors);
+		check(buttons = "000", "buttons from the resynchronized packet", checks, errors);
 
 		-- Buttons: fire and the right-button edge
 		ms_tx(x"0B"); -- left and right
 		ms_tx(x"00");
 		ms_tx(x"00");
-		chk.check(buttons = "011", "left and right buttons");
+		check(buttons = "011", "left and right buttons", checks, errors);
 		frame(s);
-		chk.check((s(SNAP_FIRE) = '1') and (s(SNAP_WCYCLE) = '1'), "fire and weapon cycle");
+		check((s(SNAP_FIRE) = '1') and (s(SNAP_WCYCLE) = '1'), "fire and weapon cycle", checks, errors);
 		frame(s);
-		chk.check((s(SNAP_FIRE) = '1') and (s(SNAP_WCYCLE) = '0'), "weapon cycle is an edge");
+		check((s(SNAP_FIRE) = '1') and (s(SNAP_WCYCLE) = '0'), "weapon cycle is an edge",
+			checks, errors);
 		ms_tx(x"08");
 		ms_tx(x"00");
 		ms_tx(x"00");
-		chk.check(buttons = "000", "buttons released");
+		check(buttons = "000", "buttons released", checks, errors);
 
 		-- Replugged mouse: AA 00 restarts the start-up
 		ms_tx(x"AA");
 		ms_tx(x"00");
 		wait for 1 ms;
-		chk.check(unsigned(mstate) /= STREAMING, "AA 00 restarts the mouse start-up");
+		check(unsigned(mstate) /= STREAMING, "AA 00 restarts the mouse start-up", checks, errors);
 		wait until (unsigned(mstate) = STREAMING) for 50 ms;
-		chk.check((unsigned(mstate) = STREAMING) and (ms_rx_count = 4), "mouse streaming again");
+		check((unsigned(mstate) = STREAMING) and (ms_rx_count = 4), "mouse streaming again",
+			checks, errors);
 		wait for 1 ms; -- The model finishes its FA reply before the next byte
 		ms_tx(x"08");
 		ms_tx(x"01");
 		ms_tx(x"00");
-		chk.check(to_integer(signed(x_total)) = xt + 7, "packets after the restart");
+		check(to_integer(signed(x_total)) = xt + 7, "packets after the restart", checks, errors);
 
 		-- Disable: keys cleared, lines released, mouse off
 		kb_tx(x"1D");
-		chk.check(keys(KEY_W) = '1', "W held before disable");
+		check(keys(KEY_W) = '1', "W held before disable", checks, errors);
 		enable <= '0';
 		wait for 1 us;
-		chk.check(unsigned(keys) = 0, "keys cleared while disabled");
-		chk.check(unsigned(mstate) = 0, "mouse off while disabled");
-		chk.check((kb_clk_pull = '0') and (kb_dat_pull = '0') and (ms_clk_pull = '0') and
-			(ms_dat_pull = '0'), "lines released after disable");
-		chk.check((unsigned(kb_errs(23 downto 8)) = 0) and (unsigned(ms_errs) = 0),
-			"no unexpected errors");
+		check(unsigned(keys) = 0, "keys cleared while disabled", checks, errors);
+		check(unsigned(mstate) = 0, "mouse off while disabled", checks, errors);
+		check((kb_clk_pull = '0') and (kb_dat_pull = '0') and (ms_clk_pull = '0') and
+			(ms_dat_pull = '0'), "lines released after disable", checks, errors);
+		check((unsigned(kb_errs(23 downto 8)) = 0) and (unsigned(ms_errs) = 0),
+			"no unexpected errors", checks, errors);
 
 		done <= true;
-		tb_finish("tb_ps2_input", chk.checks, chk.errors);
+		tb_finish("tb_ps2_input", checks, errors);
 		wait;
 	end process;
 end arch;

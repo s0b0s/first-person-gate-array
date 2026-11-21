@@ -9,45 +9,48 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Stage-2/3 game core: one Game.step of tools/model/game.py
+-- Description:    Game core: one Game.step of tools/model/game.py
 --                 (with actors.py) per frame, bit for bit, including every
 --                 random() call in order, the sound commands, the HUD word
 --                 and the sprite table. Replaces game_seq in the game top.
 --
 --                 Flow per frame (snapshot_valid_i after frame_start_i):
---                   S_STEP   sounds cleared, fire edge, debug toggle, flow
---                            switch (TITLE, BRIEFING, PAUSED, DEAD, SCORE,
---                            ENDING are a few registers; BRIEFING go and a
---                            DEAD restart load a level here)
+--                   CORE_STEP  sounds cleared, fire edge, debug toggle,
+--                              flow switch (TITLE, BRIEFING, PAUSED, DEAD,
+--                              SCORE, ENDING are a few registers; BRIEFING
+--                              go and a DEAD restart load a level here)
 --                   PLAYING, in the model's order:
---                     1 S_PLAY   level clock, turn, duck and peek easing;
---                                sin/cos of the new angle (S_P_SIN, S_P_COS)
---                     2 S_MOVE   x then y: box test (4 map reads), solid
---                                actors (32 actor reads), flush clamp
---                     3 S_PEEK   camera box test, offset shrinks by 2
---                     4 S_PICK   item pickups in actor order; S_SPEC secret
---                                and toxic floor
---                     5 S_USE    door, locked door or exit switch ahead
---                     6 S_WPN    weapon select, cooldown, fire; S_HS_*
---                                hitscan against the last frame's spans;
---                                after a shot S_AL_* (stage 5, Game.alert):
---                                flood fill from the player's cell over
---                                open cells (walls and closed doors stop
---                                it; a 4096 x 12 queue BRAM and a 4096 x 1
---                                visited RAM, cleared again through the
---                                queue), then every sleeping, living
---                                monster in a reached cell that is in a
---                                LOOK state and not an ambusher wakes as
---                                in LOOK (sight sound, chase state)
---                     7 S_ACT_*  actors 0..31 (LOOK, CHASE, FLY, timers)
---                     8 S_DOORS  door table, then S_WORLD (boss timer,
---                                flashes, message timer, death check)
---                   S_END    sprite table (one map read per active actor
---                            for its light) into the back half of the
---                            sprite RAM; key positions
---                   S_CRC_*  CRC-32 of the 91 state words, 8 bytes each
---                   S_OUT    all outputs registered, render_start_o pulse,
---                            sprite RAM halves swap, sound commands go out
+--                     1 CORE_PLAY  level clock, turn, duck and peek easing;
+--                                  sin/cos of the new angle (CORE_P_SIN,
+--                                  CORE_P_COS)
+--                     2 CORE_MOVE  x then y: box test (4 map reads), solid
+--                                  actors (32 actor reads), flush clamp
+--                     3 CORE_PEEK  camera box test, offset shrinks by 2
+--                     4 CORE_PICK  item pickups in actor order; CORE_SPEC
+--                                  secret and toxic floor
+--                     5 CORE_USE   door, locked door or exit switch ahead
+--                     6 CORE_WPN   weapon select, cooldown, fire; CORE_HS_*
+--                                  hitscan against the last frame's spans;
+--                                  after a shot CORE_AL_* (sound alert,
+--                                  Game.alert): flood fill from the
+--                                  player's cell over open cells (walls and
+--                                  closed doors stop it; a 4096 x 12 queue
+--                                  BRAM and a 4096 x 1 visited RAM, cleared
+--                                  again through the queue), then every
+--                                  sleeping, living monster in a reached
+--                                  cell that is in a LOOK state and not an
+--                                  ambusher wakes as in LOOK (sight sound,
+--                                  chase state)
+--                     7 CORE_ACT_* actors 0..31 (LOOK, CHASE, FLY, timers)
+--                     8 CORE_DOORS door table, then CORE_WORLD (boss timer,
+--                                  flashes, message timer, death check)
+--                   CORE_END   sprite table (one map read per active actor
+--                              for its light) into the back half of the
+--                              sprite RAM; key positions
+--                   CORE_CRC_* CRC-32 of the 91 state words, 8 bytes each
+--                   CORE_OUT   all outputs registered, render_start_o
+--                              pulse, sprite RAM halves swap, sound
+--                              commands go out
 --
 --                 Subroutines: the model calls helpers from several places
 --                 (LOS from LOOK, CHASE and the SHOOT action; SOUND from
@@ -56,14 +59,14 @@
 --                 call stores the state to come back to and jumps in, and
 --                 a call as the last thing a subroutine does passes its own
 --                 return state on (a tail call, e.g. DAMAGE -> SOUND).
---                   S_WAIT        1-clock read of map, span or z port
---                   S_BOX         box (2 x 2 cells) against solid cells
---                   S_LOS         Bresenham line of sight, map per cell
---                   S_DB          door blocked by the player or an actor
---                   S_SND         sound command: volume, pan on the DSP
---                   S_DP          damage to the player (armor, sound)
---                   S_ENTER       actor enters a state, runs its action
---                   S_SPAWN       new actor in the first free slot
+--                   CORE_WAIT     1-clock read of map, span or z port
+--                   CORE_BOX      box (2 x 2 cells) against solid cells
+--                   CORE_LOS      Bresenham line of sight, map per cell
+--                   CORE_DB       door blocked by the player or an actor
+--                   CORE_SND      sound command: volume, pan on the DSP
+--                   CORE_DP       damage to the player (armor, sound)
+--                   CORE_ENTER    actor enters a state, runs its action
+--                   CORE_SPAWN    new actor in the first free slot
 --
 --                 Memories: actor table 32 x 64 LUT RAM (one write port
 --                 shared with the loader while it loads, a read port for
@@ -79,20 +82,25 @@
 --                 with the pan sum, so 2 DSP48); every other product is a
 --                 shift-add by a small constant.
 --                 Timing helpers: the actor RAM read port 1 and its write
---                 port are registered (each read takes S_WAIT), and the
+--                 port are registered (each read takes CORE_WAIT), and the
 --                 distance, deltas and sound volume of the working actor
---                 are computed in registers behind r (see their process).
---                 The actor record layout is the model's (actors.py:
---                 x 15:0, y 31:16, state 38:32, timer 44:39, health 56:45,
---                 type 59:57, flags 62:60 active, solid, awake; 63 ambush,
---                 stage 5: deaf to sound alerts).
+--                 (a_*) are computed in registers one clock behind it (see
+--                 their process).
+--                 The packed actor word is the model's (actors.py, game_pkg
+--                 ACTOR_*: x 15:0, y 31:16, state 38:32, timer 44:39,
+--                 health 56:45, type 59:57, flags 62:60 active, solid,
+--                 awake; 63 ambush: deaf to sound alerts).
 --                 Clock domain: clk_i (system). Measured on the golden
 --                 session (tb_game_core): about 1,300 clocks per frame
 --                 (PLAYING average 1,324, worst 1,456 without a load); a
 --                 level load adds the loader's time plus about 4,200 clocks
 --                 (actor totals, 4096-tile secret count).
---                 Coding: two-segment style with all registers in one
---                 record r; the combinational process computes r_next.
+--                 Coding: one clocked process (the core_state machine)
+--                 owns every game register, as plain signals. Strobes that
+--                 must act in the clock of their state (alert queue and
+--                 visited-bit writes, the map write, the CRC feed, the sine
+--                 ROM address) are concurrent decodes of core_state; tile,
+--                 actor and arithmetic helpers are concurrent signals.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, game_pkg,
 --                 game_tables_pkg, render_pkg (SIN_TABLE), render_types_pkg,
@@ -100,12 +108,13 @@
 --
 -- Revision:
 -- Revision 0.01 - File Created
--- Revision 1.00 - Stage 2/3 (actors, weapons, flow, sounds)
--- Revision 2.10 - Stage 4: floor heights, ramps, falling, sprite floors;
+-- Revision 1.00 - Actors, weapons, game flow, sounds
+-- Revision 2.10 - Floor heights, ramps, falling, sprite floors;
 --                 effects register fx_o (light type offsets, animation
 --                 frame), sprite lights offset by their tile's light type
--- Revision 3.00 - Stage 5: sound alerts (S_AL_* flood fill), ambush flag (bit
+-- Revision 3.00 - Sound alerts (S_AL_* flood fill), ambush flag (bit
 --                 63)
+-- Revision 3.10 - Plain signals instead of records; one-process state machine
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -206,13 +215,12 @@ architecture arch of game_core is
 	constant MSG_TIME: natural := 120; -- Frames a message shows (2 s)
 	constant BOSS_TIME: natural := 180; -- Frames from the boss's death to the level end
 	constant LEVELS: natural := 3;
-	-- Stage 4 heights (units, 64 per tile): step-up limit, headroom of the player
-	-- and of the monsters (both 40), gravity
+	-- Floor and ceiling heights (units, 64 per tile): step-up limit, headroom of
+	-- the player and of the monsters (both 40), gravity
 	constant STEP_MAX: natural := 24;
 	constant BODY_H: natural := 40; -- PLAYER_H = ACTOR_H = 40
 	constant FALL_ACC: natural := 2;
 	constant FALL_MAX: natural := 16;
-	constant SPECIAL_RAMP: natural := 7;
 
 	constant FL_TITLE: unsigned(2 downto 0) := "000";
 	constant FL_BRIEFING: unsigned(2 downto 0) := "001";
@@ -253,25 +261,32 @@ architecture arch of game_core is
 	constant ITEM_BASE: natural := 38; -- art.py: first item / effect frame
 	constant WEAPON_BASE: natural := 55; -- art.py: first weapon frame
 
+	-- Flag bits of the packed actor word (game_pkg ACTOR_FLAGS_*, plus the
+	-- ambush bit 63)
+	constant ACTOR_ACTIVE: natural := ACTOR_FLAGS_LO;
+	constant ACTOR_SOLID: natural := ACTOR_FLAGS_LO + 1;
+	constant ACTOR_AWAKE: natural := ACTOR_FLAGS_LO + 2;
+	constant ACTOR_AMBUSH: natural := 63;
+
 	-- Sound ids (actors.py)
-	constant S_PISTOL: natural := 0;
-	constant S_SHOTGUN: natural := 1;
-	constant S_DOOR_OPEN: natural := 2;
-	constant S_DOOR_CLOSE: natural := 3;
-	constant S_ITEM: natural := 4;
-	constant S_WEAPON: natural := 5;
-	constant S_PLAYER_PAIN: natural := 6;
-	constant S_PLAYER_DEATH: natural := 7;
-	constant S_SIGHT: natural := 8;
-	constant S_SHOOT: natural := 9;
-	constant S_FIRE: natural := 10;
-	constant S_EXPLODE: natural := 11;
-	constant S_CLAW: natural := 12;
-	constant S_PAIN: natural := 13;
-	constant S_DEATH: natural := 14;
-	constant S_SWITCH: natural := 15;
-	constant S_NOWAY: natural := 16;
-	constant S_BOSS_SIGHT: natural := 17;
+	constant SND_PISTOL: natural := 0;
+	constant SND_SHOTGUN: natural := 1;
+	constant SND_DOOR_OPEN: natural := 2;
+	constant SND_DOOR_CLOSE: natural := 3;
+	constant SND_ITEM: natural := 4;
+	constant SND_WEAPON: natural := 5;
+	constant SND_PLAYER_PAIN: natural := 6;
+	constant SND_PLAYER_DEATH: natural := 7;
+	constant SND_SIGHT: natural := 8;
+	constant SND_SHOOT: natural := 9;
+	constant SND_FIRE: natural := 10;
+	constant SND_EXPLODE: natural := 11;
+	constant SND_CLAW: natural := 12;
+	constant SND_PAIN: natural := 13;
+	constant SND_DEATH: natural := 14;
+	constant SND_SWITCH: natural := 15;
+	constant SND_NOWAY: natural := 16;
+	constant SND_BOSS_SIGHT: natural := 17;
 
 	-- TYPE_TABLE columns (game_tables_pkg)
 	constant TP_SPEED: natural := 1;
@@ -290,620 +305,48 @@ architecture arch of game_core is
 	subtype pos_t is signed(23 downto 0); -- Q6.16 with headroom
 	subtype trig_t is signed(17 downto 0); -- Q2.16
 
-	type actor_t is record
-		x: unsigned(15 downto 0); -- Q6.10
-		y: unsigned(15 downto 0);
-		state: unsigned(6 downto 0);
-		timer: unsigned(5 downto 0);
-		health: unsigned(11 downto 0); -- Fireball: direction; item: kind
-		typ: unsigned(2 downto 0);
-		active: std_logic;
-		solid: std_logic;
-		awake: std_logic;
-		ambush: std_logic; -- Stage 5: ignores sound alerts
-	end record;
-	constant ACTOR_CLEAR: actor_t := ((others => '0'), (others => '0'), (others => '0'),
-		(others => '0'), (others => '0'), (others => '0'), '0', '0', '0', '0');
+	type core_state_type is (CORE_INIT, CORE_LOAD, CORE_LOAD_W, CORE_TOTA, CORE_TOT0, CORE_TOT, CORE_TOT_LAST,
+		CORE_IDLE, CORE_STEP, CORE_PLAY, CORE_P_SIN, CORE_P_COS, CORE_P_VEL,
+		CORE_MOVE, CORE_MOVE_BOX, CORE_AB, CORE_MOVE_NEXT,
+		CORE_PEEK, CORE_PEEK_M1, CORE_PEEK_M2, CORE_PEEK_M3, CORE_PEEK2,
+		CORE_PICK, CORE_PICK_T, CORE_PICK_N, CORE_SPEC, CORE_SPEC2,
+		CORE_USE, CORE_USE2, CORE_UDOOR, CORE_UDOOR2,
+		CORE_WPN, CORE_HS_COL, CORE_HS_ZW, CORE_HS_SP, CORE_HS_END, CORE_DA, CORE_HS_WB, CORE_HS_NEXT,
+		CORE_ACTORS, CORE_ACT_LD, CORE_ACT_GO, CORE_LOOK, CORE_LOOK2, CORE_LOOK3,
+		CORE_CHASE, CORE_CHASE2, CORE_CHASE3, CORE_CHASE3B, CORE_CHASE3C, CORE_CHASE4,
+		CORE_CHASE5, CORE_CHASE5B, CORE_CHASE6, CORE_FLY, CORE_FLY2, CORE_FLY3,
+		CORE_TICK, CORE_ACT_WB, CORE_ACT_NX,
+		CORE_DOORS, CORE_DOOR_OPEN2, CORE_DOOR_CL2, CORE_DOOR_NX, CORE_WORLD,
+		CORE_END, CORE_SPR_T, CORE_SPR_L, CORE_SPR_F, CORE_SPR_N, CORE_CRC0, CORE_CRC_W, CORE_CRC_B, CORE_OUT,
+		CORE_WAIT, CORE_BOX, CORE_BOX_D, CORE_LOS, CORE_LOS_IT, CORE_LOS_D, CORE_DB, CORE_DB_S,
+		CORE_SND, CORE_SND_W, CORE_SND_V, CORE_SND_M1, CORE_SND_M2, CORE_SND_M3, CORE_SND_M4,
+		CORE_DP, CORE_DP2, CORE_ENTER,
+		CORE_A_SHOOT2, CORE_A_SHOOT3, CORE_A_SHOOT4, CORE_A_FIRE2, CORE_A_MELEE2, CORE_A_DIE2,
+		CORE_SPAWN, CORE_SPAWN_S,
+		CORE_FAT, CORE_FAT_D, CORE_FAT_N, CORE_FAT_W, CORE_FAT_M, CORE_BFL, CORE_BFL_N,
+		CORE_ZF, CORE_ZF2, CORE_LOAD_Z,
+		CORE_AL0, CORE_AL_POP, CORE_AL_POPW, CORE_AL_CUR, CORE_AL_NB, CORE_AL_NBD, CORE_AL_LD, CORE_AL_LD2,
+		CORE_AL_CHK, CORE_AL_ENT, CORE_AL_WB, CORE_AL_NX, CORE_AL_CLR, CORE_AL_CLRW, CORE_AL_CLR2);
 
-	type door_t is record
-		x: unsigned(5 downto 0);
-		y: unsigned(5 downto 0);
-		open_amt: signed(7 downto 0); -- 0..64
-		state: unsigned(1 downto 0);
-		timer: unsigned(7 downto 0);
-	end record;
-	type doors_t is array (0 to 7) of door_t;
-	constant DOOR_CLEAR: door_t := ((others => '0'), (others => '0'), (others => '0'),
-		DS_IDLE, (others => '0'));
-
-	type player_t is record
-		health: unsigned(7 downto 0);
-		armor: unsigned(7 downto 0);
-		bullets: unsigned(7 downto 0);
-		shells: unsigned(5 downto 0);
-		weapons: unsigned(1 downto 0); -- Bit 0 pistol, bit 1 shotgun
-		weapon: unsigned(1 downto 0); -- 1 pistol, 2 shotgun
-	end record;
-	constant PLAYER_INIT: player_t := (to_unsigned(100, 8), to_unsigned(0, 8), to_unsigned(50, 8),
-		to_unsigned(0, 6), "01", "01");
-
-	type snd_t is record
-		id: unsigned(4 downto 0);
-		vol: unsigned(5 downto 0);
-		pan: signed(5 downto 0);
-	end record;
-	type sndq_t is array (0 to 3) of snd_t;
-	constant SND_CLEAR: snd_t := ((others => '0'), (others => '0'), (others => '0'));
-
-	type st_t is (S_INIT, S_LOAD, S_LOAD_W, S_TOTA, S_TOT0, S_TOT, S_TOT_LAST,
-		S_IDLE, S_STEP, S_PLAY, S_P_SIN, S_P_COS, S_P_VEL,
-		S_MOVE, S_MOVE_BOX, S_AB, S_MOVE_NEXT,
-		S_PEEK, S_PEEK_M1, S_PEEK_M2, S_PEEK_M3, S_PEEK2,
-		S_PICK, S_PICK_T, S_PICK_N, S_SPEC, S_SPEC2,
-		S_USE, S_USE2, S_UDOOR, S_UDOOR2,
-		S_WPN, S_HS_COL, S_HS_ZW, S_HS_SP, S_HS_END, S_DA, S_HS_WB, S_HS_NEXT,
-		S_ACTORS, S_ACT_LD, S_ACT_GO, S_LOOK, S_LOOK2, S_LOOK3, S_CHASE, S_CHASE2, S_CHASE3,
-		S_CHASE3B, S_CHASE4, S_CHASE5, S_CHASE6, S_FLY, S_FLY2, S_FLY3, S_TICK, S_ACT_WB, S_ACT_NX,
-		S_DOORS, S_DOOR_OPEN2, S_DOOR_CL2, S_DOOR_NX, S_WORLD,
-		S_END, S_SPR_T, S_SPR_L, S_SPR_N, S_CRC0, S_CRC_W, S_CRC_B, S_OUT,
-		S_WAIT, S_BOX, S_BOX_D, S_LOS, S_LOS_IT, S_LOS_D, S_DB, S_DB_S,
-		S_SND, S_SND_W, S_SND_V, S_SND_M1, S_SND_M2, S_SND_M3, S_SND_M4, S_DP, S_DP2, S_ENTER,
-		S_A_SHOOT2, S_A_SHOOT3, S_A_SHOOT4, S_A_FIRE2, S_A_MELEE2, S_A_DIE2,
-		S_SPAWN, S_SPAWN_S,
-		S_FAT, S_FAT_D, S_FAT_N, S_FAT_W, S_FAT_M, S_BFL, S_BFL_N, S_ZF, S_ZF2, S_LOAD_Z,
-		S_CHASE3C, S_CHASE5B, S_SPR_F,
-		S_AL0, S_AL_POP, S_AL_POPW, S_AL_CUR, S_AL_NB, S_AL_NBD, S_AL_LD, S_AL_LD2, S_AL_CHK,
-		S_AL_ENT, S_AL_WB, S_AL_NX, S_AL_CLR, S_AL_CLRW, S_AL_CLR2);
-
-	type regs_t is record
-		st: st_t;
-		wret: st_t; -- Return states of the subroutines
-		box_ret: st_t;
-		los_ret: st_t;
-		db_ret: st_t;
-		snd_ret: st_t;
-		dp_ret: st_t;
-		en_ret: st_t;
-		sp_ret: st_t;
-		fat_ret: st_t;
-		bfl_ret: st_t;
-		armed: std_logic; -- frame_start seen, waiting for the snapshot
-		pending: std_logic; -- A snapshot is waiting in snap_in
-		snap_in: std_logic_vector(SNAP_BITS - 1 downto 0);
-		snap: std_logic_vector(SNAP_BITS - 1 downto 0); -- This step's snapshot
-		in_step: std_logic; -- Level load inside a step (else after reset)
-		-- Game state (Game attributes)
-		flow: unsigned(2 downto 0);
-		level: unsigned(1 downto 0);
-		prev_fire: std_logic;
-		debug: std_logic;
-		pl: player_t;
-		saved: player_t; -- Player at the level start (DEAD restart)
-		px: pos_t;
-		py: pos_t;
-		angle: unsigned(9 downto 0);
-		eye: unsigned(6 downto 0);
-		z: unsigned(7 downto 0); -- Stage 4: floor contact height (units)
-		vz: unsigned(4 downto 0); -- Fall speed 0..16
-		off: signed(5 downto 0); -- Peek offset -16..16
-		cam_x: pos_t;
-		cam_y: pos_t;
-		keys: unsigned(1 downto 0);
-		cooldown: unsigned(5 downto 0);
-		flash: unsigned(2 downto 0);
-		dflash: unsigned(3 downto 0); -- damage_flash
-		pflash: unsigned(2 downto 0); -- pickup_flash
-		msg: unsigned(3 downto 0);
-		msg_timer: unsigned(6 downto 0);
-		phase: unsigned(4 downto 0);
-		kills: unsigned(5 downto 0);
-		items: unsigned(5 downto 0);
-		secrets: unsigned(3 downto 0);
-		tkills: unsigned(5 downto 0);
-		titems: unsigned(5 downto 0);
-		tsecrets: unsigned(3 downto 0);
-		t_frames: unsigned(5 downto 0);
-		t_sec: unsigned(5 downto 0);
-		t_min: unsigned(6 downto 0);
-		lfsr: unsigned(15 downto 0);
-		boss_timer: unsigned(7 downto 0);
-		level_done: std_logic;
-		dead_timer: unsigned(5 downto 0); -- Saturates at 63 (only "> 30" matters)
-		automap: std_logic;
-		on_toxic: std_logic; -- Last specials() found toxic floor (kept across levels, as the model)
-		doors: doors_t;
-		-- Movement
-		cs: trig_t;
-		sn: trig_t;
-		mdx: pos_t; -- This frame's move
-		mdy: pos_t;
-		my: std_logic; -- Moving along y (else x)
-		-- Map read and box test
-		maddr: unsigned(11 downto 0); -- y & x
-		bx: pos_t; -- Box center, Q6.16
-		by: pos_t;
-		bsmall: std_logic; -- Camera box (CAM_HALF), else HALF
-		bk: unsigned(1 downto 0); -- Box corner: bit 0 picks x, bit 1 picks y
-		hit: std_logic;
-		bz: unsigned(7 downto 0); -- Height of the body the box test is for
-		-- floor_at() and box_floor()
-		fpx: pos_t; -- Point, Q6.16
-		fpy: pos_t;
-		ff: unsigned(7 downto 0); -- Floor of the point's tile
-		fs: unsigned(16 downto 0); -- Ramp: distance from the low end, 0..65536
-		fat: unsigned(7 downto 0); -- Result of floor_at()
-		bfk: unsigned(1 downto 0); -- box_floor() corner
-		bfl: unsigned(7 downto 0); -- Result of box_floor()
-		-- Line of sight
-		lx: unsigned(5 downto 0);
-		ly: unsigned(5 downto 0);
-		lx1: unsigned(5 downto 0);
-		ly1: unsigned(5 downto 0);
-		ldx: signed(7 downto 0);
-		ldy: signed(7 downto 0);
-		lsx: signed(1 downto 0);
-		lsy: signed(1 downto 0);
-		lerr: signed(8 downto 0);
-		lcnt: unsigned(6 downto 0);
-		los: std_logic;
-		-- Doors
-		di: unsigned(2 downto 0);
-		blocked: std_logic;
-		-- Sounds
-		snd_id: unsigned(4 downto 0);
-		snd_act: std_logic; -- Sound comes from actor a (else full volume, centre)
-		svol: unsigned(5 downto 0);
-		mul_a: signed(23 downto 0); -- Shared multiplier operands
-		mul_b: trig_t;
-		acc: signed(41 downto 0);
-		lat: signed(15 downto 0); -- Pan before the clamp
-		sq: sndq_t; -- This step's commands
-		sq_n: unsigned(2 downto 0);
-		oq: sndq_t; -- Last step's commands, going out
-		oq_n: unsigned(2 downto 0);
-		oq_p: unsigned(2 downto 0);
-		dmg: unsigned(5 downto 0); -- DAMAGE argument
-		-- Actors
-		a: actor_t; -- Working copy of actor ai
-		ai: unsigned(4 downto 0);
-		aaddr: unsigned(4 downto 0); -- Actor RAM read address (port 1)
-		en_s: unsigned(6 downto 0); -- ENTER argument
-		sp_type: unsigned(2 downto 0); -- SPAWN arguments
-		sp_state: unsigned(6 downto 0);
-		sp_health: unsigned(11 downto 0);
-		d: unsigned(18 downto 0); -- dist(a) in CHASE
-		csx: signed(7 downto 0); -- CHASE step
-		csy: signed(7 downto 0);
-		-- Hitscan
-		hk: unsigned(2 downto 0); -- Column 136 + 8 hk
-		hshot: std_logic; -- Shotgun: all 7 columns
-		hdmg: unsigned(5 downto 0);
-		zw: unsigned(15 downto 0);
-		span_addr: unsigned(4 downto 0);
-		zw_addr: unsigned(8 downto 0);
-		best_v: std_logic;
-		best_i: unsigned(4 downto 0);
-		best_z: unsigned(15 downto 0);
-		-- Totals after a load
-		tp1: std_logic; -- map_data_i holds the tile of the address before
-		-- Sprite table and checksum
-		spr_n: unsigned(5 downto 0);
-		spr_e: std_logic_vector(63 downto 0);
-		spr_ty: std_logic_vector(1 downto 0); -- Light type of the sprite's tile
-		fxn: unsigned(7 downto 0); -- Effects frame (t_sec * 60 + t_frames) mod 256
-		lm: std_logic_vector(4 * FX_LMOD_W - 1 downto 0); -- Light offsets of this frame
-		kp: std_logic_vector(KEYPOS_BITS - 1 downto 0);
-		bank: std_logic; -- Sprite RAM half the renderer reads
-		cw: unsigned(6 downto 0); -- CRC word 0..90
-		cb: unsigned(2 downto 0); -- CRC byte 0..7
-		cword: std_logic_vector(63 downto 0);
-		-- Pulses and output registers
-		load_req: std_logic;
-		loaded: std_logic;
-		start: std_logic;
-		cam_x_o: std_logic_vector(POS_BITS - 1 downto 0);
-		cam_y_o: std_logic_vector(POS_BITS - 1 downto 0);
-		angle_o: std_logic_vector(ANGLE_BITS - 1 downto 0);
-		eye_o: std_logic_vector(EYE_BITS - 1 downto 0);
-		doors_o: std_logic_vector(DOORS_BITS - 1 downto 0);
-		player_x_o: std_logic_vector(POS_BITS - 1 downto 0);
-		player_y_o: std_logic_vector(POS_BITS - 1 downto 0);
-		hud_o: std_logic_vector(HUD_BITS - 1 downto 0);
-		keypos_o: std_logic_vector(KEYPOS_BITS - 1 downto 0);
-		music_o: std_logic_vector(1 downto 0);
-		tint_o: std_logic_vector(1 downto 0);
-		fx_o: std_logic_vector(FX_BITS - 1 downto 0);
-		spr_count_o: std_logic_vector(5 downto 0);
-		crc_o: std_logic_vector(31 downto 0);
-		-- Stage 5 sound alert (Game.alert): queue head and tail (also the clear
-		-- index afterwards), queue read address, current cell (y & x), neighbor
-		-- 0..3 (+x, -x, +y, -y), neighbor cell, visited-RAM read address
-		qhead: unsigned(12 downto 0);
-		qtail: unsigned(12 downto 0);
-		qra: unsigned(11 downto 0);
-		cur: unsigned(11 downto 0);
-		nk: unsigned(1 downto 0);
-		ncell: unsigned(11 downto 0);
-		vaddr: unsigned(11 downto 0);
-	end record;
-
-	constant REGS_INIT: regs_t := (
-		st => S_INIT,
-		wret => S_INIT,
-		box_ret => S_INIT,
-		los_ret => S_INIT,
-		db_ret => S_INIT,
-		snd_ret => S_INIT,
-		dp_ret => S_INIT,
-		en_ret => S_INIT,
-		sp_ret => S_INIT,
-		fat_ret => S_INIT,
-		bfl_ret => S_INIT,
-		armed => '0',
-		pending => '0',
-		snap_in => (others => '0'),
-		snap => (others => '0'),
-		in_step => '0',
-		flow => FL_TITLE,
-		level => "01",
-		prev_fire => '0',
-		debug => '0',
-		pl => PLAYER_INIT,
-		saved => PLAYER_INIT,
-		px => (others => '0'),
-		py => (others => '0'),
-		angle => (others => '0'),
-		eye => to_unsigned(32, 7),
-		z => (others => '0'),
-		vz => (others => '0'),
-		off => (others => '0'),
-		cam_x => (others => '0'),
-		cam_y => (others => '0'),
-		keys => (others => '0'),
-		cooldown => (others => '0'),
-		flash => (others => '0'),
-		dflash => (others => '0'),
-		pflash => (others => '0'),
-		msg => (others => '0'),
-		msg_timer => (others => '0'),
-		phase => (others => '0'),
-		kills => (others => '0'),
-		items => (others => '0'),
-		secrets => (others => '0'),
-		tkills => (others => '0'),
-		titems => (others => '0'),
-		tsecrets => (others => '0'),
-		t_frames => (others => '0'),
-		t_sec => (others => '0'),
-		t_min => (others => '0'),
-		lfsr => (others => '0'),
-		boss_timer => (others => '0'),
-		level_done => '0',
-		dead_timer => (others => '0'),
-		automap => '0',
-		on_toxic => '0',
-		doors => (others => DOOR_CLEAR),
-		cs => (others => '0'),
-		sn => (others => '0'),
-		mdx => (others => '0'),
-		mdy => (others => '0'),
-		my => '0',
-		maddr => (others => '0'),
-		bx => (others => '0'),
-		by => (others => '0'),
-		bsmall => '0',
-		bk => (others => '0'),
-		hit => '0',
-		bz => (others => '0'),
-		fpx => (others => '0'),
-		fpy => (others => '0'),
-		ff => (others => '0'),
-		fs => (others => '0'),
-		fat => (others => '0'),
-		bfk => (others => '0'),
-		bfl => (others => '0'),
-		lx => (others => '0'),
-		ly => (others => '0'),
-		lx1 => (others => '0'),
-		ly1 => (others => '0'),
-		ldx => (others => '0'),
-		ldy => (others => '0'),
-		lsx => (others => '0'),
-		lsy => (others => '0'),
-		lerr => (others => '0'),
-		lcnt => (others => '0'),
-		los => '0',
-		di => (others => '0'),
-		blocked => '0',
-		snd_id => (others => '0'),
-		snd_act => '0',
-		svol => (others => '0'),
-		mul_a => (others => '0'),
-		mul_b => (others => '0'),
-		acc => (others => '0'),
-		lat => (others => '0'),
-		sq => (others => SND_CLEAR),
-		sq_n => (others => '0'),
-		oq => (others => SND_CLEAR),
-		oq_n => (others => '0'),
-		oq_p => (others => '0'),
-		dmg => (others => '0'),
-		a => ACTOR_CLEAR,
-		ai => (others => '0'),
-		aaddr => (others => '0'),
-		en_s => (others => '0'),
-		sp_type => (others => '0'),
-		sp_state => (others => '0'),
-		sp_health => (others => '0'),
-		d => (others => '0'),
-		csx => (others => '0'),
-		csy => (others => '0'),
-		hk => (others => '0'),
-		hshot => '0',
-		hdmg => (others => '0'),
-		zw => (others => '0'),
-		span_addr => (others => '0'),
-		zw_addr => (others => '0'),
-		best_v => '0',
-		best_i => (others => '0'),
-		best_z => (others => '0'),
-		tp1 => '0',
-		spr_n => (others => '0'),
-		spr_e => (others => '0'),
-		spr_ty => (others => '0'),
-		fxn => (others => '0'),
-		lm => (others => '0'),
-		kp => (others => '0'),
-		bank => '0',
-		cw => (others => '0'),
-		cb => (others => '0'),
-		cword => (others => '0'),
-		load_req => '0',
-		loaded => '0',
-		start => '0',
-		cam_x_o => (others => '0'),
-		cam_y_o => (others => '0'),
-		angle_o => (others => '0'),
-		eye_o => (others => '0'),
-		doors_o => (others => '0'),
-		player_x_o => (others => '0'),
-		player_y_o => (others => '0'),
-		hud_o => (others => '0'),
-		keypos_o => (others => '0'),
-		music_o => (others => '0'),
-		tint_o => (others => '0'),
-		fx_o => (others => '0'),
-		spr_count_o => (others => '0'),
-		crc_o => (others => '0'),
-		qhead => (others => '0'),
-		qtail => (others => '0'),
-		qra => (others => '0'),
-		cur => (others => '0'),
-		nk => (others => '0'),
-		ncell => (others => '0'),
-		vaddr => (others => '0')
-	);
-
+	-- Door table: one array per field, entries 0..7
+	type door_cell_t is array (0 to 7) of unsigned(5 downto 0);
+	type door_amt_t is array (0 to 7) of signed(7 downto 0);
+	type door_state_t is array (0 to 7) of unsigned(1 downto 0);
+	type door_timer_t is array (0 to 7) of unsigned(7 downto 0);
+	-- Sound command: pan & volume & id, the low bits of snd_data_o (SND_PAN, SND_VOL, SND_ID)
+	type snd_queue_t is array (0 to 3) of std_logic_vector(SND_PRI_LO - 1 downto 0);
 	type actor_ram_t is array (0 to 31) of std_logic_vector(63 downto 0);
-	-- Stage 5 alert flood fill: cells in visit order (block RAM) and visited bits
+	-- Sound alert flood fill: cells in visit order (block RAM) and visited bits
 	-- (distributed RAM; BRAM is the scarcest resource of the full design)
 	type cell_ram_t is array (0 to 4095) of std_logic_vector(11 downto 0);
 	type vis_ram_t is array (0 to 4095) of std_logic;
 	type spr_ram_t is array (0 to 63) of std_logic_vector(63 downto 0);
+	type flick_t is array (0 to 255) of std_logic;
 
-	signal r: regs_t := REGS_INIT;
-	signal r_next: regs_t;
-	signal rom_addr: unsigned(9 downto 0);
-	signal rom_data: trig_t := (others => '0');
-	signal prod: signed(41 downto 0) := (others => '0');
-	signal aram: actor_ram_t := (others => (others => '0'));
-	signal aram_q2: std_logic_vector(63 downto 0);
-	signal aq: std_logic_vector(63 downto 0) := (others => '0'); -- Registered port 1 read
-	signal hit_block, hit_pick, hit_door: std_logic := '0'; -- Scan tests of aq
-	signal adist: unsigned(18 downto 0) := (others => '0'); -- Registered helpers of actor a
-	signal atx, aty: signed(18 downto 0) := (others => '0');
-	signal avol: unsigned(5 downto 0) := (others => '0');
-	signal sdx, sdy: unsigned(13 downto 0) := (others => '0');
-	signal sdist: unsigned(15 downto 0) := (others => '0');
-	signal aram_we: std_logic := '0';
-	signal aram_waddr: unsigned(4 downto 0) := (others => '0');
-	signal aram_wdata: std_logic_vector(63 downto 0) := (others => '0');
-	signal core_we: std_logic;
-	signal alq: cell_ram_t;
-	signal alq_q: std_logic_vector(11 downto 0) := (others => '0');
-	signal al_qwe: std_logic;
-	signal al_qwaddr: unsigned(11 downto 0);
-	signal al_qwdata: std_logic_vector(11 downto 0);
-	signal vis: vis_ram_t := (others => '0');
-	signal vis_q: std_logic := '0';
-	signal al_vwe: std_logic;
-	signal al_vwaddr: unsigned(11 downto 0);
-	signal al_vwdata: std_logic;
-	attribute ram_style: string;
-	attribute ram_style of vis: signal is "distributed";
-	signal core_waddr: unsigned(4 downto 0);
-	signal core_wdata: std_logic_vector(63 downto 0);
-	signal sram: spr_ram_t := (others => (others => '0'));
-	signal spr_we: std_logic;
-	signal spr_waddr: unsigned(5 downto 0);
-	signal spr_wdata: std_logic_vector(63 downto 0);
-	signal spr_q: std_logic_vector(63 downto 0) := (others => '0');
-	signal waddr: unsigned(6 downto 0); -- State word mux address
-	signal word: std_logic_vector(63 downto 0);
-	signal sdata: std_logic_vector(63 downto 0) := (others => '0');
-	signal map_we: std_logic;
-	signal crc_init, crc_valid: std_logic;
-	signal crc_byte: std_logic_vector(7 downto 0);
-	signal crc: std_logic_vector(31 downto 0);
-	-- Door table entry of cell r.maddr (8: none) and whether that door is
-	-- fully open, registered: every reader comes at least one clock after
-	-- the address is set (S_WAIT), and the compare stays off the state decode
-	signal didx: natural range 0 to 8 := 8;
-	signal dopen: std_logic := '0';
-
-	------------------------------------------------------------------
-	-- Actor records and tables
-	------------------------------------------------------------------
-	function unpack(w: std_logic_vector(63 downto 0)) return actor_t is
-		variable a: actor_t;
+	-- Actor coordinate (Q6.10) in Q6.16
+	function q16(v: unsigned(15 downto 0)) return pos_t is
 	begin
-		a.x := unsigned(w(15 downto 0));
-		a.y := unsigned(w(31 downto 16));
-		a.state := unsigned(w(38 downto 32));
-		a.timer := unsigned(w(44 downto 39));
-		a.health := unsigned(w(56 downto 45));
-		a.typ := unsigned(w(59 downto 57));
-		a.active := w(60);
-		a.solid := w(61);
-		a.awake := w(62);
-		a.ambush := w(63);
-		return a;
-	end function;
-
-	function pack(a: actor_t) return std_logic_vector is
-	begin
-		return a.ambush & a.awake & a.solid & a.active & std_logic_vector(a.typ) &
-			std_logic_vector(a.health) & std_logic_vector(a.timer) & std_logic_vector(a.state) &
-			std_logic_vector(a.y) & std_logic_vector(a.x);
-	end function;
-
-	function st_frame(s: unsigned(6 downto 0)) return unsigned is
-	begin
-		return unsigned(STATE_TABLE(to_integer(s))(STATE_FRAME_HI downto STATE_FRAME_LO));
-	end function;
-
-	function st_dur(s: unsigned(6 downto 0)) return unsigned is
-	begin
-		return unsigned(STATE_TABLE(to_integer(s))(STATE_DUR_HI downto STATE_DUR_LO));
-	end function;
-
-	function st_act(s: unsigned(6 downto 0)) return natural is
-	begin
-		return to_integer(unsigned(STATE_TABLE(to_integer(s))(STATE_ACTION_HI downto STATE_ACTION_LO)));
-	end function;
-
-	function st_next(s: unsigned(6 downto 0)) return unsigned is
-	begin
-		return unsigned(STATE_TABLE(to_integer(s))(STATE_NEXT_HI downto STATE_NEXT_LO));
-	end function;
-
-	-- Monster type parameter (types 0..3; only monsters ever ask)
-	function tp(typ: unsigned(2 downto 0); col: natural) return integer is
-	begin
-		return TYPE_TABLE(to_integer(typ(1 downto 0)))(col);
-	end function;
-
-	function tp_state(typ: unsigned(2 downto 0); col: natural) return unsigned is
-	begin
-		return to_unsigned(tp(typ, col), 7);
-	end function;
-
-	-- Random numbers: x^16 + x^15 + x^13 + x^4 + 1 (taps 15, 14, 12, 3 of
-	-- the old state), shift left; random() returns the low byte of the new state
-	function lfsr_next(s: unsigned(15 downto 0)) return unsigned is
-	begin
-		return s(14 downto 0) & (s(15) xor s(14) xor s(12) xor s(3));
-	end function;
-
-	------------------------------------------------------------------
-	-- Map and doors
-	------------------------------------------------------------------
-	-- Door table entry for cell (y & x): index 0..7, or 8 when none is active
-	function door_index(doors: doors_t; cell: unsigned(11 downto 0)) return natural is
-	begin
-		for i in 0 to 7 loop
-			if ((doors(i).state /= DS_IDLE) and (doors(i).y & doors(i).x = cell)) then
-				return i;
-			end if;
-		end loop;
-		return 8;
-	end function;
-
-	-- First idle door table entry, or 8
-	function first_idle(doors: doors_t) return natural is
-	begin
-		for i in 0 to 7 loop
-			if (doors(i).state = DS_IDLE) then
-				return i;
-			end if;
-		end loop;
-		return 8;
-	end function;
-
-	-- Game.solid() of tile word t read from cell r.maddr: a wall unless it is
-	-- a door (specials 1..3) whose table entry is fully open (dopen, the
-	-- registered door match of r.maddr)
-	function solid(t: std_logic_vector(23 downto 0); dopen: std_logic) return boolean is
-		variable sp: natural range 0 to 7;
-	begin
-		if (unsigned(t(TILE_WALL_HI downto TILE_WALL_LO)) = 0) then
-			return false;
-		end if;
-		sp := to_integer(unsigned(t(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)));
-		return not ((sp >= 1) and (sp <= 3) and (dopen = '1'));
-	end function;
-
-	-- Stage 4 tile heights: floor_h * 8 and 64 - ceil_h * 8 (units)
-	function floor_h(t: std_logic_vector(23 downto 0)) return unsigned is
-	begin
-		return unsigned(t(TILE_FLOORH_HI downto TILE_FLOORH_LO)) & "000";
-	end function;
-
-	function ceil_h(t: std_logic_vector(23 downto 0)) return unsigned is
-	begin
-		return to_unsigned(64, 7) - (unsigned(t(TILE_CEILH_HI downto TILE_CEILH_LO)) & "000");
-	end function;
-
-	function is_ramp(t: std_logic_vector(23 downto 0)) return boolean is
-	begin
-		return unsigned(t(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)) = SPECIAL_RAMP;
-	end function;
-
-	-- Game.blocks() without the solid test: a step up of more than
-	-- STEP_MAX (ramps never) or less headroom than BODY_H for a body at z
-	function height_blocks(t: std_logic_vector(23 downto 0); z: unsigned(7 downto 0)) return boolean is
-		variable f, top: unsigned(8 downto 0);
-	begin
-		f := resize(floor_h(t), 9);
-		if ((not is_ramp(t)) and (f > resize(z, 9) + STEP_MAX)) then
-			return true;
-		end if;
-		if (f > resize(z, 9)) then
-			top := f + BODY_H;
-		else
-			top := resize(z, 9) + BODY_H;
-		end if;
-		return resize(ceil_h(t), 9) < top;
-	end function;
-
-	-- Cell (y & x) of a Q6.16 point, masked to the map like Game.tile()
-	function point_cell(x: pos_t; y: pos_t) return unsigned is
-	begin
-		return unsigned(std_logic_vector(y(21 downto 16))) & unsigned(std_logic_vector(x(21 downto 16)));
-	end function;
-
-	-- Cell (y & x) of box corner k around (bx, by): bits 21:16 of b -/+ half
-	-- are (b +/- half) >> 16 masked to 0..63 (Game.tile() masks the same way)
-	function box_cell(bx: pos_t; by: pos_t; small: std_logic; k: unsigned(1 downto 0)) return unsigned is
-		variable h: integer;
-		variable cx, cy: pos_t;
-	begin
-		if (small = '1') then
-			h := CAM_HALF;
-		else
-			h := HALF;
-		end if;
-		if (k(0) = '0') then
-			cx := bx - h;
-		else
-			cx := bx + h;
-		end if;
-		if (k(1) = '0') then
-			cy := by - h;
-		else
-			cy := by + h;
-		end if;
-		return unsigned(std_logic_vector(cy(21 downto 16))) & unsigned(std_logic_vector(cx(21 downto 16)));
+		return signed(unsigned'("00" & v & "000000")); -- v << 6, two zero headroom bits on top
 	end function;
 
 	-- Game.in_cell() with half size HALF: one of the 2 x 2 cells of the box
@@ -918,30 +361,6 @@ architecture arch of game_core is
 		y1 := y + HALF;
 		return ((unsigned(x0(23 downto 16)) = "00" & cx) or (unsigned(x1(23 downto 16)) = "00" & cx)) and
 			((unsigned(y0(23 downto 16)) = "00" & cy) or (unsigned(y1(23 downto 16)) = "00" & cy));
-	end function;
-
-	------------------------------------------------------------------
-	-- Arithmetic helpers
-	------------------------------------------------------------------
-	-- Actor coordinate (Q6.10) in Q6.16
-	function q16(v: unsigned(15 downto 0)) return pos_t is
-	begin
-		return signed(unsigned'("00" & v & "000000")); -- v << 6, two zero headroom bits on top
-	end function;
-
-	-- |v| as unsigned (v never reaches the most negative value here)
-	function absu(v: signed) return unsigned is
-	begin
-		return unsigned(abs(v));
-	end function;
-
-	-- Game.dist(): |(px >> 6) - a.x| + |(py >> 6) - a.y|, Q6.10
-	function dist(px: pos_t; py: pos_t; ax: unsigned(15 downto 0); ay: unsigned(15 downto 0)) return unsigned is
-		variable dx, dy: signed(18 downto 0);
-	begin
-		dx := resize(px(23 downto 6), 19) - signed(resize(ax, 19));
-		dy := resize(py(23 downto 6), 19) - signed(resize(ay, 19));
-		return absu(dx) + absu(dy);
 	end function;
 
 	-- move * c for move in -2..1 (2-bit signed snapshot field)
@@ -978,84 +397,8 @@ architecture arch of game_core is
 		end case;
 	end function;
 
-	-- actors.direction16(): direction 0..15 toward (dx, dy), compares of
-	-- small multiples only (5 ay < ax, 3 ay < 2 ax, 2 ay < 3 ax, ay < 5 ax)
-	function direction16(dx: signed(18 downto 0); dy: signed(18 downto 0)) return unsigned is
-		variable ax, ay: unsigned(21 downto 0);
-		variable sub: unsigned(3 downto 0);
-	begin
-		ax := resize(absu(dx), 22);
-		ay := resize(absu(dy), 22);
-		if (shift_left(ay, 2) + ay < ax) then
-			sub := to_unsigned(0, 4);
-		elsif (shift_left(ay, 1) + ay < shift_left(ax, 1)) then
-			sub := to_unsigned(1, 4);
-		elsif (shift_left(ay, 1) < shift_left(ax, 1) + ax) then
-			sub := to_unsigned(2, 4);
-		elsif (ay < shift_left(ax, 2) + ax) then
-			sub := to_unsigned(3, 4);
-		else
-			sub := to_unsigned(4, 4);
-		end if;
-		if ((dx >= 0) and (dy >= 0)) then
-			return sub;
-		elsif ((dx < 0) and (dy >= 0)) then
-			return 8 - sub;
-		elsif ((dx < 0) and (dy < 0)) then
-			return 8 + sub;
-		else
-			return 0 - sub; -- (16 - sub) & 15
-		end if;
-	end function;
-
-	-- Sound distance of actor (ax, ay) from the player: d = dx + dy -
-	-- min / 2 in 1/64 tiles (dx, dy = |difference| >> 10 in Q.16)
-	function snd_axis(p: pos_t; a: unsigned(15 downto 0)) return unsigned is
-	begin
-		return resize(shift_right(absu(q16(a) - p), 10), 14);
-	end function;
-
-	function snd_dist(dx: unsigned(13 downto 0); dy: unsigned(13 downto 0)) return unsigned is
-		variable mn: unsigned(13 downto 0);
-	begin
-		if (dx < dy) then
-			mn := dx;
-		else
-			mn := dy;
-		end if;
-		return resize(dx, 16) + dy - shift_right(mn, 1);
-	end function;
-
-	-- Sound volume at distance d: 63 up to 200, 0 from 1200,
-	-- ((1200 - d) * 65) >> 10 in between (65 = 64 + 1)
-	function volume(d: unsigned(15 downto 0)) return unsigned is
-		variable t: unsigned(10 downto 0);
-		variable p: unsigned(17 downto 0);
-	begin
-		if (d <= 200) then
-			return to_unsigned(63, 6);
-		elsif (d >= 1200) then
-			return to_unsigned(0, 6);
-		end if;
-		t := resize(1200 - d, 11);
-		p := shift_left(resize(t, 18), 6) + t;
-		if (p(17 downto 10) > 63) then -- min(63, ...) as the model
-			return to_unsigned(63, 6);
-		end if;
-		return p(15 downto 10);
-	end function;
-
-	function bit_of(b: boolean) return std_logic is
-	begin
-		if (b) then
-			return '1';
-		end if;
-		return '0';
-	end function;
-
 	-- Flicker of effects frame n (render.light_mods): ((n * 40503) >> 7) & 7 < 3, as a
 	-- 256 x 1 constant table so the multiply never reaches the logic
-	type flick_t is array (0 to 255) of std_logic;
 	function make_flick return flick_t is
 		variable t: flick_t;
 	begin
@@ -1070,58 +413,284 @@ architecture arch of game_core is
 	end function;
 	constant FLICK: flick_t := make_flick;
 
-	-- Light offsets of the four light types for effects frame n (render.light_mods):
-	-- steady 0, flicker -5 when FLICK(n), strobe -8 when n(4), glow -(triangle(n mod 32) / 2);
-	-- the muzzle flash adds 2 to all four. Packed as 5-bit signed, type k at 5k + 4 .. 5k
-	function light_mods(n: unsigned(7 downto 0); flash: boolean) return std_logic_vector is
-		variable f, m: integer;
-		variable g, tri: natural;
-		variable o: std_logic_vector(4 * FX_LMOD_W - 1 downto 0);
-	begin
-		if (flash) then
-			f := 2;
-		else
-			f := 0;
-		end if;
-		g := to_integer(n(4 downto 0));
-		if (g < 16) then
-			tri := g;
-		else
-			tri := 31 - g;
-		end if;
-		for k in 0 to 3 loop
-			m := f;
-			if ((k = 1) and (FLICK(to_integer(n)) = '1')) then
-				m := f - 5;
-			elsif ((k = 2) and (n(4) = '1')) then
-				m := f - 8;
-			elsif (k = 3) then
-				m := f - tri / 2;
-			end if;
-			o(FX_LMOD_W * k + FX_LMOD_W - 1 downto FX_LMOD_W * k) := std_logic_vector(to_signed(m, FX_LMOD_W));
-		end loop;
-		return o;
-	end function;
+	------------------------------------------------------------------
+	-- Registers of the state machine (all reset in its process)
+	------------------------------------------------------------------
+	signal core_state: core_state_type := CORE_INIT;
+	-- Return states of the subroutines
+	signal wret, box_ret, los_ret, db_ret, snd_ret: core_state_type := CORE_INIT;
+	signal dp_ret, en_ret, sp_ret, fat_ret, bfl_ret: core_state_type := CORE_INIT;
+	signal armed: std_logic := '0'; -- frame_start seen, waiting for the snapshot
+	signal pending: std_logic := '0'; -- A snapshot is waiting in snap_in
+	signal snap_in: std_logic_vector(SNAP_BITS - 1 downto 0) := (others => '0');
+	signal snap: std_logic_vector(SNAP_BITS - 1 downto 0) := (others => '0'); -- This step's snapshot
+	signal in_step: std_logic := '0'; -- Level load inside a step (else after reset)
+	-- Game state (Game attributes)
+	signal flow: unsigned(2 downto 0) := FL_TITLE;
+	signal level: unsigned(1 downto 0) := "01";
+	signal prev_fire: std_logic := '0';
+	signal debug: std_logic := '0';
+	-- Player, and its copy at the level start (saved_*, DEAD restart)
+	signal pl_health: unsigned(7 downto 0) := to_unsigned(100, 8);
+	signal pl_armor: unsigned(7 downto 0) := (others => '0');
+	signal pl_bullets: unsigned(7 downto 0) := to_unsigned(50, 8);
+	signal pl_shells: unsigned(5 downto 0) := (others => '0');
+	signal pl_weapons: unsigned(1 downto 0) := "01"; -- Bit 0 pistol, bit 1 shotgun
+	signal pl_weapon: unsigned(1 downto 0) := "01"; -- 1 pistol, 2 shotgun
+	signal saved_health: unsigned(7 downto 0) := to_unsigned(100, 8);
+	signal saved_armor: unsigned(7 downto 0) := (others => '0');
+	signal saved_bullets: unsigned(7 downto 0) := to_unsigned(50, 8);
+	signal saved_shells: unsigned(5 downto 0) := (others => '0');
+	signal saved_weapons: unsigned(1 downto 0) := "01";
+	signal saved_weapon: unsigned(1 downto 0) := "01";
+	signal px, py: pos_t := (others => '0');
+	signal angle: unsigned(9 downto 0) := (others => '0');
+	signal eye: unsigned(6 downto 0) := to_unsigned(32, 7);
+	signal z: unsigned(7 downto 0) := (others => '0'); -- Floor contact height (units)
+	signal vz: unsigned(4 downto 0) := (others => '0'); -- Fall speed 0..16
+	signal off: signed(5 downto 0) := (others => '0'); -- Peek offset -16..16
+	signal cam_x, cam_y: pos_t := (others => '0');
+	signal keys: unsigned(1 downto 0) := (others => '0');
+	signal cooldown: unsigned(5 downto 0) := (others => '0');
+	signal flash: unsigned(2 downto 0) := (others => '0');
+	signal dflash: unsigned(3 downto 0) := (others => '0'); -- damage_flash
+	signal pflash: unsigned(2 downto 0) := (others => '0'); -- pickup_flash
+	signal msg: unsigned(3 downto 0) := (others => '0');
+	signal msg_timer: unsigned(6 downto 0) := (others => '0');
+	signal phase: unsigned(4 downto 0) := (others => '0');
+	signal kills, items, tkills, titems: unsigned(5 downto 0) := (others => '0');
+	signal secrets, tsecrets: unsigned(3 downto 0) := (others => '0');
+	signal t_frames, t_sec: unsigned(5 downto 0) := (others => '0');
+	signal t_min: unsigned(6 downto 0) := (others => '0');
+	signal lfsr: unsigned(15 downto 0) := (others => '0');
+	signal boss_timer: unsigned(7 downto 0) := (others => '0');
+	signal level_done: std_logic := '0';
+	signal dead_timer: unsigned(5 downto 0) := (others => '0'); -- Saturates at 63 (only "> 30" matters)
+	signal automap: std_logic := '0';
+	signal on_toxic: std_logic := '0'; -- Last specials() found toxic floor (kept across levels, as the model)
+	signal door_x, door_y: door_cell_t := (others => (others => '0'));
+	signal door_amt: door_amt_t := (others => (others => '0')); -- Open amount 0..64
+	signal door_state: door_state_t := (others => DS_IDLE);
+	signal door_timer: door_timer_t := (others => (others => '0'));
+	-- Movement
+	signal cs, sn: trig_t := (others => '0');
+	signal mdx, mdy: pos_t := (others => '0'); -- This frame's move
+	signal my: std_logic := '0'; -- Moving along y (else x)
+	-- Map read and box test
+	signal maddr: unsigned(11 downto 0) := (others => '0'); -- y & x
+	signal bx, by: pos_t := (others => '0'); -- Box center, Q6.16
+	signal bsmall: std_logic := '0'; -- Camera box (CAM_HALF), else HALF
+	signal bk: unsigned(1 downto 0) := (others => '0'); -- Box corner: bit 0 picks x, bit 1 picks y
+	signal hit: std_logic := '0';
+	signal bz: unsigned(7 downto 0) := (others => '0'); -- Height of the body the box test is for
+	-- floor_at() and box_floor()
+	signal fpx, fpy: pos_t := (others => '0'); -- Point, Q6.16
+	signal ff: unsigned(7 downto 0) := (others => '0'); -- Floor of the point's tile
+	signal fs: unsigned(16 downto 0) := (others => '0'); -- Ramp: distance from the low end, 0..65536
+	signal fat: unsigned(7 downto 0) := (others => '0'); -- Result of floor_at()
+	signal bfk: unsigned(1 downto 0) := (others => '0'); -- box_floor() corner
+	signal bfl: unsigned(7 downto 0) := (others => '0'); -- Result of box_floor()
+	-- Line of sight
+	signal lx, ly, lx1, ly1: unsigned(5 downto 0) := (others => '0');
+	signal ldx, ldy: signed(7 downto 0) := (others => '0');
+	signal lsx, lsy: signed(1 downto 0) := (others => '0');
+	signal lerr: signed(8 downto 0) := (others => '0');
+	signal lcnt: unsigned(6 downto 0) := (others => '0');
+	signal los: std_logic := '0';
+	-- Doors
+	signal di: unsigned(2 downto 0) := (others => '0');
+	signal blocked: std_logic := '0';
+	-- Sounds
+	signal snd_id: unsigned(4 downto 0) := (others => '0');
+	signal snd_act: std_logic := '0'; -- Sound comes from actor a (else full volume, centre)
+	signal svol: unsigned(5 downto 0) := (others => '0');
+	signal mul_a: signed(23 downto 0) := (others => '0'); -- Shared multiplier operands
+	signal mul_b: trig_t := (others => '0');
+	signal acc: signed(41 downto 0) := (others => '0');
+	signal lat: signed(15 downto 0) := (others => '0'); -- Pan before the clamp
+	signal sq: snd_queue_t := (others => (others => '0')); -- This step's commands
+	signal oq: snd_queue_t := (others => (others => '0')); -- Last step's commands, going out
+	signal sq_n, oq_n, oq_p: unsigned(2 downto 0) := (others => '0');
+	signal dmg: unsigned(5 downto 0) := (others => '0'); -- DAMAGE argument
+	-- Actors: working copy a_* of actor ai
+	signal a_x, a_y: unsigned(15 downto 0) := (others => '0'); -- Q6.10
+	signal a_state: unsigned(6 downto 0) := (others => '0');
+	signal a_timer: unsigned(5 downto 0) := (others => '0');
+	signal a_health: unsigned(11 downto 0) := (others => '0'); -- Fireball: direction; item: kind
+	signal a_typ: unsigned(2 downto 0) := (others => '0');
+	signal a_active, a_solid, a_awake, a_ambush: std_logic := '0';
+	signal ai: unsigned(4 downto 0) := (others => '0');
+	signal aaddr: unsigned(4 downto 0) := (others => '0'); -- Actor RAM read address (port 1)
+	signal en_s: unsigned(6 downto 0) := (others => '0'); -- ENTER argument
+	signal sp_type: unsigned(2 downto 0) := (others => '0'); -- SPAWN arguments
+	signal sp_state: unsigned(6 downto 0) := (others => '0');
+	signal sp_health: unsigned(11 downto 0) := (others => '0');
+	signal cdist: unsigned(18 downto 0) := (others => '0'); -- dist(a) in CHASE
+	signal csx, csy: signed(7 downto 0) := (others => '0'); -- CHASE step
+	-- Hitscan
+	signal hk: unsigned(2 downto 0) := (others => '0'); -- Column 136 + 8 hk
+	signal hshot: std_logic := '0'; -- Shotgun: all 7 columns
+	signal hdmg: unsigned(5 downto 0) := (others => '0');
+	signal zw: unsigned(15 downto 0) := (others => '0');
+	signal span_addr: unsigned(4 downto 0) := (others => '0');
+	signal zw_addr: unsigned(8 downto 0) := (others => '0');
+	signal best_v: std_logic := '0';
+	signal best_i: unsigned(4 downto 0) := (others => '0');
+	signal best_z: unsigned(15 downto 0) := (others => '0');
+	-- Totals after a load
+	signal tp1: std_logic := '0'; -- map_data_i holds the tile of the address before
+	-- Sprite table and checksum
+	signal spr_n: unsigned(5 downto 0) := (others => '0');
+	signal spr_e: std_logic_vector(63 downto 0) := (others => '0');
+	signal spr_ty: std_logic_vector(1 downto 0) := (others => '0'); -- Light type of the sprite's tile
+	signal fxn: unsigned(7 downto 0) := (others => '0'); -- Effects frame (t_sec * 60 + t_frames) mod 256
+	signal lm: std_logic_vector(4 * FX_LMOD_W - 1 downto 0) := (others => '0'); -- Light offsets of this frame
+	signal kp: std_logic_vector(KEYPOS_BITS - 1 downto 0) := (others => '0');
+	signal bank: std_logic := '0'; -- Sprite RAM half the renderer reads
+	signal cw: unsigned(6 downto 0) := (others => '0'); -- CRC word 0..90
+	signal cb: unsigned(2 downto 0) := (others => '0'); -- CRC byte 0..7
+	signal cword: std_logic_vector(63 downto 0) := (others => '0'); -- Shifts one byte right per CRC byte
+	-- Pulses and output registers
+	signal load_req, loaded, start: std_logic := '0';
+	signal cam_x_out, cam_y_out: std_logic_vector(POS_BITS - 1 downto 0) := (others => '0');
+	signal angle_out: std_logic_vector(ANGLE_BITS - 1 downto 0) := (others => '0');
+	signal eye_out: std_logic_vector(EYE_BITS - 1 downto 0) := (others => '0');
+	signal doors_out: std_logic_vector(DOORS_BITS - 1 downto 0) := (others => '0');
+	signal player_x_out, player_y_out: std_logic_vector(POS_BITS - 1 downto 0) := (others => '0');
+	signal hud_out: std_logic_vector(HUD_BITS - 1 downto 0) := (others => '0');
+	signal keypos_out: std_logic_vector(KEYPOS_BITS - 1 downto 0) := (others => '0');
+	signal music_out, tint_out: std_logic_vector(1 downto 0) := (others => '0');
+	signal fx_out: std_logic_vector(FX_BITS - 1 downto 0) := (others => '0');
+	signal spr_count_out: std_logic_vector(5 downto 0) := (others => '0');
+	signal crc_out: std_logic_vector(31 downto 0) := (others => '0');
+	-- Sound alert (Game.alert): queue head and tail (also the clear
+	-- index afterwards), queue read address, current cell (y & x), neighbor
+	-- 0..3 (+x, -x, +y, -y), neighbor cell, visited-RAM read address
+	signal qhead, qtail: unsigned(12 downto 0) := (others => '0');
+	signal qra, cur, ncell, vaddr: unsigned(11 downto 0) := (others => '0');
+	signal nk: unsigned(1 downto 0) := (others => '0');
+	-- Write ports of the actor and sprite RAMs, registered in the state machine
+	signal aram_we: std_logic := '0';
+	signal aram_waddr: unsigned(4 downto 0) := (others => '0');
+	signal aram_wdata: std_logic_vector(63 downto 0) := (others => '0');
+	signal spr_we: std_logic := '0';
+	signal spr_waddr: unsigned(5 downto 0) := (others => '0');
+	signal spr_wdata: std_logic_vector(63 downto 0) := (others => '0');
 
-	-- Sprite light: clamp(tile light + offset of the tile's light type, 0, 15)
-	function mod_light(l: std_logic_vector(3 downto 0); lm: std_logic_vector; ty: std_logic_vector(1 downto 0))
-		return std_logic_vector is
-		variable k: natural;
-		variable v: integer;
-	begin
-		k := to_integer(unsigned(ty));
-		v := to_integer(unsigned(l)) + to_integer(signed(lm(lm'low + FX_LMOD_W * k + FX_LMOD_W - 1 downto lm'low + FX_LMOD_W * k)));
-		if (v < 0) then
-			v := 0;
-		elsif (v > 15) then
-			v := 15;
-		end if;
-		return std_logic_vector(to_unsigned(v, 4));
-	end function;
+	------------------------------------------------------------------
+	-- Memories and registered helpers (no reset)
+	------------------------------------------------------------------
+	signal rom_addr: unsigned(9 downto 0);
+	signal rom_data: trig_t := (others => '0');
+	signal prod: signed(41 downto 0) := (others => '0');
+	signal aram: actor_ram_t := (others => (others => '0'));
+	signal aram_q2: std_logic_vector(63 downto 0);
+	signal aw1: std_logic_vector(63 downto 0); -- Port 1 before its register
+	signal aw1_x, aw1_y: pos_t; -- Its position in Q6.16
+	signal aq: std_logic_vector(63 downto 0) := (others => '0'); -- Registered port 1 read
+	signal hit_block, hit_pick, hit_door: std_logic := '0'; -- Scan tests of aq
+	signal adist: unsigned(18 downto 0) := (others => '0'); -- Registered helpers of actor a
+	signal atx, aty: signed(18 downto 0) := (others => '0');
+	signal avol: unsigned(5 downto 0) := (others => '0');
+	signal sdx, sdy: unsigned(13 downto 0) := (others => '0');
+	signal sdist: unsigned(15 downto 0) := (others => '0');
+	signal alq: cell_ram_t;
+	signal alq_q: std_logic_vector(11 downto 0) := (others => '0');
+	signal al_qwe: std_logic;
+	signal al_qwaddr: unsigned(11 downto 0);
+	signal al_qwdata: std_logic_vector(11 downto 0);
+	signal vis: vis_ram_t := (others => '0');
+	signal vis_q: std_logic := '0';
+	signal al_vwe: std_logic;
+	signal al_vwaddr: unsigned(11 downto 0);
+	signal al_vwdata: std_logic;
+	attribute ram_style: string;
+	attribute ram_style of vis: signal is "distributed";
+	signal sram: spr_ram_t := (others => (others => '0'));
+	signal spr_q: std_logic_vector(63 downto 0) := (others => '0');
+	signal waddr: unsigned(6 downto 0); -- State word mux address
+	signal word: std_logic_vector(63 downto 0);
+	signal sdata: std_logic_vector(63 downto 0) := (others => '0');
+	signal map_we: std_logic;
+	signal crc_init, crc_valid: std_logic;
+	signal crc_byte: std_logic_vector(7 downto 0);
+	signal crc: std_logic_vector(31 downto 0);
+	-- Door table entry of cell maddr (8: none), whether that door is fully
+	-- open, and the first idle entry (8: none), registered: every reader comes
+	-- at least one clock after the address or the table last changed
+	signal didx: natural range 0 to 8 := 8;
+	signal dopen: std_logic := '0';
+	signal dfree: natural range 0 to 8 := 8;
+
+	------------------------------------------------------------------
+	-- Combinational helpers (concurrent assignments)
+	------------------------------------------------------------------
+	-- Fields of the registered actor word aq, and table lookups
+	signal q_x, q_y: unsigned(15 downto 0);
+	signal q_state: unsigned(6 downto 0);
+	signal q_health: unsigned(11 downto 0);
+	signal q_typ: unsigned(2 downto 0);
+	signal q_kind: natural range 0 to 7; -- Item kind (health 2:0)
+	signal q_k, a_k: natural range 0 to 3; -- TYPE_TABLE rows of q and a
+	signal q_frame: unsigned(4 downto 0); -- State art frame of q
+	signal q_art: unsigned(7 downto 0); -- Sprite art frame of q
+	signal a_word: std_logic_vector(63 downto 0); -- a_* packed
+	signal a_act, en_act: natural range 0 to 15; -- Actions of a_state and en_s
+	signal a_next: unsigned(6 downto 0); -- Next state of a_state
+	signal en_dur, sp_dur: unsigned(5 downto 0); -- Durations of en_s and sp_state
+	signal a_spd: natural range 0 to 255;
+	signal a_dx, a_dy: signed(18 downto 0); -- (px >> 6) - a_x, (py >> 6) - a_y
+	-- Player and game
+	signal lfsr_n: unsigned(15 downto 0); -- Next random state
+	signal go: std_logic; -- Use, or fire newly pressed (not held)
+	signal took: std_logic; -- Pickup q_kind is taken
+	signal wpn_next: unsigned(1 downto 0); -- Weapon after this frame's selection
+	signal eye_t: unsigned(6 downto 0);
+	signal peek_t: signed(5 downto 0);
+	signal vel_x, vel_y: signed(19 downto 0);
+	signal flush_xp, flush_xn, flush_yp, flush_yn: pos_t;
+	signal fall_v: unsigned(4 downto 0);
+	signal use_x, use_y: pos_t;
+	signal pcell, use_cell, nb_cell: unsigned(11 downto 0);
+	signal box_x0, box_x1, box_y0, box_y1: pos_t;
+	signal da_hp: signed(12 downto 0);
+	signal arm_21, arm_save: unsigned(9 downto 0);
+	-- Tile word map_data_i
+	signal map_sp: natural range 0 to 7;
+	signal map_floor: unsigned(5 downto 0);
+	signal map_ceil: unsigned(6 downto 0);
+	signal map_top: unsigned(8 downto 0);
+	signal map_solid, map_hblk: std_logic;
+	signal al_open: std_logic;
+	signal dk: natural range 0 to 7; -- Door table entry di
+	-- Line of sight step
+	signal los_dx, los_dy: signed(7 downto 0);
+	signal los_e2, los_nerr: signed(8 downto 0);
+	signal los_sx, los_sy, los_tx, los_ty: std_logic;
+	signal los_nx, los_ny: unsigned(5 downto 0);
+	-- Actors, sounds, sprites
+	signal fly_x, fly_y: unsigned(15 downto 0);
+	signal dir_ax, dir_ay: unsigned(21 downto 0);
+	signal dir_sub, fire_dir: unsigned(3 downto 0);
+	signal snd_min: unsigned(13 downto 0);
+	signal vol_t: unsigned(10 downto 0);
+	signal vol_p: unsigned(17 downto 0);
+	signal vol: unsigned(5 downto 0);
+	signal pan_sum: signed(42 downto 0);
+	signal pan_c: signed(5 downto 0);
+	signal oq_word: std_logic_vector(SND_PRI_LO - 1 downto 0);
+	signal lm_f: signed(FX_LMOD_W - 1 downto 0);
+	signal lm_tri: unsigned(2 downto 0);
+	signal lm_next: std_logic_vector(4 * FX_LMOD_W - 1 downto 0);
+	signal spr_lmod: signed(FX_LMOD_W - 1 downto 0);
+	signal spr_lsum: signed(5 downto 0);
+	signal spr_light: std_logic_vector(3 downto 0);
 begin
 	------------------------------------------------------------------
 	-- Sine ROM (cos(a) = sin(a + 256)), registered read
 	------------------------------------------------------------------
+	rom_addr <= angle + 256 when (core_state = CORE_P_COS) else angle;
+
 	process(clk_i)
 	begin
 		if rising_edge(clk_i) then
@@ -1135,35 +704,18 @@ begin
 	process(clk_i)
 	begin
 		if rising_edge(clk_i) then
-			prod <= r.mul_a * r.mul_b;
+			prod <= mul_a * mul_b;
 		end if;
 	end process;
 
 	------------------------------------------------------------------
 	-- Actor table, 32 x 64 LUT RAM. One write port (the loader owns it
-	-- while the core waits for a load), registered one clock (timing:
-	-- the write enable is decided late in the clock). Every core read
-	-- takes the S_WAIT clock after its address is set, so a read never
-	-- comes before a write that was decided earlier. Reads: port 1 at
-	-- r.aaddr for the core, port 2 for the state words
+	-- while the core waits for a load), registered one clock in the state
+	-- machine (timing: the write enable is decided late in the clock).
+	-- Every core read takes the CORE_WAIT clock after its address is set,
+	-- so a read never comes before a write that was decided earlier.
+	-- Reads: port 1 at aaddr for the core, port 2 for the state words
 	------------------------------------------------------------------
-	process(clk_i, rst_i)
-	begin
-		if (rst_i = '1') then
-			aram_we <= '0';
-		elsif rising_edge(clk_i) then
-			if (r.st = S_LOAD_W) then
-				aram_we <= act_we_i;
-				aram_waddr <= unsigned(act_addr_i);
-				aram_wdata <= act_data_i;
-			else
-				aram_we <= core_we;
-				aram_waddr <= core_waddr;
-				aram_wdata <= core_wdata;
-			end if;
-		end if;
-	end process;
-
 	process(clk_i)
 	begin
 		if rising_edge(clk_i) then
@@ -1173,26 +725,62 @@ begin
 		end if;
 	end process;
 
-	-- Port 1 is registered: data of r.aaddr one clock later (after S_WAIT)
-	-- The three scan tests are registered with it (r.px, r.py, r.bx, r.by
-	-- and r.di do not change during a scan): actor blocks the move box,
-	-- item under the player, actor in door di's cell
+	-- Port 1 is registered: data of aaddr one clock later (after CORE_WAIT).
+	-- The three scan tests are registered with it (px, py, bx, by and di do
+	-- not change during a scan): actor blocks the move box, item under the
+	-- player, actor in door di's cell
+	aw1 <= aram(to_integer(aaddr));
+	aw1_x <= q16(unsigned(aw1(ACTOR_X_HI downto ACTOR_X_LO)));
+	aw1_y <= q16(unsigned(aw1(ACTOR_Y_HI downto ACTOR_Y_LO)));
+
 	process(clk_i)
-		variable w: actor_t;
-		variable dd: door_t;
 	begin
 		if rising_edge(clk_i) then
-			w := unpack(aram(to_integer(r.aaddr)));
-			dd := r.doors(to_integer(r.di));
-			aq <= aram(to_integer(r.aaddr));
-			hit_block <= w.active and w.solid and bit_of((absu(q16(w.x) - r.bx) < BLOCK_RANGE) and
-				(absu(q16(w.y) - r.by) < BLOCK_RANGE));
-			hit_pick <= w.active and bit_of((w.typ = T_ITEM) and (absu(q16(w.x) - r.px) < PICK_RANGE) and
-				(absu(q16(w.y) - r.py) < PICK_RANGE));
-			hit_door <= w.active and w.solid and bit_of(in_cell(q16(w.x), q16(w.y), dd.x, dd.y));
+			aq <= aw1;
+			hit_block <= '0';
+			hit_pick <= '0';
+			hit_door <= '0';
+			if ((aw1(ACTOR_ACTIVE) = '1') and (aw1(ACTOR_SOLID) = '1') and
+				(unsigned(abs(aw1_x - bx)) < BLOCK_RANGE) and (unsigned(abs(aw1_y - by)) < BLOCK_RANGE)) then
+				hit_block <= '1';
+			end if;
+			if ((aw1(ACTOR_ACTIVE) = '1') and (unsigned(aw1(ACTOR_TYPE_HI downto ACTOR_TYPE_LO)) = T_ITEM) and
+				(unsigned(abs(aw1_x - px)) < PICK_RANGE) and (unsigned(abs(aw1_y - py)) < PICK_RANGE)) then
+				hit_pick <= '1';
+			end if;
+			if ((aw1(ACTOR_ACTIVE) = '1') and (aw1(ACTOR_SOLID) = '1') and
+				in_cell(aw1_x, aw1_y, door_x(dk), door_y(dk))) then
+				hit_door <= '1';
+			end if;
 		end if;
 	end process;
 	aram_q2 <= aram(to_integer(waddr(4 downto 0) - 27)); -- Word 59 + j is actor j (59 = 27 mod 32)
+
+	-- Fields of aq and the tables they index
+	q_x <= unsigned(aq(ACTOR_X_HI downto ACTOR_X_LO));
+	q_y <= unsigned(aq(ACTOR_Y_HI downto ACTOR_Y_LO));
+	q_state <= unsigned(aq(ACTOR_STATE_HI downto ACTOR_STATE_LO));
+	q_health <= unsigned(aq(ACTOR_HEALTH_HI downto ACTOR_HEALTH_LO));
+	q_typ <= unsigned(aq(ACTOR_TYPE_HI downto ACTOR_TYPE_LO));
+	q_kind <= to_integer(q_health(2 downto 0));
+	q_k <= to_integer(q_typ(1 downto 0)); -- Monster types 0..3 (only monsters ever ask)
+	q_frame <= unsigned(STATE_TABLE(to_integer(q_state))(STATE_FRAME_HI downto STATE_FRAME_LO));
+	-- Art frame: items 38 + kind, fireballs 38 + state frame, monsters
+	-- 0 / 9 / 18 / 27 + state frame (art.py)
+	q_art <= to_unsigned(ITEM_BASE, 8) + resize(q_health(2 downto 0), 8) when (q_typ = T_ITEM) else
+		to_unsigned(ITEM_BASE, 8) + resize(q_frame, 8) when (q_typ = T_FIREBALL) else
+		to_unsigned(9 * q_k, 8) + resize(q_frame, 8);
+
+	-- The working actor packed for a write back, and its tables
+	a_word <= a_ambush & a_awake & a_solid & a_active & std_logic_vector(a_typ) & std_logic_vector(a_health) &
+		std_logic_vector(a_timer) & std_logic_vector(a_state) & std_logic_vector(a_y) & std_logic_vector(a_x);
+	a_k <= to_integer(a_typ(1 downto 0));
+	a_spd <= TYPE_TABLE(a_k)(TP_SPEED);
+	a_act <= to_integer(unsigned(STATE_TABLE(to_integer(a_state))(STATE_ACTION_HI downto STATE_ACTION_LO)));
+	a_next <= unsigned(STATE_TABLE(to_integer(a_state))(STATE_NEXT_HI downto STATE_NEXT_LO));
+	en_act <= to_integer(unsigned(STATE_TABLE(to_integer(en_s))(STATE_ACTION_HI downto STATE_ACTION_LO)));
+	en_dur <= unsigned(STATE_TABLE(to_integer(en_s))(STATE_DUR_HI downto STATE_DUR_LO));
+	sp_dur <= unsigned(STATE_TABLE(to_integer(sp_state))(STATE_DUR_HI downto STATE_DUR_LO));
 
 	-- Alert queue and visited bits: write in the clock of the state that
 	-- asks, read one clock after the address register (like the map)
@@ -1202,7 +790,7 @@ begin
 			if (al_qwe = '1') then
 				alq(to_integer(al_qwaddr)) <= al_qwdata;
 			end if;
-			alq_q <= alq(to_integer(r.qra));
+			alq_q <= alq(to_integer(qra));
 		end if;
 	end process;
 
@@ -1212,43 +800,81 @@ begin
 			if (al_vwe = '1') then
 				vis(to_integer(al_vwaddr)) <= al_vwdata;
 			end if;
-			vis_q <= vis(to_integer(r.vaddr));
+			vis_q <= vis(to_integer(vaddr));
 		end if;
 	end process;
 
+	-- CORE_AL0 queues and marks the player's cell; CORE_AL_NBD an open,
+	-- unvisited neighbor; CORE_AL_CLR2 clears the bit of a queued cell
+	al_open <= '1' when ((vis_q = '0') and (map_solid = '0')) else '0';
+	al_qwe <= '1' when ((core_state = CORE_AL0) or ((core_state = CORE_AL_NBD) and (al_open = '1'))) else '0';
+	al_qwaddr <= to_unsigned(0, 12) when (core_state = CORE_AL0) else qtail(11 downto 0);
+	al_qwdata <= std_logic_vector(pcell) when (core_state = CORE_AL0) else std_logic_vector(ncell);
+	al_vwe <= '1' when ((core_state = CORE_AL0) or (core_state = CORE_AL_CLR2) or
+		((core_state = CORE_AL_NBD) and (al_open = '1'))) else '0';
+	al_vwaddr <= pcell when (core_state = CORE_AL0) else
+		unsigned(alq_q) when (core_state = CORE_AL_CLR2) else
+		ncell;
+	al_vwdata <= '0' when (core_state = CORE_AL_CLR2) else '1';
+
 	process(clk_i)
-		variable i: natural range 0 to 8;
 	begin
 		if rising_edge(clk_i) then
-			i := door_index(r.doors, r.maddr);
-			didx <= i;
-			dopen <= bit_of((i < 8) and (r.doors(i mod 8).open_amt = DOOR_OPEN));
+			didx <= 8;
+			dopen <= '0';
+			dfree <= 8;
+			for k in 7 downto 0 loop -- Counting down: the lowest entry wins
+				if ((door_state(k) /= DS_IDLE) and ((door_y(k) & door_x(k)) = maddr)) then
+					didx <= k;
+					if (door_amt(k) = DOOR_OPEN) then
+						dopen <= '1';
+					else
+						dopen <= '0';
+					end if;
+				end if;
+				if (door_state(k) = DS_IDLE) then
+					dfree <= k;
+				end if;
+			end loop;
 		end if;
 	end process;
 
 	------------------------------------------------------------------
-	-- Helpers of the working actor a, one clock behind r (timing: they
+	-- Helpers of the working actor a, one clock behind it (timing: they
 	-- keep the distance arithmetic off the state decode). Every user is
-	-- at least one clock after the last change of a.x, a.y, px or py:
-	-- dist(a), (px >> 6) - a.x, (py >> 6) - a.y; the sound volume takes
-	-- three clocks (axis distances, distance, volume), S_SND waits two
+	-- at least one clock after the last change of a_x, a_y, px or py:
+	-- dist(a), (px >> 6) - a_x, (py >> 6) - a_y; the sound volume takes
+	-- three clocks (axis distances, distance, volume), CORE_SND waits two
 	------------------------------------------------------------------
+	a_dx <= resize(px(23 downto 6), 19) - signed(resize(a_x, 19));
+	a_dy <= resize(py(23 downto 6), 19) - signed(resize(a_y, 19));
+	-- Sound distance d = dx + dy - min / 2 in 1/64 tiles (dx, dy =
+	-- |difference| >> 10 in Q.16); volume 63 up to 200, 0 from 1200,
+	-- ((1200 - d) * 65) >> 10 in between (65 = 64 + 1), at most 63
+	snd_min <= sdx when (sdx < sdy) else sdy;
+	vol_t <= resize(1200 - sdist, 11);
+	vol_p <= shift_left(resize(vol_t, 18), 6) + vol_t;
+	vol <= to_unsigned(63, 6) when (sdist <= 200) else
+		to_unsigned(0, 6) when (sdist >= 1200) else
+		to_unsigned(63, 6) when (vol_p(17 downto 10) > 63) else
+		vol_p(15 downto 10);
+
 	process(clk_i)
 	begin
 		if rising_edge(clk_i) then
-			adist <= dist(r.px, r.py, r.a.x, r.a.y);
-			atx <= resize(r.px(23 downto 6), 19) - signed(resize(r.a.x, 19));
-			aty <= resize(r.py(23 downto 6), 19) - signed(resize(r.a.y, 19));
-			sdx <= snd_axis(r.px, r.a.x);
-			sdy <= snd_axis(r.py, r.a.y);
-			sdist <= snd_dist(sdx, sdy);
-			avol <= volume(sdist);
+			adist <= unsigned(abs(a_dx)) + unsigned(abs(a_dy)); -- Game.dist(), Q6.10
+			atx <= a_dx;
+			aty <= a_dy;
+			sdx <= resize(shift_right(unsigned(abs(q16(a_x) - px)), 10), 14);
+			sdy <= resize(shift_right(unsigned(abs(q16(a_y) - py)), 10), 14);
+			sdist <= resize(sdx, 16) + sdy - shift_right(snd_min, 1);
+			avol <= vol;
 		end if;
 	end process;
 
 	------------------------------------------------------------------
-	-- Sprite table, 2 x 32 entries: the core fills half (not r.bank)
-	-- during the step, the renderer reads half r.bank; they swap at
+	-- Sprite table, 2 x 32 entries: the core fills half (not bank)
+	-- during the step, the renderer reads half bank; they swap at
 	-- render_start_o
 	------------------------------------------------------------------
 	process(clk_i)
@@ -1257,88 +883,84 @@ begin
 			if (spr_we = '1') then
 				sram(to_integer(spr_waddr)) <= spr_wdata;
 			end if;
-			spr_q <= sram(to_integer(unsigned(r.bank & spr_addr_i))); -- Address bit 5 picks the half
+			spr_q <= sram(to_integer(unsigned(bank & spr_addr_i))); -- Address bit 5 picks the half
 		end if;
 	end process;
 
 	------------------------------------------------------------------
 	-- State words (game.state_words()): the CRC walk reads them in
-	-- S_CRC_W, the read-out port at other times
+	-- CORE_CRC_W, the read-out port at other times
 	------------------------------------------------------------------
-	waddr <= r.cw when (r.st = S_CRC_W) else unsigned(state_addr_i);
+	waddr <= cw when (core_state = CORE_CRC_W) else unsigned(state_addr_i);
 
-	process(r, waddr, aram_q2)
-		variable k: natural range 0 to 127;
-		variable w: unsigned(63 downto 0);
-		variable dw: natural range 0 to 39;
-		variable d: door_t;
+	process(waddr, flow, level, px, py, angle, eye, z, vz, off, pl_health, pl_armor, pl_bullets, pl_shells,
+		pl_weapons, pl_weapon, keys, cooldown, kills, items, secrets, lfsr, door_x, door_y, door_amt,
+		door_state, door_timer, aram_q2)
+		variable dw: natural range 0 to 39; -- Door word: entry dw / 5, field dw mod 5
 	begin
-		k := to_integer(waddr);
-		w := (others => '0');
-		case k is
+		word <= (others => '0');
+		case to_integer(waddr) is
 			when 0 =>
-				w(2 downto 0) := r.flow;
+				word(2 downto 0) <= std_logic_vector(flow);
 			when 1 =>
-				w(1 downto 0) := r.level;
+				word(1 downto 0) <= std_logic_vector(level);
 			when 2 =>
-				w(21 downto 0) := unsigned(r.px(21 downto 0));
+				word(21 downto 0) <= std_logic_vector(px(21 downto 0));
 			when 3 =>
-				w(21 downto 0) := unsigned(r.py(21 downto 0));
+				word(21 downto 0) <= std_logic_vector(py(21 downto 0));
 			when 4 =>
-				w(9 downto 0) := r.angle;
+				word(9 downto 0) <= std_logic_vector(angle);
 			when 5 =>
 				-- eye | z << 8 | vz << 16 (z and vz are 0 on flat levels)
-				w(6 downto 0) := r.eye;
-				w(15 downto 8) := r.z;
-				w(20 downto 16) := r.vz;
+				word(6 downto 0) <= std_logic_vector(eye);
+				word(15 downto 8) <= std_logic_vector(z);
+				word(20 downto 16) <= std_logic_vector(vz);
 			when 6 =>
-				w(7 downto 0) := unsigned(resize(r.off, 8)); -- off & 0xFF
+				word(7 downto 0) <= std_logic_vector(resize(off, 8)); -- off & 0xFF
 			when 7 =>
-				w(7 downto 0) := r.pl.health;
+				word(7 downto 0) <= std_logic_vector(pl_health);
 			when 8 =>
-				w(7 downto 0) := r.pl.armor;
+				word(7 downto 0) <= std_logic_vector(pl_armor);
 			when 9 =>
-				w(7 downto 0) := r.pl.bullets;
+				word(7 downto 0) <= std_logic_vector(pl_bullets);
 			when 10 =>
-				w(5 downto 0) := r.pl.shells;
+				word(5 downto 0) <= std_logic_vector(pl_shells);
 			when 11 =>
-				w(1 downto 0) := r.pl.weapons;
+				word(1 downto 0) <= std_logic_vector(pl_weapons);
 			when 12 =>
-				w(1 downto 0) := r.pl.weapon;
+				word(1 downto 0) <= std_logic_vector(pl_weapon);
 			when 13 =>
-				w(1 downto 0) := r.keys;
+				word(1 downto 0) <= std_logic_vector(keys);
 			when 14 =>
-				w(5 downto 0) := r.cooldown;
+				word(5 downto 0) <= std_logic_vector(cooldown);
 			when 15 =>
-				w(5 downto 0) := r.kills;
+				word(5 downto 0) <= std_logic_vector(kills);
 			when 16 =>
-				w(5 downto 0) := r.items;
+				word(5 downto 0) <= std_logic_vector(items);
 			when 17 =>
-				w(3 downto 0) := r.secrets;
+				word(3 downto 0) <= std_logic_vector(secrets);
 			when 18 =>
-				w(15 downto 0) := r.lfsr;
+				word(15 downto 0) <= std_logic_vector(lfsr);
 			when 19 to 58 =>
 				-- Doors: 5 words each (x, y, open, state, timer)
-				dw := k - 19;
-				d := r.doors(dw / 5);
+				dw := to_integer(waddr) - 19;
 				case dw mod 5 is
 					when 0 =>
-						w(5 downto 0) := d.x;
+						word(5 downto 0) <= std_logic_vector(door_x(dw / 5));
 					when 1 =>
-						w(5 downto 0) := d.y;
+						word(5 downto 0) <= std_logic_vector(door_y(dw / 5));
 					when 2 =>
-						w(7 downto 0) := unsigned(d.open_amt);
+						word(7 downto 0) <= std_logic_vector(door_amt(dw / 5));
 					when 3 =>
-						w(1 downto 0) := d.state;
+						word(1 downto 0) <= std_logic_vector(door_state(dw / 5));
 					when others =>
-						w(7 downto 0) := d.timer;
+						word(7 downto 0) <= std_logic_vector(door_timer(dw / 5));
 				end case;
 			when 59 to 90 =>
-				w := unsigned(aram_q2);
+				word <= aram_q2;
 			when others =>
 				null;
 		end case;
-		word <= std_logic_vector(w);
 	end process;
 
 	process(clk_i)
@@ -1347,6 +969,12 @@ begin
 			sdata <= word;
 		end if;
 	end process;
+
+	-- CRC-32 of the state words: 8 bytes per word, low byte first (cword
+	-- shifts right one byte per CORE_CRC_B clock)
+	crc_init <= '1' when (core_state = CORE_CRC0) else '0';
+	crc_valid <= '1' when (core_state = CORE_CRC_B) else '0';
+	crc_byte <= cword(7 downto 0);
 
 	crc_unit: core_crc
 		port map (
@@ -1359,1957 +987,2140 @@ begin
 		);
 
 	------------------------------------------------------------------
-	-- Next state
+	-- Combinational helpers of the state machine
 	------------------------------------------------------------------
-	process(r, frame_start_i, snapshot_i, snapshot_valid_i, load_done_i, start_x_i, start_y_i,
-		start_angle_i, map_data_i, span_data_i, span_count_i, zwall_data_i, snd_ready_i,
-		rom_data, prod, aq, hit_block, hit_pick, hit_door, adist, atx, aty, avol, word, crc,
-		didx, dopen, alq_q, vis_q)
-		variable v: regs_t;
-		variable q: actor_t;
-		variable s: std_logic_vector(SNAP_BITS - 1 downto 0);
-		variable go, fire: std_logic;
-		variable rnd: unsigned(15 downto 0);
-		variable turn: signed(11 downto 0);
-		variable vx, vy: signed(19 downto 0);
-		variable mv: pos_t;
-		variable edge: pos_t;
-		variable t3: signed(19 downto 0);
-		variable ux, uy: pos_t;
-		variable i, j: natural range 0 to 8;
-		variable dd: door_t;
-		variable sp: natural range 0 to 7;
-		variable kind: natural range 0 to 7;
-		variable took: boolean;
-		variable dist_v: unsigned(18 downto 0);
-		variable dmg: unsigned(5 downto 0);
-		variable saved: unsigned(9 downto 0);
-		variable hp: signed(12 downto 0);
-		variable e2: signed(8 downto 0);
-		variable nx, ny: signed(7 downto 0);
-		variable nerr: signed(8 downto 0);
-		variable tx, ty: signed(18 downto 0);
-		variable spd: integer;
-		variable ax, ay: unsigned(15 downto 0);
-		variable sum: signed(42 downto 0);
-		variable lat: signed(15 downto 0);
-		variable x0, x1, z: unsigned(15 downto 0);
-		variable col: unsigned(8 downto 0);
-		variable frame: unsigned(7 downto 0);
-		variable dv: unsigned(5 downto 0);
-		variable alx, aly: unsigned(5 downto 0);
-		variable alc: unsigned(11 downto 0);
-		variable base: natural;
-		variable eye_t: unsigned(6 downto 0);
-		variable peek: signed(5 downto 0);
-		variable bob: natural range 0 to 4;
-		variable was_awake: std_logic;
-		variable dvz: unsigned(4 downto 0);
-		variable ft: std_logic_vector(23 downto 0);
-		variable dir: natural range 0 to 3;
-		variable frac: unsigned(15 downto 0);
-		variable rise: signed(8 downto 0);
-		variable fsum: signed(9 downto 0);
-	begin
-		v := r;
-		v.load_req := '0';
-		v.loaded := '0';
-		v.start := '0';
-		s := r.snap;
-		rom_addr <= r.angle;
-		core_we <= '0';
-		core_waddr <= r.ai;
-		core_wdata <= pack(r.a);
-		al_qwe <= '0';
-		al_qwaddr <= r.qtail(11 downto 0);
-		al_qwdata <= std_logic_vector(r.ncell);
-		al_vwe <= '0';
-		al_vwaddr <= r.ncell;
-		al_vwdata <= '1';
-		spr_we <= '0';
-		spr_waddr <= (not r.bank) & r.spr_n(4 downto 0); -- The half the renderer is not reading
-		spr_wdata <= r.spr_e;
-		map_we <= '0';
-		crc_init <= '0';
-		crc_valid <= '0';
-		crc_byte <= r.cword(7 downto 0);
-		q := unpack(aq);
-
-		-- Snapshot capture (any state): the step after a frame start
-		if (frame_start_i = '1') then
-			v.armed := '1';
-		end if;
-		if ((snapshot_valid_i = '1') and ((r.armed = '1') or (frame_start_i = '1'))) then
-			v.snap_in := snapshot_i;
-			v.pending := '1';
-			v.armed := '0';
-		end if;
-
-		-- Sound commands of the last step go out one per handshake
-		if ((r.oq_p /= r.oq_n) and (snd_ready_i = '1')) then
-			v.oq_p := r.oq_p + 1;
-		end if;
-
-		case r.st is
-			--------------------------------------------------------------
-			-- Level load: request, wait (the loader writes the actor
-			-- RAM meanwhile), reset_level_state(), totals
-			--------------------------------------------------------------
-			when S_INIT =>
-				-- Game.__init__ loads level 1 (and stays on TITLE)
-				v.in_step := '0';
-				v.st := S_LOAD;
-
-			when S_LOAD =>
-				v.load_req := '1';
-				v.st := S_LOAD_W;
-
-			when S_LOAD_W =>
-				if (load_done_i = '1') then
-					v.px := signed(resize(unsigned(start_x_i), 24));
-					v.py := signed(resize(unsigned(start_y_i), 24));
-					v.angle := unsigned(start_angle_i);
-					v.eye := to_unsigned(32, 7);
-					v.off := (others => '0');
-					v.cam_x := v.px;
-					v.cam_y := v.py;
-					v.keys := (others => '0');
-					v.cooldown := (others => '0');
-					v.flash := (others => '0');
-					v.dflash := (others => '0');
-					v.pflash := (others => '0');
-					v.msg := (others => '0');
-					v.msg_timer := (others => '0');
-					v.phase := (others => '0');
-					v.kills := (others => '0');
-					v.items := (others => '0');
-					v.secrets := (others => '0');
-					v.tkills := (others => '0');
-					v.titems := (others => '0');
-					v.tsecrets := (others => '0');
-					v.t_frames := (others => '0');
-					v.t_sec := (others => '0');
-					v.t_min := (others => '0');
-					v.lfsr := x"ACE1" xor ("000000" & r.level & x"00"); -- Seed 0xACE1 ^ (level << 8)
-					v.boss_timer := (others => '0');
-					v.level_done := '0';
-					v.dead_timer := (others => '0');
-					v.automap := '0';
-					v.doors := (others => DOOR_CLEAR);
-					v.aaddr := (others => '0');
-					v.wret := S_TOTA;
-					v.st := S_WAIT;
-				end if;
-
-			when S_TOTA =>
-				-- Monsters (types 0..3) and items among the active actors
-				if (q.active = '1') then
-					if (q.typ < 4) then
-						v.tkills := r.tkills + 1;
-					elsif (q.typ = T_ITEM) then
-						v.titems := r.titems + 1;
-					end if;
-				end if;
-				if (r.aaddr = 31) then
-					v.st := S_TOT0;
-				else
-					v.aaddr := r.aaddr + 1;
-					v.wret := S_TOTA;
-					v.st := S_WAIT;
-				end if;
-
-			when S_TOT0 =>
-				v.maddr := (others => '0');
-				v.tp1 := '0';
-				v.st := S_TOT;
-
-			when S_TOT =>
-				-- Secret tiles: one address per clock; map_data_i is the
-				-- tile of the address one clock earlier (tp1 marks it valid)
-				if ((r.tp1 = '1') and (unsigned(map_data_i(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)) = SPECIAL_PUSHWALL)) then
-					v.tsecrets := r.tsecrets + 1;
-				end if;
-				v.tp1 := '1';
-				v.maddr := r.maddr + 1;
-				if (r.maddr = 4095) then
-					v.maddr := r.maddr;
-					v.st := S_TOT_LAST;
-				end if;
-
-			when S_TOT_LAST =>
-				if (unsigned(map_data_i(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)) = SPECIAL_PUSHWALL) then
-					v.tsecrets := r.tsecrets + 1;
-				end if;
-				v.tp1 := '0';
-				-- z = box_floor(start), vz = 0 (Game.reset_level_state)
-				v.bx := r.px;
-				v.by := r.py;
-				v.bfl_ret := S_LOAD_Z;
-				v.st := S_BFL;
-
-			when S_LOAD_Z =>
-				v.z := r.bfl;
-				v.vz := (others => '0');
-				v.loaded := '1';
-				if (r.in_step = '1') then
-					v.st := S_END;
-				else
-					v.st := S_IDLE;
-				end if;
-
-			--------------------------------------------------------------
-			-- Frame start and game flow (Game.step)
-			--------------------------------------------------------------
-			when S_IDLE =>
-				if (r.pending = '1') then
-					v.snap := r.snap_in;
-					v.pending := '0';
-					v.st := S_STEP;
-				end if;
-
-			when S_STEP =>
-				v.sq_n := (others => '0');
-				fire := s(SNAP_FIRE);
-				go := s(SNAP_USE) or (fire and not r.prev_fire); -- Use, or fire newly pressed (not held)
-				v.prev_fire := fire;
-				if (s(SNAP_DEBUG) = '1') then
-					v.debug := not r.debug;
-				end if;
-				v.in_step := '1';
-				v.st := S_END;
-				case r.flow is
-					when FL_TITLE =>
-						if (go = '1') then
-							v.pl := PLAYER_INIT;
-							v.level := "01";
-							v.flow := FL_BRIEFING;
-						end if;
-					when FL_BRIEFING =>
-						if (go = '1') then
-							v.saved := r.pl;
-							v.flow := FL_PLAYING;
-							v.st := S_LOAD;
-						end if;
-					when FL_PAUSED =>
-						if (s(SNAP_MENU) = '1') then
-							v.flow := FL_PLAYING;
-						end if;
-					when FL_DEAD =>
-						if (r.dead_timer /= 63) then
-							v.dead_timer := r.dead_timer + 1;
-						end if;
-						if (r.eye > 8) then
-							v.eye := r.eye - 2;
-						end if;
-						if ((v.dead_timer > 30) and (go = '1')) then
-							v.pl := r.saved;
-							v.flow := FL_PLAYING;
-							v.st := S_LOAD;
-						end if;
-					when FL_SCORE =>
-						if (go = '1') then
-							if (r.level < LEVELS) then
-								v.level := r.level + 1;
-								v.flow := FL_BRIEFING;
-							else
-								v.flow := FL_ENDING;
-							end if;
-						end if;
-					when FL_ENDING =>
-						if (go = '1') then
-							v.flow := FL_TITLE;
-						end if;
-					when others =>
-						-- PLAYING
-						if (s(SNAP_MENU) = '1') then
-							v.flow := FL_PAUSED;
-						else
-							v.st := S_PLAY;
-						end if;
-				end case;
-
-			--------------------------------------------------------------
-			-- 1. Level clock, turn, duck and peek easing, automap
-			--------------------------------------------------------------
-			when S_PLAY =>
-				if (r.t_frames = 59) then
-					v.t_frames := (others => '0');
-					if (r.t_sec = 59) then
-						v.t_sec := (others => '0');
-						if (r.t_min /= 99) then -- The level clock stops at 99 minutes
-							v.t_min := r.t_min + 1;
-						end if;
-					else
-						v.t_sec := r.t_sec + 1;
-					end if;
-				else
-					v.t_frames := r.t_frames + 1;
-				end if;
-				-- Adding the low 10 bits of the signed turn is mod 1024
-				turn := signed(s(SNAP_TURN_HI downto SNAP_TURN_LO));
-				v.angle := r.angle + unsigned(std_logic_vector(turn(9 downto 0)));
-				if (s(SNAP_DUCK) = '1') then
-					eye_t := to_unsigned(16, 7);
-				else
-					eye_t := to_unsigned(32, 7);
-				end if;
-				if (r.eye < eye_t) then
-					v.eye := r.eye + 2;
-				elsif (r.eye > eye_t) then
-					v.eye := r.eye - 2;
-				end if;
-				peek := (others => '0');
-				if ((s(SNAP_PEEK_R) = '1') and (s(SNAP_PEEK_L) = '0')) then
-					peek := to_signed(16, 6);
-				elsif ((s(SNAP_PEEK_R) = '0') and (s(SNAP_PEEK_L) = '1')) then
-					peek := to_signed(-16, 6);
-				end if;
-				if (r.off < peek) then
-					v.off := r.off + 2;
-				elsif (r.off > peek) then
-					v.off := r.off - 2;
-				end if;
-				if (s(SNAP_AUTOMAP) = '1') then
-					v.automap := not r.automap;
-				end if;
-				v.st := S_P_SIN;
-
-			when S_P_SIN =>
-				-- rom_addr = angle (default), sin arrives in S_P_COS
-				v.st := S_P_COS;
-
-			when S_P_COS =>
-				rom_addr <= r.angle + 256; -- cos arrives in S_P_VEL
-				v.sn := rom_data;
-				v.st := S_P_VEL;
-
-			when S_P_VEL =>
-				-- vx = move cs - strafe sn, vy = move sn + strafe cs, then
-				-- >> 3 running or >> 4 walking, one more when ducking
-				v.cs := rom_data;
-				vx := times(s(SNAP_MOVE_HI downto SNAP_MOVE_LO), rom_data) -
-					times(s(SNAP_STRAFE_HI downto SNAP_STRAFE_LO), r.sn);
-				vy := times(s(SNAP_MOVE_HI downto SNAP_MOVE_LO), r.sn) +
-					times(s(SNAP_STRAFE_HI downto SNAP_STRAFE_LO), rom_data);
-				if ((s(SNAP_RUN) = '1') and (s(SNAP_DUCK) = '0')) then
-					v.mdx := resize(shift_right(vx, 3), 24);
-					v.mdy := resize(shift_right(vy, 3), 24);
-				elsif ((s(SNAP_RUN) = '1') or (s(SNAP_DUCK) = '0')) then
-					v.mdx := resize(shift_right(vx, 4), 24);
-					v.mdy := resize(shift_right(vy, 4), 24);
-				else
-					v.mdx := resize(shift_right(vx, 5), 24);
-					v.mdy := resize(shift_right(vy, 5), 24);
-				end if;
-				v.my := '0';
-				v.st := S_MOVE;
-
-			--------------------------------------------------------------
-			-- 2. Move x, then y (Game.move_x, move_y)
-			--------------------------------------------------------------
-			when S_MOVE =>
-				if (r.my = '0') then
-					mv := r.mdx;
-					v.bx := r.px + r.mdx;
-					v.by := r.py;
-				else
-					mv := r.mdy;
-					v.bx := r.px;
-					v.by := r.py + r.mdy;
-				end if;
-				if (mv = 0) then
-					v.st := S_MOVE_NEXT;
-				else
-					v.bsmall := '0';
-					v.bz := r.z;
-					v.box_ret := S_MOVE_BOX;
-					v.st := S_BOX;
-				end if;
-
-			when S_MOVE_BOX =>
-				if (r.hit = '1') then
-					-- Flush against the cell the box ran into
-					if (r.my = '0') then
-						if (r.mdx > 0) then
-							edge := ((r.bx + HALF) and x"FF0000") - HALF - 1; -- Right side 1 short of the cell
-							if (edge > r.px) then
-								v.px := edge;
-							end if;
-						else
-							edge := ((r.bx - HALF) and x"FF0000") + 65536 + HALF; -- Left side on its right edge
-							if (edge < r.px) then
-								v.px := edge;
-							end if;
-						end if;
-					else
-						if (r.mdy > 0) then
-							edge := ((r.by + HALF) and x"FF0000") - HALF - 1;
-							if (edge > r.py) then
-								v.py := edge;
-							end if;
-						else
-							edge := ((r.by - HALF) and x"FF0000") + 65536 + HALF;
-							if (edge < r.py) then
-								v.py := edge;
-							end if;
-						end if;
-					end if;
-					v.st := S_MOVE_NEXT;
-				else
-					v.aaddr := (others => '0');
-					v.wret := S_AB;
-					v.st := S_WAIT;
-				end if;
-
-			when S_AB =>
-				-- Game.actor_blocks(): one actor per clock
-				if (hit_block = '1') then
-					v.st := S_MOVE_NEXT;
-				elsif (r.aaddr = 31) then
-					if (r.my = '0') then
-						v.px := r.bx;
-					else
-						v.py := r.by;
-					end if;
-					v.st := S_MOVE_NEXT;
-				else
-					v.aaddr := r.aaddr + 1;
-					v.wret := S_AB;
-					v.st := S_WAIT;
-				end if;
-
-			when S_MOVE_NEXT =>
-				if (r.my = '0') then
-					v.my := '1';
-					v.st := S_MOVE;
-				else
-					if ((s(SNAP_MOVE_HI downto SNAP_MOVE_LO) /= "00") or
-						(s(SNAP_STRAFE_HI downto SNAP_STRAFE_LO) /= "00")) then
-						v.phase := r.phase + 1;
-					end if;
-					v.st := S_ZF;
-				end if;
-
-			--------------------------------------------------------------
-			-- Floor contact (stage 4): step up at once, fall with gravity
-			--------------------------------------------------------------
-			when S_ZF =>
-				v.bx := r.px;
-				v.by := r.py;
-				v.bfl_ret := S_ZF2;
-				v.st := S_BFL;
-
-			when S_ZF2 =>
-				if (r.z > r.bfl) then
-					if (r.vz + FALL_ACC > FALL_MAX) then
-						dvz := to_unsigned(FALL_MAX, 5);
-					else
-						dvz := r.vz + FALL_ACC;
-					end if;
-					if (r.z - r.bfl <= dvz) then
-						v.z := r.bfl;
-						v.vz := (others => '0');
-					else
-						v.z := r.z - dvz;
-						v.vz := dvz;
-					end if;
-				else
-					v.z := r.bfl;
-					v.vz := (others => '0');
-				end if;
-				v.st := S_PEEK;
-
-			--------------------------------------------------------------
-			-- 3. Peek camera: (px + (-sn off >> 6), py + (cs off >> 6));
-			-- the offset shrinks by 2 until the camera box is free
-			--------------------------------------------------------------
-			when S_PEEK =>
-				if (r.off = 0) then
-					v.cam_x := r.px;
-					v.cam_y := r.py;
-					v.st := S_PICK;
-				else
-					v.mul_a := resize(r.off, 24);
-					v.mul_b := -r.sn;
-					v.st := S_PEEK_M1;
-				end if;
-
-			when S_PEEK_M1 =>
-				v.mul_b := r.cs;
-				v.st := S_PEEK_M2;
-
-			when S_PEEK_M2 =>
-				v.acc := prod; -- -sn * off
-				v.st := S_PEEK_M3;
-
-			when S_PEEK_M3 =>
-				v.bx := r.px + resize(shift_right(r.acc, 6), 24);
-				v.by := r.py + resize(shift_right(prod, 6), 24); -- cs * off
-				v.bsmall := '1';
-				v.box_ret := S_PEEK2;
-				v.st := S_BOX;
-
-			when S_PEEK2 =>
-				if (r.hit = '0') then
-					v.cam_x := r.bx;
-					v.cam_y := r.by;
-					v.st := S_PICK;
-				else
-					if (r.off > 0) then
-						v.off := r.off - 2;
-					else
-						v.off := r.off + 2;
-					end if;
-					v.st := S_PEEK;
-				end if;
-
-			--------------------------------------------------------------
-			-- 4. Pickups in actor order, then the floor under the player
-			--------------------------------------------------------------
-			when S_PICK =>
-				v.aaddr := (others => '0');
-				v.wret := S_PICK_T;
-				v.st := S_WAIT;
-
-			when S_PICK_T =>
-				v.st := S_PICK_N;
-				if (hit_pick = '1') then
-					kind := to_integer(q.health(2 downto 0));
-					took := true;
-					case kind is
-						when 0 =>
-							took := r.pl.health < 100;
-							if (r.pl.health < 90) then
-								v.pl.health := r.pl.health + 10;
-							else
-								v.pl.health := to_unsigned(100, 8);
-							end if;
-						when 1 =>
-							took := r.pl.health < 100;
-							if (r.pl.health < 75) then
-								v.pl.health := r.pl.health + 25;
-							else
-								v.pl.health := to_unsigned(100, 8);
-							end if;
-						when 2 =>
-							took := r.pl.armor < 100;
-							if (r.pl.armor < 100) then
-								v.pl.armor := to_unsigned(100, 8);
-							end if;
-						when 3 =>
-							took := r.pl.bullets < 200;
-							if (r.pl.bullets < 190) then
-								v.pl.bullets := r.pl.bullets + 10;
-							else
-								v.pl.bullets := to_unsigned(200, 8);
-							end if;
-						when 4 =>
-							took := r.pl.shells < 50;
-							if (r.pl.shells < 46) then
-								v.pl.shells := r.pl.shells + 4;
-							else
-								v.pl.shells := to_unsigned(50, 6);
-							end if;
-						when 5 =>
-							v.pl.weapons := r.pl.weapons or "10";
-							v.pl.weapon := "10";
-							if (r.pl.shells < 42) then
-								v.pl.shells := r.pl.shells + 8;
-							else
-								v.pl.shells := to_unsigned(50, 6);
-							end if;
-						when 6 =>
-							v.keys := r.keys or "01";
-						when others =>
-							v.keys := r.keys or "10";
-					end case;
-					if (took) then
-						q.active := '0';
-						core_we <= '1';
-						core_waddr <= r.aaddr;
-						core_wdata <= pack(q);
-						v.items := r.items + 1;
-						v.pflash := to_unsigned(6, 3);
-						v.msg := to_unsigned(kind + 1, 4); -- ITEM_MSG[kind]
-						v.msg_timer := to_unsigned(MSG_TIME, 7);
-						if (kind = I_SHOTGUN) then
-							v.snd_id := to_unsigned(S_WEAPON, 5);
-						else
-							v.snd_id := to_unsigned(S_ITEM, 5);
-						end if;
-						v.snd_act := '0';
-						v.snd_ret := S_PICK_N;
-						v.st := S_SND;
-					end if;
-				end if;
-
-			when S_PICK_N =>
-				if (r.aaddr = 31) then
-					v.st := S_SPEC;
-				else
-					v.aaddr := r.aaddr + 1;
-					v.wret := S_PICK_T;
-					v.st := S_WAIT;
-				end if;
-
-			when S_SPEC =>
-				v.maddr := unsigned(std_logic_vector(r.py(21 downto 16))) & unsigned(std_logic_vector(r.px(21 downto 16)));
-				v.wret := S_SPEC2;
-				v.st := S_WAIT;
-
-			when S_SPEC2 =>
-				-- Secret: count it once (clear the special in the map);
-				-- toxic floor: 5 damage every 32 frames
-				sp := to_integer(unsigned(map_data_i(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)));
-				v.on_toxic := bit_of(sp = SPECIAL_TOXIC);
-				v.st := S_USE;
-				if (sp = SPECIAL_PUSHWALL) then
-					v.secrets := r.secrets + 1;
-					map_we <= '1';
-					v.msg := to_unsigned(11, 4); -- M_SECRET
-					v.msg_timer := to_unsigned(MSG_TIME, 7);
-				elsif ((sp = SPECIAL_TOXIC) and (r.t_frames(4 downto 0) = 0)) then
-					v.dmg := to_unsigned(5, 6);
-					v.dp_ret := S_USE;
-					v.st := S_DP;
-				end if;
-
-			--------------------------------------------------------------
-			-- 5. Use: the cell 0.75 tile ahead (c * 3 >> 2)
-			--------------------------------------------------------------
-			when S_USE =>
-				t3 := resize(r.cs, 20) + shift_left(resize(r.cs, 20), 1);
-				ux := r.px + resize(shift_right(t3, 2), 24);
-				t3 := resize(r.sn, 20) + shift_left(resize(r.sn, 20), 1);
-				uy := r.py + resize(shift_right(t3, 2), 24);
-				v.maddr := unsigned(std_logic_vector(uy(21 downto 16))) & unsigned(std_logic_vector(ux(21 downto 16)));
-				if (s(SNAP_USE) = '1') then
-					v.wret := S_USE2;
-					v.st := S_WAIT;
-				else
-					v.st := S_WPN;
-				end if;
-
-			when S_USE2 =>
-				sp := to_integer(unsigned(map_data_i(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)));
-				v.st := S_WPN;
-				v.snd_act := '0';
-				v.snd_ret := S_WPN;
-				case sp is
-					when SPECIAL_DOOR =>
-						v.st := S_UDOOR;
-					when SPECIAL_LOCKED1 | SPECIAL_LOCKED2 =>
-						if (((sp = SPECIAL_LOCKED1) and (r.keys(0) = '1')) or
-							((sp = SPECIAL_LOCKED2) and (r.keys(1) = '1'))) then
-							v.st := S_UDOOR;
-						else
-							if (sp = SPECIAL_LOCKED1) then
-								v.msg := to_unsigned(9, 4); -- M_NEED1
-							else
-								v.msg := to_unsigned(10, 4); -- M_NEED2
-							end if;
-							v.msg_timer := to_unsigned(MSG_TIME, 7);
-							v.snd_id := to_unsigned(S_NOWAY, 5);
-							v.st := S_SND;
-						end if;
-					when SPECIAL_EXIT =>
-						v.level_done := '1';
-						v.snd_id := to_unsigned(S_SWITCH, 5);
-						v.st := S_SND;
-					when others =>
-						null;
-				end case;
-
-			when S_UDOOR =>
-				-- Game.use_door(): new entry, close an open door, reopen a
-				-- closing one
-				i := didx;
-				v.st := S_WPN;
-				v.snd_act := '0';
-				v.snd_ret := S_WPN;
-				if (i = 8) then
-					j := first_idle(r.doors);
-					if (j < 8) then
-						v.doors(j mod 8).x := r.maddr(5 downto 0);
-						v.doors(j mod 8).y := r.maddr(11 downto 6);
-						v.doors(j mod 8).open_amt := (others => '0');
-						v.doors(j mod 8).timer := (others => '0');
-						v.doors(j mod 8).state := DS_OPENING;
-						v.snd_id := to_unsigned(S_DOOR_OPEN, 5);
-						v.st := S_SND;
-					end if;
-				elsif (r.doors(i mod 8).state = DS_OPEN) then
-					v.di := to_unsigned(i mod 8, 3);
-					v.db_ret := S_UDOOR2;
-					v.st := S_DB;
-				elsif (r.doors(i mod 8).state = DS_CLOSING) then
-					v.doors(i mod 8).state := DS_OPENING;
-				end if;
-
-			when S_UDOOR2 =>
-				v.st := S_WPN;
-				if (r.blocked = '0') then
-					v.doors(to_integer(r.di)).state := DS_CLOSING;
-					v.snd_id := to_unsigned(S_DOOR_CLOSE, 5);
-					v.snd_act := '0';
-					v.snd_ret := S_WPN;
-					v.st := S_SND;
-				end if;
-
-			--------------------------------------------------------------
-			-- 6. Weapon: select, cooldown, fire
-			--------------------------------------------------------------
-			when S_WPN =>
-				dv := resize(unsigned(s(SNAP_WSEL_HI downto SNAP_WSEL_LO)), 6);
-				if (((dv = 1) and (r.pl.weapons(0) = '1')) or ((dv = 2) and (r.pl.weapons(1) = '1'))) then
-					v.pl.weapon := dv(1 downto 0);
-				elsif (s(SNAP_WCYCLE) = '1') then
-					if ((r.pl.weapon = 1) and (r.pl.weapons(1) = '1')) then
-						v.pl.weapon := "10";
-					else
-						v.pl.weapon := "01";
-					end if;
-				end if;
-				if (r.cooldown > 0) then
-					v.cooldown := r.cooldown - 1;
-				end if;
-				if (r.flash > 0) then
-					v.flash := r.flash - 1;
-				end if;
-				v.st := S_ACTORS;
-				v.snd_act := '0';
-				v.snd_ret := S_HS_COL;
-				if ((s(SNAP_FIRE) = '1') and (v.cooldown = 0)) then
-					if ((v.pl.weapon = 1) and (r.pl.bullets > 0)) then
-						v.pl.bullets := r.pl.bullets - 1;
-						v.cooldown := to_unsigned(14, 6);
-						v.flash := to_unsigned(4, 3);
-						v.snd_id := to_unsigned(S_PISTOL, 5);
-						v.hk := to_unsigned(3, 3); -- Column 160 only
-						v.hshot := '0';
-						v.st := S_SND;
-					elsif ((v.pl.weapon = 2) and (r.pl.shells > 0)) then
-						v.pl.shells := r.pl.shells - 1;
-						v.cooldown := to_unsigned(40, 6);
-						v.flash := to_unsigned(4, 3);
-						v.snd_id := to_unsigned(S_SHOTGUN, 5);
-						v.hk := to_unsigned(0, 3); -- Columns 136, 144 .. 184
-						v.hshot := '1';
-						v.st := S_SND;
-					end if;
-				end if;
-
-			--------------------------------------------------------------
-			-- Hitscan (Game.hitscan): the nearest span over the column in
-			-- front of the wall; damage 5 * (1 + (random & 3)) drawn first
-			--------------------------------------------------------------
-			when S_HS_COL =>
-				rnd := lfsr_next(r.lfsr);
-				v.lfsr := rnd;
-				v.hdmg := times_const(rnd(1 downto 0) + "0001", 5);
-				v.zw_addr := to_unsigned(136, 9) + shift_left(resize(r.hk, 9), 3);
-				v.wret := S_HS_ZW;
-				v.st := S_WAIT;
-
-			when S_HS_ZW =>
-				v.zw := unsigned(zwall_data_i);
-				v.best_v := '0';
-				v.span_addr := (others => '0');
-				if (unsigned(span_count_i) = 0) then
-					v.st := S_HS_END;
-				else
-					v.wret := S_HS_SP;
-					v.st := S_WAIT;
-				end if;
-
-			when S_HS_SP =>
-				x0 := resize(unsigned(span_data_i(SPAN_X0_HI downto SPAN_X0_LO)), 16);
-				x1 := resize(unsigned(span_data_i(SPAN_X1_HI downto SPAN_X1_LO)), 16);
-				z := unsigned(span_data_i(SPAN_Z_HI downto SPAN_Z_LO));
-				col := r.zw_addr;
-				if ((x0 <= col) and (col <= x1) and (z < r.zw) and ((r.best_v = '0') or (z < r.best_z))) then
-					v.best_v := '1';
-					v.best_i := unsigned(span_data_i(SPAN_IDX_HI downto SPAN_IDX_LO));
-					v.best_z := z;
-				end if;
-				if (resize(r.span_addr, 6) + 1 = unsigned(span_count_i)) then -- That was the last span
-					v.st := S_HS_END;
-				else
-					v.span_addr := r.span_addr + 1;
-					v.wret := S_HS_SP;
-					v.st := S_WAIT;
-				end if;
-
-			when S_HS_END =>
-				if (r.best_v = '1') then
-					v.aaddr := r.best_i;
-					v.ai := r.best_i;
-					v.wret := S_DA;
-					v.st := S_WAIT;
-				else
-					v.st := S_HS_NEXT;
-				end if;
-
-			when S_DA =>
-				-- Game.damage_actor(): only living (solid) actors
-				v.st := S_HS_NEXT;
-				if ((q.active = '1') and (q.solid = '1')) then
-					v.en_ret := S_HS_WB;
-					hp := signed(resize(q.health, 13)) - signed(resize(r.hdmg, 13)); -- Signed: overkill goes below 0
-					if (hp <= 0) then
-						q.health := (others => '0');
-						v.en_s := tp_state(q.typ, TP_DIE_ST);
-						v.st := S_ENTER;
-					else
-						q.health := unsigned(hp(11 downto 0));
-						was_awake := q.awake;
-						q.awake := '1';
-						rnd := lfsr_next(r.lfsr);
-						v.lfsr := rnd;
-						v.st := S_HS_WB;
-						if (to_integer(rnd(7 downto 0)) < tp(q.typ, TP_PAIN)) then -- Pain chance out of 256
-							v.en_s := tp_state(q.typ, TP_PAIN_ST);
-							v.st := S_ENTER;
-						elsif (was_awake = '0') then
-							v.en_s := tp_state(q.typ, TP_CHASE);
-							v.st := S_ENTER;
-						end if;
-					end if;
-					v.a := q;
-				end if;
-
-			when S_HS_WB =>
-				core_we <= '1';
-				v.st := S_HS_NEXT;
-
-			when S_HS_NEXT =>
-				if ((r.hshot = '1') and (r.hk /= 6)) then
-					v.hk := r.hk + 1;
-					v.st := S_HS_COL;
-				else
-					v.st := S_AL0;
-				end if;
-
-			--------------------------------------------------------------
-			-- Stage 5 sound alert (Game.alert), after the shot's hitscans:
-			-- breadth-first flood fill from the player's cell over the 4
-			-- neighbors that are not solid (walls, closed doors), then the
-			-- actor pass, then the visited bits are cleared through the queue
-			--------------------------------------------------------------
-			when S_AL0 =>
-				alc := unsigned(r.py(21 downto 16)) & unsigned(r.px(21 downto 16));
-				al_qwe <= '1';
-				al_qwaddr <= (others => '0');
-				al_qwdata <= std_logic_vector(alc);
-				al_vwe <= '1';
-				al_vwaddr <= alc;
-				v.qhead := (others => '0');
-				v.qtail := to_unsigned(1, 13); -- 13 bits: 4096 queued cells must not look empty
-				v.st := S_AL_POP;
-
-			when S_AL_POP =>
-				if (r.qhead = r.qtail) then
-					-- Fill done: the actors in slot order
-					v.ai := (others => '0');
-					v.aaddr := (others => '0');
-					v.wret := S_AL_LD;
-					v.st := S_WAIT;
-				else
-					v.qra := r.qhead(11 downto 0);
-					v.st := S_AL_POPW;
-				end if;
-
-			when S_AL_POPW =>
-				-- The queue address is at the memory now; data next clock
-				v.st := S_AL_CUR;
-
-			when S_AL_CUR =>
-				v.cur := unsigned(alq_q);
-				v.qhead := r.qhead + 1;
-				v.nk := "00";
-				v.st := S_AL_NB;
-
-			when S_AL_NB =>
-				-- Neighbor nk of the current cell (6-bit wrap, as & 63)
-				alx := r.cur(5 downto 0);
-				aly := r.cur(11 downto 6);
-				case r.nk is
-					when "00" =>
-						alx := alx + 1;
-					when "01" =>
-						alx := alx - 1;
-					when "10" =>
-						aly := aly + 1;
-					when others =>
-						aly := aly - 1;
-				end case;
-				v.ncell := aly & alx;
-				v.maddr := aly & alx;
-				v.vaddr := aly & alx;
-				v.wret := S_AL_NBD;
-				v.st := S_WAIT;
-
-			when S_AL_NBD =>
-				-- Tile word, door-open flag and visited bit of ncell are here:
-				-- an open, unvisited cell is marked and queued
-				if ((vis_q = '0') and not solid(map_data_i, dopen)) then
-					al_qwe <= '1';
-					al_vwe <= '1';
-					v.qtail := r.qtail + 1;
-				end if;
-				if (r.nk = 3) then
-					v.st := S_AL_POP;
-				else
-					v.nk := r.nk + 1;
-					v.st := S_AL_NB;
-				end if;
-
-			when S_AL_LD =>
-				v.a := q;
-				v.vaddr := q.y(15 downto 10) & q.x(15 downto 10); -- Integer parts of Q6.10: the actor's cell
-				v.st := S_AL_LD2;
-
-			when S_AL_LD2 =>
-				-- The actor cell's visited bit arrives next clock
-				v.st := S_AL_CHK;
-
-			when S_AL_CHK =>
-				-- A sleeping, living monster in a LOOK state, not an ambusher,
-				-- in a reached cell wakes as in LOOK (S_LOOK2, S_LOOK3)
-				v.st := S_AL_NX;
-				if ((r.a.active = '1') and (r.a.solid = '1') and (r.a.typ < 4) and (r.a.awake = '0') and
-					(r.a.ambush = '0') and (st_act(r.a.state) = A_LOOK) and (vis_q = '1')) then
-					v.a.awake := '1';
-					if (r.a.typ = T_BOSS) then
-						v.snd_id := to_unsigned(S_BOSS_SIGHT, 5);
-					else
-						v.snd_id := to_unsigned(S_SIGHT, 5);
-					end if;
-					v.snd_act := '1';
-					v.snd_ret := S_AL_ENT;
-					v.st := S_SND;
-				end if;
-
-			when S_AL_ENT =>
-				v.en_s := tp_state(r.a.typ, TP_CHASE);
-				v.en_ret := S_AL_WB;
-				v.st := S_ENTER;
-
-			when S_AL_WB =>
-				core_we <= '1';
-				v.st := S_AL_NX;
-
-			when S_AL_NX =>
-				if (r.ai = 31) then
-					v.qhead := (others => '0');
-					v.st := S_AL_CLR;
-				else
-					v.ai := r.ai + 1;
-					v.aaddr := r.ai + 1;
-					v.wret := S_AL_LD;
-					v.st := S_WAIT;
-				end if;
-
-			when S_AL_CLR =>
-				-- Clear the visited bit of every queued cell (qhead counts)
-				if (r.qhead = r.qtail) then
-					v.st := S_ACTORS;
-				else
-					v.qra := r.qhead(11 downto 0);
-					v.st := S_AL_CLRW;
-				end if;
-
-			when S_AL_CLRW =>
-				v.st := S_AL_CLR2;
-
-			when S_AL_CLR2 =>
-				al_vwe <= '1';
-				al_vwaddr <= unsigned(alq_q);
-				al_vwdata <= '0';
-				v.qhead := r.qhead + 1;
-				v.st := S_AL_CLR;
-
-			--------------------------------------------------------------
-			-- 7. Actors 0..31 (Game.actor_step): load the record into the
-			-- working copy a, run the per-frame action, count the timer
-			-- down, write it back
-			--------------------------------------------------------------
-			when S_ACTORS =>
-				v.ai := (others => '0');
-				v.aaddr := (others => '0');
-				v.wret := S_ACT_LD;
-				v.st := S_WAIT;
-
-			when S_ACT_LD =>
-				v.a := q;
-				if (q.active = '0') then
-					v.st := S_ACT_NX;
-				else
-					v.st := S_ACT_GO;
-				end if;
-
-			when S_ACT_GO =>
-				-- One clock for the helpers (adist, atx, aty) of the new a
-				case st_act(r.a.state) is
-					when A_LOOK =>
-						v.st := S_LOOK;
-					when A_CHASE =>
-						v.st := S_CHASE;
-					when A_FLY =>
-						v.st := S_FLY;
-					when others =>
-						v.st := S_TICK;
-				end case;
-
-			when S_LOOK =>
-				v.st := S_TICK;
-				if (adist < WAKE_RANGE) then
-					v.los_ret := S_LOOK2;
-					v.st := S_LOS;
-				end if;
-
-			when S_LOOK2 =>
-				v.st := S_TICK;
-				if (r.los = '1') then
-					v.a.awake := '1';
-					if (r.a.typ = T_BOSS) then
-						v.snd_id := to_unsigned(S_BOSS_SIGHT, 5);
-					else
-						v.snd_id := to_unsigned(S_SIGHT, 5);
-					end if;
-					v.snd_act := '1';
-					v.snd_ret := S_LOOK3;
-					v.st := S_SND;
-				end if;
-
-			when S_LOOK3 =>
-				v.en_s := tp_state(r.a.typ, TP_CHASE);
-				v.en_ret := S_ACT_WB;
-				v.st := S_ENTER;
-
-			when S_CHASE =>
-				-- Ranged attack check needs the line of sight
-				v.d := adist;
-				v.st := S_CHASE3;
-				-- (TP_RANGE is in tiles; * 1024 makes it Q6.10 like adist)
-				if ((tp(r.a.typ, TP_RANGED) /= 0) and (adist < tp(r.a.typ, TP_RANGE) * 1024)) then
-					v.los_ret := S_CHASE2;
-					v.st := S_LOS;
-				end if;
-
-			when S_CHASE2 =>
-				v.st := S_CHASE3;
-				if (r.los = '1') then
-					rnd := lfsr_next(r.lfsr);
-					v.lfsr := rnd;
-					if ((rnd(7 downto 0) and to_unsigned(tp(r.a.typ, TP_MASK), 8)) = 0) then -- 1 chance in mask + 1
-						v.en_s := tp_state(r.a.typ, TP_AIM_ST);
-						v.en_ret := S_ACT_WB;
-						v.st := S_ENTER;
-					end if;
-				end if;
-
-			when S_CHASE3 =>
-				-- Melee, else walk toward the player (each axis clamped to
-				-- the speed, x first; a step into a solid cell is skipped)
-				if ((tp(r.a.typ, TP_MELEE) /= 0) and (r.d < MELEE_RANGE)) then
-					v.en_s := tp_state(r.a.typ, TP_MELEE_ST);
-					v.en_ret := S_ACT_WB;
-					v.st := S_ENTER;
-				elsif (r.d >= STOP_RANGE) then
-					spd := tp(r.a.typ, TP_SPEED);
-					tx := atx;
-					ty := aty;
-					if (tx > spd) then
-						v.csx := to_signed(spd, 8);
-					elsif (tx < -spd) then
-						v.csx := to_signed(-spd, 8);
-					else
-						v.csx := tx(7 downto 0);
-					end if;
-					if (ty > spd) then
-						v.csy := to_signed(spd, 8);
-					elsif (ty < -spd) then
-						v.csy := to_signed(-spd, 8);
-					else
-						v.csy := ty(7 downto 0);
-					end if;
-					v.st := S_CHASE3B;
-				else
-					v.st := S_TICK;
-				end if;
-
-			when S_CHASE3B =>
-				-- actor_move_ok(x + sx, y, actor_floor(a)): floor first
-				v.st := S_CHASE5;
-				if (r.csx /= 0) then
-					v.fpx := q16(r.a.x);
-					v.fpy := q16(r.a.y);
-					v.fat_ret := S_CHASE3C;
-					v.st := S_FAT;
-				end if;
-
-			when S_CHASE3C =>
-				v.bz := r.fat;
-				v.bx := q16(r.a.x + unsigned(resize(r.csx, 16)));
-				v.by := q16(r.a.y);
-				v.bsmall := '0';
-				v.box_ret := S_CHASE4;
-				v.st := S_BOX;
-
-			when S_CHASE4 =>
-				if (r.hit = '0') then
-					v.a.x := r.a.x + unsigned(resize(r.csx, 16));
-				end if;
-				v.st := S_CHASE5;
-
-			when S_CHASE5 =>
-				-- The floor again: a.x may have moved
-				v.st := S_TICK;
-				if (r.csy /= 0) then
-					v.fpx := q16(r.a.x);
-					v.fpy := q16(r.a.y);
-					v.fat_ret := S_CHASE5B;
-					v.st := S_FAT;
-				end if;
-
-			when S_CHASE5B =>
-				v.bz := r.fat;
-				v.bx := q16(r.a.x);
-				v.by := q16(r.a.y + unsigned(resize(r.csy, 16)));
-				v.bsmall := '0';
-				v.box_ret := S_CHASE6;
-				v.st := S_BOX;
-
-			when S_CHASE6 =>
-				if (r.hit = '0') then
-					v.a.y := r.a.y + unsigned(resize(r.csy, 16));
-				end if;
-				v.st := S_TICK;
-
-			when S_FLY =>
-				-- Fireball: one velocity step (mod 2^16), then its cell; health
-				-- holds its direction 0..15, the FIRE_VEL row
-				ax := r.a.x + unsigned(to_signed(FIRE_VEL(to_integer(r.a.health(3 downto 0)))(0), 16));
-				ay := r.a.y + unsigned(to_signed(FIRE_VEL(to_integer(r.a.health(3 downto 0)))(1), 16));
-				v.a.x := ax;
-				v.a.y := ay;
-				v.maddr := ay(15 downto 10) & ax(15 downto 10);
-				v.wret := S_FLY2;
-				v.st := S_WAIT;
-
-			when S_FLY2 =>
-				v.en_s := to_unsigned(ST_EXPL_A, 7);
-				v.en_ret := S_ACT_WB;
-				if (solid(map_data_i, dopen)) then
-					v.st := S_ENTER;
-				elsif ((absu(atx) < FIRE_HIT) and (absu(aty) < FIRE_HIT)) then
-					rnd := lfsr_next(r.lfsr);
-					v.lfsr := rnd;
-					v.dmg := times_const(resize(rnd(2 downto 0), 4) + 1, 3); -- 3 * (1 + (random & 7))
-					v.dp_ret := S_FLY3;
-					v.st := S_DP;
-				else
-					v.st := S_TICK;
-				end if;
-
-			when S_FLY3 =>
-				v.st := S_ENTER;
-
-			when S_TICK =>
-				v.st := S_ACT_WB;
-				if (r.a.timer /= FOREVER) then
-					v.a.timer := r.a.timer - 1;
-					if (r.a.timer = 1) then -- Runs out this frame: on to the next state
-						v.en_s := st_next(r.a.state);
-						v.en_ret := S_ACT_WB;
-						v.st := S_ENTER;
-					end if;
-				end if;
-
-			when S_ACT_WB =>
-				core_we <= '1';
-				v.st := S_ACT_NX;
-
-			when S_ACT_NX =>
-				if (r.ai = 31) then
-					v.di := (others => '0');
-					v.st := S_DOORS;
-				else
-					v.ai := r.ai + 1;
-					v.aaddr := r.ai + 1;
-					v.wret := S_ACT_LD;
-					v.st := S_WAIT;
-				end if;
-
-			--------------------------------------------------------------
-			-- 8. Doors (Game.update_doors), then the world timers
-			--------------------------------------------------------------
-			when S_DOORS =>
-				dd := r.doors(to_integer(r.di));
-				v.st := S_DOOR_NX;
-				v.db_ret := S_DOOR_NX;
-				case dd.state is
-					when DS_OPENING =>
-						if (dd.open_amt + DOOR_STEP >= DOOR_OPEN) then
-							dd.open_amt := to_signed(DOOR_OPEN, 8);
-							dd.state := DS_OPEN;
-							dd.timer := to_unsigned(DOOR_STAY, 8);
-						else
-							dd.open_amt := dd.open_amt + DOOR_STEP;
-						end if;
-					when DS_OPEN =>
-						dd.timer := dd.timer - 1;
-						if (dd.timer = 0) then
-							v.db_ret := S_DOOR_OPEN2;
-							v.st := S_DB;
-						end if;
-					when DS_CLOSING =>
-						v.db_ret := S_DOOR_CL2;
-						v.st := S_DB;
-					when others =>
-						null;
-				end case;
-				v.doors(to_integer(r.di)) := dd;
-
-			when S_DOOR_OPEN2 =>
-				if (r.blocked = '1') then
-					v.doors(to_integer(r.di)).timer := to_unsigned(DOOR_RETRY, 8);
-				else
-					v.doors(to_integer(r.di)).state := DS_CLOSING;
-				end if;
-				v.st := S_DOOR_NX;
-
-			when S_DOOR_CL2 =>
-				dd := r.doors(to_integer(r.di));
-				if (r.blocked = '1') then
-					dd.state := DS_OPENING;
-				elsif (dd.open_amt - DOOR_STEP <= 0) then
-					dd.open_amt := (others => '0');
-					dd.state := DS_IDLE;
-				else
-					dd.open_amt := dd.open_amt - DOOR_STEP;
-				end if;
-				v.doors(to_integer(r.di)) := dd;
-				v.st := S_DOOR_NX;
-
-			when S_DOOR_NX =>
-				if (r.di = 7) then
-					v.st := S_WORLD;
-				else
-					v.di := r.di + 1;
-					v.st := S_DOORS;
-				end if;
-
-			when S_WORLD =>
-				if (r.boss_timer > 0) then
-					v.boss_timer := r.boss_timer - 1;
-					if (r.boss_timer = 1) then
-						v.level_done := '1';
-					end if;
-				end if;
-				if (r.dflash > 0) then
-					v.dflash := r.dflash - 1;
-				end if;
-				if (r.pflash > 0) then
-					v.pflash := r.pflash - 1;
-				end if;
-				if (r.msg_timer > 0) then
-					v.msg_timer := r.msg_timer - 1;
-					if (r.msg_timer = 1) then
-						v.msg := (others => '0');
-					end if;
-				end if;
-				if (r.pl.health = 0) then
-					v.flow := FL_DEAD;
-					v.dead_timer := (others => '0');
-				elsif (v.level_done = '1') then
-					v.flow := FL_SCORE;
-				end if;
-				v.st := S_END;
-
-			--------------------------------------------------------------
-			-- End of every step: sprite table, key positions, checksum,
-			-- outputs
-			--------------------------------------------------------------
-			when S_END =>
-				-- Effects frame of this step: (t_sec * 60 + t_frames) mod 256, t_sec * 60 as
-				-- (t_sec << 6) - (t_sec << 2)
-				v.fxn := resize(shift_left(resize(r.t_sec, 12), 6) - shift_left(resize(r.t_sec, 12), 2) +
-					resize(r.t_frames, 12), 8);
-				v.aaddr := (others => '0');
-				v.spr_n := (others => '0');
-				v.kp := (others => '0');
-				v.wret := S_SPR_T;
-				v.st := S_WAIT;
-
-			when S_SPR_T =>
-				-- Light offsets of this step's effects frame (registered: the table and
-				-- adders stay off the sprite light path)
-				v.lm := light_mods(r.fxn, r.flash /= 0);
-				-- Art frame: items 38 + kind, fireballs 38 + state frame,
-				-- monsters 0 / 9 / 18 / 27 + state frame (art.py)
-				v.st := S_SPR_N;
-				if (q.active = '1') then
-					if (q.typ = T_ITEM) then
-						frame := to_unsigned(ITEM_BASE, 8) + resize(q.health(2 downto 0), 8);
-					else
-						if (q.typ = T_FIREBALL) then
-							base := ITEM_BASE;
-						else
-							base := 9 * to_integer(q.typ(1 downto 0));
-						end if;
-						frame := to_unsigned(base, 8) + resize(st_frame(q.state), 8);
-					end if;
-					v.spr_e := (others => '0');
-					v.spr_e(SPR_IDX_HI downto SPR_IDX_LO) := std_logic_vector(r.aaddr);
-					v.spr_e(SPR_X_HI downto SPR_X_LO) := std_logic_vector(q.x);
-					v.spr_e(SPR_Y_HI downto SPR_Y_LO) := std_logic_vector(q.y);
-					v.spr_e(SPR_FRAME_HI downto SPR_FRAME_LO) := std_logic_vector(frame);
-					v.spr_e(SPR_BRIGHT) := bit_of(q.typ = T_FIREBALL);
-					v.spr_e(SPR_TARGET) := q.solid and bit_of(q.typ < 4);
-					-- Keys still on the floor (first of each kind): 13-bit entry, the
-					-- cell (y & x) above a valid bit
-					if ((q.typ = T_ITEM) and (q.health = I_KEY1) and (r.kp(KEYPOS_BLUE) = '0')) then
-						v.kp(KEYPOS_BLUE + 12 downto KEYPOS_BLUE) := std_logic_vector(unsigned'(q.y(15 downto 10) & q.x(15 downto 10))) & '1';
-					end if;
-					if ((q.typ = T_ITEM) and (q.health = I_KEY2) and (r.kp(KEYPOS_RED) = '0')) then
-						v.kp(KEYPOS_RED + 12 downto KEYPOS_RED) := std_logic_vector(unsigned'(q.y(15 downto 10) & q.x(15 downto 10))) & '1';
-					end if;
-					v.maddr := q.y(15 downto 10) & q.x(15 downto 10);
-					v.wret := S_SPR_L;
-					v.st := S_WAIT;
-				end if;
-
-			when S_SPR_L =>
-				-- Light of the center tile, then the floor under the center
-				v.spr_e(SPR_LIGHT_HI downto SPR_LIGHT_LO) := map_data_i(TILE_LIGHT_HI downto TILE_LIGHT_LO);
-				v.spr_ty := map_data_i(TILE_LTYPE_HI downto TILE_LTYPE_LO);
-				v.fpx := q16(unsigned(r.spr_e(SPR_X_HI downto SPR_X_LO)));
-				v.fpy := q16(unsigned(r.spr_e(SPR_Y_HI downto SPR_Y_LO)));
-				v.fat_ret := S_SPR_F;
-				v.st := S_FAT;
-
-			when S_SPR_F =>
-				spr_we <= '1';
-				spr_wdata(SPR_FLOOR_HI downto SPR_FLOOR_LO) <= std_logic_vector(r.fat(6 downto 0)); -- 0..64 fits 7 bits
-				spr_wdata(SPR_LIGHT_HI downto SPR_LIGHT_LO) <=
-					mod_light(r.spr_e(SPR_LIGHT_HI downto SPR_LIGHT_LO), r.lm, r.spr_ty);
-				v.spr_n := r.spr_n + 1;
-				v.st := S_SPR_N;
-
-			when S_SPR_N =>
-				if (r.aaddr = 31) then
-					v.st := S_CRC0;
-				else
-					v.aaddr := r.aaddr + 1;
-					v.wret := S_SPR_T;
-					v.st := S_WAIT;
-				end if;
-
-			when S_CRC0 =>
-				crc_init <= '1';
-				v.cw := (others => '0');
-				v.st := S_CRC_W;
-
-			when S_CRC_W =>
-				v.cword := word; -- waddr = r.cw in this state
-				v.cb := (others => '0');
-				v.st := S_CRC_B;
-
-			when S_CRC_B =>
-				-- 8 bytes little endian per word
-				crc_valid <= '1';
-				for b in 0 to 7 loop
-					if (r.cb = b) then
-						crc_byte <= r.cword(8 * b + 7 downto 8 * b);
-					end if;
-				end loop;
-				v.cb := r.cb + 1;
-				if (r.cb = 7) then
-					if (r.cw = STATE_WORDS - 1) then
-						v.st := S_OUT;
-					else
-						v.cw := r.cw + 1;
-						v.st := S_CRC_W;
-					end if;
-				end if;
-
-			when S_OUT =>
-				v.fx_o := std_logic_vector(r.fxn(4 downto 3)) & r.lm; -- anim = (n >> 3) & 3
-				v.cam_x_o := std_logic_vector(r.cam_x(POS_BITS - 1 downto 0));
-				v.cam_y_o := std_logic_vector(r.cam_y(POS_BITS - 1 downto 0));
-				v.angle_o := std_logic_vector(r.angle);
-				-- view_eye() = min(127, z + eye)
-				if (resize(r.z, 9) + r.eye > 127) then
-					v.eye_o := (others => '1');
-				else
-					v.eye_o := std_logic_vector(resize(r.z, 7) + r.eye);
-				end if;
-				v.player_x_o := std_logic_vector(r.px(POS_BITS - 1 downto 0));
-				v.player_y_o := std_logic_vector(r.py(POS_BITS - 1 downto 0));
-				for k in 0 to 7 loop
-					if (r.doors(k).state = DS_IDLE) then
-						v.doors_o(DOOR_BITS * k + DOOR_BITS - 1 downto DOOR_BITS * k) := (others => '0');
-					else
-						v.doors_o(DOOR_BITS * k + DOOR_X_HI downto DOOR_BITS * k + DOOR_X_LO) :=
-							std_logic_vector(r.doors(k).x);
-						v.doors_o(DOOR_BITS * k + DOOR_Y_HI downto DOOR_BITS * k + DOOR_Y_LO) :=
-							std_logic_vector(r.doors(k).y);
-						v.doors_o(DOOR_BITS * k + DOOR_OPEN_HI downto DOOR_BITS * k + DOOR_OPEN_LO) :=
-							std_logic_vector(r.doors(k).open_amt(6 downto 0));
-					end if;
-				end loop;
-				-- HUD word (game.hud())
-				v.hud_o := (others => '0');
-				v.hud_o(HUD_FLOW_HI downto HUD_FLOW_LO) := std_logic_vector(r.flow);
-				v.hud_o(HUD_LEVEL_HI downto HUD_LEVEL_LO) := std_logic_vector(r.level);
-				v.hud_o(HUD_HEALTH_HI downto HUD_HEALTH_LO) := std_logic_vector(r.pl.health);
-				v.hud_o(HUD_ARMOR_HI downto HUD_ARMOR_LO) := std_logic_vector(r.pl.armor);
-				if (r.pl.weapon = 1) then
-					v.hud_o(HUD_AMMO_HI downto HUD_AMMO_LO) := std_logic_vector(r.pl.bullets);
-					frame := to_unsigned(WEAPON_BASE, 8);
-					if (r.flash > 0) then
-						frame := to_unsigned(WEAPON_BASE + 1, 8);
-					end if;
-				else
-					v.hud_o(HUD_AMMO_HI downto HUD_AMMO_LO) := std_logic_vector(resize(r.pl.shells, 8));
-					-- Shotgun pump frames over its 40-frame cooldown
-					if (r.cooldown > 36) then
-						frame := to_unsigned(WEAPON_BASE + 3, 8);
-					elsif (r.cooldown > 16) then
-						frame := to_unsigned(WEAPON_BASE + 4, 8);
-					else
-						frame := to_unsigned(WEAPON_BASE + 2, 8);
-					end if;
-				end if;
-				v.hud_o(HUD_WEAPON_HI downto HUD_WEAPON_LO) := std_logic_vector(r.pl.weapon);
-				v.hud_o(HUD_KEYS_HI downto HUD_KEYS_LO) := std_logic_vector(r.keys);
-				v.hud_o(HUD_WFRAME_HI downto HUD_WFRAME_LO) := std_logic_vector(frame);
-				-- BOB = 0 1 2 3 4 3 2 1 by phase bits 4:2, only while PLAYING
-				bob := 0;
-				if (r.flow = FL_PLAYING) then
-					case to_integer(r.phase(4 downto 2)) is
-						when 0 =>
-							bob := 0;
-						when 1 | 7 =>
-							bob := 1;
-						when 2 | 6 =>
-							bob := 2;
-						when 3 | 5 =>
-							bob := 3;
-						when others =>
-							bob := 4;
-					end case;
-				end if;
-				v.hud_o(HUD_BOB_HI downto HUD_BOB_LO) := std_logic_vector(to_unsigned(bob, 3));
-				v.hud_o(HUD_MSG_HI downto HUD_MSG_LO) := std_logic_vector(r.msg);
-				v.hud_o(HUD_KILLS_HI downto HUD_KILLS_LO) := std_logic_vector(r.kills);
-				v.hud_o(HUD_TKILLS_HI downto HUD_TKILLS_LO) := std_logic_vector(r.tkills);
-				v.hud_o(HUD_ITEMS_HI downto HUD_ITEMS_LO) := std_logic_vector(r.items);
-				v.hud_o(HUD_TITEMS_HI downto HUD_TITEMS_LO) := std_logic_vector(r.titems);
-				v.hud_o(HUD_SECRETS_HI downto HUD_SECRETS_LO) := std_logic_vector(r.secrets);
-				v.hud_o(HUD_TSECRETS_HI downto HUD_TSECRETS_LO) := std_logic_vector(r.tsecrets);
-				v.hud_o(HUD_TMIN_HI downto HUD_TMIN_LO) := std_logic_vector(r.t_min);
-				v.hud_o(HUD_TSEC_HI downto HUD_TSEC_LO) := std_logic_vector(r.t_sec);
-				v.hud_o(HUD_AUTOMAP) := r.automap;
-				v.hud_o(HUD_DEBUG) := r.debug;
-				v.keypos_o := r.kp;
-				if ((r.flow = FL_PLAYING) or (r.flow = FL_PAUSED) or (r.flow = FL_DEAD)) then
-					v.music_o := std_logic_vector(r.level);
-				else
-					v.music_o := "00";
-				end if;
-				-- Screen tint (game.tint()): damage flash, pickup flash, toxic floor
-				if (r.dflash > 0) then
-					v.tint_o := "01";
-				elsif (r.pflash > 0) then
-					v.tint_o := "10";
-				elsif ((r.flow = FL_PLAYING) and (r.on_toxic = '1')) then
-					v.tint_o := "11";
-				else
-					v.tint_o := "00";
-				end if;
-				v.spr_count_o := std_logic_vector(r.spr_n);
-				v.crc_o := crc;
-				v.bank := not r.bank;
-				v.oq := r.sq;
-				v.oq_n := r.sq_n;
-				v.oq_p := (others => '0');
-				v.start := '1';
-				v.st := S_IDLE;
-
-			--------------------------------------------------------------
-			-- Subroutines
-			--------------------------------------------------------------
-			when S_WAIT =>
-				-- The address register is at the memory now; data next clock
-				v.st := r.wret;
-
-			when S_BOX =>
-				-- Game.box_hits(): 2 x 2 cells, stop at the first solid one
-				v.bk := "00";
-				v.hit := '0';
-				v.maddr := box_cell(r.bx, r.by, r.bsmall, "00");
-				v.wret := S_BOX_D;
-				v.st := S_WAIT;
-
-			when S_BOX_D =>
-				-- Game.blocks(): solid, or (stage 4, not for the peek camera
-				-- box, which only tests solid cells) too high a step or too
-				-- little headroom for a body at bz
-				if (solid(map_data_i, dopen) or ((r.bsmall = '0') and height_blocks(map_data_i, r.bz))) then
-					v.hit := '1';
-					v.st := r.box_ret;
-				elsif (r.bk = 3) then
-					v.st := r.box_ret;
-				else
-					v.bk := r.bk + 1;
-					v.maddr := box_cell(r.bx, r.by, r.bsmall, r.bk + 1);
-					v.wret := S_BOX_D;
-					v.st := S_WAIT;
-				end if;
-
-			when S_FAT =>
-				-- Game.floor_at(fpx, fpy): the tile's floor; a ramp adds
-				-- (rise * s) >> 16, rise from the next tile in its direction
-				v.maddr := point_cell(r.fpx, r.fpy);
-				v.wret := S_FAT_D;
-				v.st := S_WAIT;
-
-			when S_FAT_D =>
-				ft := map_data_i;
-				v.ff := resize(floor_h(ft), 8);
-				if (not is_ramp(ft)) then
-					v.fat := resize(floor_h(ft), 8);
-					v.st := r.fat_ret;
-				else
-					-- Ramp direction in ceil_tex: 0 +x, 1 -x, 2 +y, 3 -y
-					dir := to_integer(unsigned(ft(TILE_CEIL_HI downto TILE_CEIL_LO)));
-					if (dir >= 2) then
-						frac := unsigned(std_logic_vector(r.fpy(15 downto 0)));
-					else
-						frac := unsigned(std_logic_vector(r.fpx(15 downto 0)));
-					end if;
-					if ((dir = 0) or (dir = 2)) then
-						v.fs := resize(frac, 17);
-					else
-						v.fs := to_unsigned(65536, 17) - frac;
-					end if;
-					case dir is
-						when 0 =>
-							v.maddr := r.maddr(11 downto 6) & (r.maddr(5 downto 0) + 1);
-						when 1 =>
-							v.maddr := r.maddr(11 downto 6) & (r.maddr(5 downto 0) - 1);
-						when 2 =>
-							v.maddr := (r.maddr(11 downto 6) + 1) & r.maddr(5 downto 0);
-						when others =>
-							v.maddr := (r.maddr(11 downto 6) - 1) & r.maddr(5 downto 0);
-					end case;
-					v.wret := S_FAT_N;
-					v.st := S_WAIT;
-				end if;
-
-			when S_FAT_N =>
-				-- rise (multiple of 8, -56..56) times s on the shared multiplier
-				rise := signed(resize(floor_h(map_data_i), 9)) - signed(resize(r.ff, 9));
-				v.mul_a := resize(rise, 24);
-				v.mul_b := signed(resize(r.fs, 18));
-				v.st := S_FAT_W;
-
-			when S_FAT_W =>
-				v.st := S_FAT_M;
-
-			when S_FAT_M =>
-				fsum := signed(resize(r.ff, 10)) + resize(shift_right(prod, 16), 10); -- floor + (rise * s) >> 16
-				v.fat := unsigned(fsum(7 downto 0));
-				v.st := r.fat_ret;
-
-			when S_BFL =>
-				-- Game.box_floor(bx, by, HALF): the highest floor_at() of the
-				-- four box corners (bfk bit 0 picks x -/+, bit 1 picks y -/+)
-				v.bfk := "00";
-				v.bfl := (others => '0');
-				v.fpx := r.bx - HALF;
-				v.fpy := r.by - HALF;
-				v.fat_ret := S_BFL_N;
-				v.st := S_FAT;
-
-			when S_BFL_N =>
-				if (r.fat > r.bfl) then
-					v.bfl := r.fat;
-				end if;
-				if (r.bfk = 3) then
-					v.st := r.bfl_ret;
-				else
-					v.bfk := r.bfk + 1;
-					-- Corner bfk + 1: x - when its bit 0 is 0, y + from corner 2 on
-					if (r.bfk(0) = '1') then
-						v.fpx := r.bx - HALF;
-					else
-						v.fpx := r.bx + HALF;
-					end if;
-					if (r.bfk = 0) then
-						v.fpy := r.by - HALF;
-					else
-						v.fpy := r.by + HALF;
-					end if;
-					v.fat_ret := S_BFL_N;
-					v.st := S_FAT;
-				end if;
-
-			when S_LOS =>
-				-- Game.los(): Bresenham from the actor's cell to the player's
-				v.lx := r.a.x(15 downto 10);
-				v.ly := r.a.y(15 downto 10);
-				v.lx1 := unsigned(std_logic_vector(r.px(21 downto 16)));
-				v.ly1 := unsigned(std_logic_vector(r.py(21 downto 16)));
-				v.ldx := abs(signed(resize(v.lx1, 8)) - signed(resize(v.lx, 8)));
-				v.ldy := abs(signed(resize(v.ly1, 8)) - signed(resize(v.ly, 8)));
-				if (v.lx1 > v.lx) then
-					v.lsx := "01";
-				elsif (v.lx1 < v.lx) then
-					v.lsx := "11";
-				else
-					v.lsx := "00";
-				end if;
-				if (v.ly1 > v.ly) then
-					v.lsy := "01";
-				elsif (v.ly1 < v.ly) then
-					v.lsy := "11";
-				else
-					v.lsy := "00";
-				end if;
-				v.lerr := resize(v.ldx, 9) - resize(v.ldy, 9);
-				v.lcnt := (others => '0');
-				v.st := S_LOS_IT;
-
-			when S_LOS_IT =>
-				-- One loop iteration: at the target -> visible; else step
-				-- (e2 = 2 err; e2 > -dy steps x, e2 < dx steps y) and test
-				-- the new cell unless it is the target
-				if ((r.lx = r.lx1) and (r.ly = r.ly1)) then
-					v.los := '1';
-					v.st := r.los_ret;
-				elsif (r.lcnt = 64) then -- Step limit (the model's loop bound)
-					v.los := '0';
-					v.st := r.los_ret;
-				else
-					e2 := shift_left(r.lerr, 1);
-					nerr := r.lerr;
-					nx := signed(resize(r.lx, 8));
-					ny := signed(resize(r.ly, 8));
-					if (e2 > -resize(r.ldy, 9)) then
-						nerr := nerr - resize(r.ldy, 9);
-						nx := nx + r.lsx;
-					end if;
-					if (e2 < resize(r.ldx, 9)) then
-						nerr := nerr + resize(r.ldx, 9);
-						ny := ny + r.lsy;
-					end if;
-					v.lerr := nerr;
-					v.lx := unsigned(nx(5 downto 0));
-					v.ly := unsigned(ny(5 downto 0));
-					v.lcnt := r.lcnt + 1;
-					if ((v.lx /= r.lx1) or (v.ly /= r.ly1)) then
-						v.maddr := v.ly & v.lx;
-						v.wret := S_LOS_D;
-						v.st := S_WAIT;
-					end if;
-				end if;
-
-			when S_LOS_D =>
-				if (solid(map_data_i, dopen)) then
-					v.los := '0';
-					v.st := r.los_ret;
-				else
-					v.st := S_LOS_IT;
-				end if;
-
-			when S_DB =>
-				-- Game.door_blocked(door di): the player, then every
-				-- active solid actor (one per clock)
-				dd := r.doors(to_integer(r.di));
-				if (in_cell(r.px, r.py, dd.x, dd.y)) then
-					v.blocked := '1';
-					v.st := r.db_ret;
-				else
-					v.aaddr := (others => '0');
-					v.wret := S_DB_S;
-					v.st := S_WAIT;
-				end if;
-
-			when S_DB_S =>
-				if (hit_door = '1') then
-					v.blocked := '1';
-					v.st := r.db_ret;
-				elsif (r.aaddr = 31) then
-					v.blocked := '0';
-					v.st := r.db_ret;
-				else
-					v.aaddr := r.aaddr + 1;
-					v.wret := S_DB_S;
-					v.st := S_WAIT;
-				end if;
-
-			when S_SND =>
-				-- Game.sound(): at most 4 per step; an actor's sound gets a
-				-- volume from its distance (0 drops it) and a pan from its
-				-- sideways offset (two products on the shared multiplier)
-				v.st := r.snd_ret;
-				if (r.sq_n /= 4) then
-					if (r.snd_act = '0') then
-						-- The player's own sound: full volume, centred
-						v.sq(to_integer(r.sq_n(1 downto 0))) := (r.snd_id, to_unsigned(63, 6), to_signed(0, 6));
-						v.sq_n := r.sq_n + 1;
-					else
-						v.st := S_SND_W;
-					end if;
-				end if;
-
-			when S_SND_W =>
-				v.st := S_SND_V;
-
-			when S_SND_V =>
-				-- avol is three clocks behind a; a may have changed in the
-				-- clock before S_SND (S_DA -> S_ENTER -> S_SND)
-				v.svol := avol;
-				v.st := r.snd_ret;
-				if (avol /= 0) then
-					v.mul_a := q16(r.a.x) - r.px; -- rx
-					v.mul_b := -r.sn;
-					v.st := S_SND_M1;
-				end if;
-
-			when S_SND_M1 =>
-				v.mul_a := q16(r.a.y) - r.py; -- ry
-				v.mul_b := r.cs;
-				v.st := S_SND_M2;
-
-			when S_SND_M2 =>
-				v.acc := prod; -- rx * -sin
-				v.st := S_SND_M3;
-
-			when S_SND_M3 =>
-				-- pan = clamp((lateral >> 16) >> 11, -31, 31) = sum >> 27
-				sum := resize(r.acc, 43) + resize(prod, 43);
-				v.lat := sum(42 downto 27);
-				v.st := S_SND_M4;
-
-			when S_SND_M4 =>
-				lat := r.lat;
-				if (lat > 31) then
-					lat := to_signed(31, 16);
-				elsif (lat < -31) then
-					lat := to_signed(-31, 16);
-				end if;
-				v.sq(to_integer(r.sq_n(1 downto 0))) := (r.snd_id, r.svol, lat(5 downto 0));
-				v.sq_n := r.sq_n + 1;
-				v.st := r.snd_ret;
-
-			when S_DP =>
-				-- Game.damage_player(dmg): armor takes (dmg * 21) >> 6
-				-- (21 = 16 + 4 + 1), at most what is left of it
-				v.st := r.dp_ret;
-				if (r.pl.health /= 0) then
-					dmg := r.dmg;
-					if (r.pl.armor > 0) then
-						saved := shift_right(shift_left(resize(dmg, 10), 4) + shift_left(resize(dmg, 10), 2) +
-							resize(dmg, 10), 6);
-						if (saved > r.pl.armor) then
-							saved := resize(r.pl.armor, 10);
-						end if;
-						v.pl.armor := r.pl.armor - saved(7 downto 0);
-						v.dmg := dmg - saved(5 downto 0);
-					end if;
-					v.st := S_DP2;
-				end if;
-
-			when S_DP2 =>
-				-- Health minus what the armor did not take, floor 0
-				dmg := r.dmg;
-				if (r.pl.health > dmg) then
-					v.pl.health := r.pl.health - dmg;
-					v.snd_id := to_unsigned(S_PLAYER_PAIN, 5);
-				else
-					v.pl.health := (others => '0');
-					v.snd_id := to_unsigned(S_PLAYER_DEATH, 5);
-				end if;
-				v.dflash := to_unsigned(8, 4);
-				v.snd_act := '0';
-				v.snd_ret := r.dp_ret;
-				v.st := S_SND;
-
-			when S_ENTER =>
-				-- Game.enter(): new state and timer; entry actions run now
-				-- (LOOK, CHASE and FLY run every frame in S_ACT_GO instead)
-				v.a.state := r.en_s;
-				v.a.timer := st_dur(r.en_s);
-				v.st := r.en_ret;
-				v.snd_act := '1';
-				v.snd_ret := r.en_ret;
-				case st_act(r.en_s) is
-					when A_SHOOT =>
-						v.snd_id := to_unsigned(S_SHOOT, 5);
-						v.snd_ret := S_A_SHOOT2;
-						v.st := S_SND;
-					when A_FIRE =>
-						v.snd_id := to_unsigned(S_FIRE, 5);
-						v.snd_ret := S_A_FIRE2;
-						v.st := S_SND;
-					when A_MELEE =>
-						v.snd_id := to_unsigned(S_CLAW, 5);
-						v.snd_ret := S_A_MELEE2;
-						v.st := S_SND;
-					when A_PAIN =>
-						v.snd_id := to_unsigned(S_PAIN, 5);
-						v.st := S_SND;
-					when A_DIE =>
-						v.a.solid := '0';
-						v.kills := r.kills + 1;
-						if (r.a.typ = T_BOSS) then
-							v.boss_timer := to_unsigned(BOSS_TIME, 8);
-						end if;
-						v.snd_id := to_unsigned(S_DEATH, 5);
-						v.snd_ret := S_A_DIE2;
-						v.st := S_SND;
-					when A_EXPLODE =>
-						v.snd_id := to_unsigned(S_EXPLODE, 5);
-						v.st := S_SND;
-					when A_REMOVE =>
-						v.a.active := '0';
-					when others =>
-						null;
-				end case;
-
-			when S_A_SHOOT2 =>
-				v.los_ret := S_A_SHOOT3;
-				v.st := S_LOS;
-
-			when S_A_SHOOT3 =>
-				-- Hit chance max(40, 200 - (dist >> 7)), then 3 * (1 + (random & 3))
-				v.st := r.en_ret;
-				if (r.los = '1') then
-					dist_v := adist;
-					rnd := lfsr_next(r.lfsr);
-					v.lfsr := rnd;
-					-- From dist >> 7 = 160 on the floor of 40 applies;
-					-- closer, random + (dist >> 7) < 200 is random < 200 - (dist >> 7)
-					if ((dist_v(18 downto 7) >= 160) and (rnd(7 downto 0) < 40)) or
-						((dist_v(18 downto 7) < 160) and (resize(rnd(7 downto 0), 12) + dist_v(18 downto 7) < 200)) then
-						v.st := S_A_SHOOT4;
-					end if;
-				end if;
-
-			when S_A_SHOOT4 =>
-				rnd := lfsr_next(r.lfsr);
-				v.lfsr := rnd;
-				v.dmg := times_const(resize(rnd(1 downto 0), 4) + 1, 3);
-				v.dp_ret := r.en_ret;
-				v.st := S_DP;
-
-			when S_A_FIRE2 =>
-				-- Fireball toward the player from the actor's position
-				tx := atx;
-				ty := aty;
-				v.sp_type := to_unsigned(T_FIREBALL, 3);
-				v.sp_state := to_unsigned(ST_FLY_A, 7);
-				v.sp_health := resize(direction16(tx, ty), 12);
-				v.sp_ret := r.en_ret;
-				v.st := S_SPAWN;
-
-			when S_A_MELEE2 =>
-				v.st := r.en_ret;
-				if (adist < MELEE_RANGE) then
-					rnd := lfsr_next(r.lfsr);
-					v.lfsr := rnd;
-					v.dmg := times_const(resize(rnd(2 downto 0), 4) + 1, tp(r.a.typ, TP_MULT)); -- mult * (1 + (random & 7))
-					v.dp_ret := r.en_ret;
-					v.st := S_DP;
-				end if;
-
-			when S_A_DIE2 =>
-				-- A grunt drops a box of bullets
-				v.st := r.en_ret;
-				if (r.a.typ = T_GRUNT) then
-					v.sp_type := to_unsigned(T_ITEM, 3);
-					v.sp_state := to_unsigned(ST_ITEM_IDLE, 7);
-					v.sp_health := to_unsigned(I_BULLETS, 12);
-					v.sp_ret := r.en_ret;
-					v.st := S_SPAWN;
-				end if;
-
-			when S_SPAWN =>
-				v.aaddr := (others => '0');
-				v.wret := S_SPAWN_S;
-				v.st := S_WAIT;
-
-			when S_SPAWN_S =>
-				-- Game.spawn(): first inactive slot (none free: nothing)
-				if (q.active = '0') then
-					q := ACTOR_CLEAR;
-					q.x := r.a.x;
-					q.y := r.a.y;
-					q.typ := r.sp_type;
-					q.health := r.sp_health;
-					q.active := '1';
-					q.state := r.sp_state;
-					q.timer := st_dur(r.sp_state);
-					core_we <= '1';
-					core_waddr <= r.aaddr;
-					core_wdata <= pack(q);
-					v.st := r.sp_ret;
-				elsif (r.aaddr = 31) then
-					v.st := r.sp_ret;
-				else
-					v.aaddr := r.aaddr + 1;
-					v.wret := S_SPAWN_S;
-					v.st := S_WAIT;
-				end if;
-		end case;
-		r_next <= v;
-	end process;
-
+	-- Random numbers: x^16 + x^15 + x^13 + x^4 + 1 (taps 15, 14, 12, 3 of
+	-- the old state), shift left; random() returns the low byte of the new state
+	lfsr_n <= lfsr(14 downto 0) & (lfsr(15) xor lfsr(14) xor lfsr(12) xor lfsr(3));
+	go <= snap(SNAP_USE) or (snap(SNAP_FIRE) and not prev_fire);
+	eye_t <= to_unsigned(16, 7) when (snap(SNAP_DUCK) = '1') else to_unsigned(32, 7);
+	peek_t <= to_signed(16, 6) when ((snap(SNAP_PEEK_R) = '1') and (snap(SNAP_PEEK_L) = '0')) else
+		to_signed(-16, 6) when ((snap(SNAP_PEEK_R) = '0') and (snap(SNAP_PEEK_L) = '1')) else
+		to_signed(0, 6);
+	-- Velocity: vx = move cs - strafe sn, vy = move sn + strafe cs (cs is on
+	-- rom_data in CORE_P_VEL)
+	vel_x <= times(snap(SNAP_MOVE_HI downto SNAP_MOVE_LO), rom_data) -
+		times(snap(SNAP_STRAFE_HI downto SNAP_STRAFE_LO), sn);
+	vel_y <= times(snap(SNAP_MOVE_HI downto SNAP_MOVE_LO), sn) +
+		times(snap(SNAP_STRAFE_HI downto SNAP_STRAFE_LO), rom_data);
+	-- Flush clamps: right / lower side 1 short of the cell the box ran
+	-- into, left / upper side on that cell's far edge
+	flush_xp <= ((bx + HALF) and x"FF0000") - HALF - 1;
+	flush_xn <= ((bx - HALF) and x"FF0000") + 65536 + HALF;
+	flush_yp <= ((by + HALF) and x"FF0000") - HALF - 1;
+	flush_yn <= ((by - HALF) and x"FF0000") + 65536 + HALF;
+	fall_v <= to_unsigned(FALL_MAX, 5) when (vz + FALL_ACC > FALL_MAX) else vz + FALL_ACC;
+	-- Cells (y & x, masked like Game.tile()): the player's, the one 0.75 tile
+	-- ahead (c * 3 >> 2) and alert neighbor nk of cur (6-bit wrap, as & 63)
+	pcell <= unsigned(std_logic_vector(py(21 downto 16))) & unsigned(std_logic_vector(px(21 downto 16)));
+	use_x <= px + resize(shift_right(resize(cs, 20) + shift_left(resize(cs, 20), 1), 2), 24);
+	use_y <= py + resize(shift_right(resize(sn, 20) + shift_left(resize(sn, 20), 1), 2), 24);
+	use_cell <= unsigned(std_logic_vector(use_y(21 downto 16))) & unsigned(std_logic_vector(use_x(21 downto 16)));
+	nb_cell(5 downto 0) <= cur(5 downto 0) + 1 when (nk = "00") else
+		cur(5 downto 0) - 1 when (nk = "01") else
+		cur(5 downto 0);
+	nb_cell(11 downto 6) <= cur(11 downto 6) + 1 when (nk = "10") else
+		cur(11 downto 6) - 1 when (nk = "11") else
+		cur(11 downto 6);
+	-- Box sides around (bx, by); bits 21:16 of b -/+ half are (b +/- half)
+	-- >> 16 masked to 0..63
+	box_x0 <= bx - CAM_HALF when (bsmall = '1') else bx - HALF;
+	box_x1 <= bx + CAM_HALF when (bsmall = '1') else bx + HALF;
+	box_y0 <= by - CAM_HALF when (bsmall = '1') else by - HALF;
+	box_y1 <= by + CAM_HALF when (bsmall = '1') else by + HALF;
+	-- Weapon select keys, then the cycle key
+	wpn_next <= unsigned(snap(SNAP_WSEL_HI downto SNAP_WSEL_LO)) when
+		(((snap(SNAP_WSEL_HI downto SNAP_WSEL_LO) = "01") and (pl_weapons(0) = '1')) or
+		((snap(SNAP_WSEL_HI downto SNAP_WSEL_LO) = "10") and (pl_weapons(1) = '1'))) else
+		"10" when ((snap(SNAP_WCYCLE) = '1') and (pl_weapon = 1) and (pl_weapons(1) = '1')) else
+		"01" when (snap(SNAP_WCYCLE) = '1') else
+		pl_weapon;
+	-- Item kinds 0, 1 health, 2 armor, 3 bullets, 4 shells: taken only below
+	-- the cap; 5 shotgun, 6 and 7 keys: always
+	took <= '1' when ((((q_kind = 0) or (q_kind = 1)) and (pl_health < 100)) or ((q_kind = 2) and (pl_armor < 100)) or
+		((q_kind = 3) and (pl_bullets < 200)) or ((q_kind = 4) and (pl_shells < 50)) or (q_kind >= 5)) else '0';
+	da_hp <= signed(resize(q_health, 13)) - signed(resize(hdmg, 13)); -- Signed: overkill goes below 0
+	-- Armor takes (dmg * 21) >> 6 (21 = 16 + 4 + 1), at most what is left of it
+	arm_21 <= shift_right(shift_left(resize(dmg, 10), 4) + shift_left(resize(dmg, 10), 2) + resize(dmg, 10), 6);
+	arm_save <= resize(pl_armor, 10) when (arm_21 > pl_armor) else arm_21;
+
+	-- Tile word on map_data_i: Game.solid() (a wall unless it is a door,
+	-- specials 1..3, whose table entry is fully open), the heights
+	-- (floor_h * 8, 64 - ceil_h * 8) and Game.blocks() without the solid
+	-- test: a step up of more than STEP_MAX (ramps never) or less headroom
+	-- than BODY_H for a body at bz
+	map_sp <= to_integer(unsigned(map_data_i(TILE_SPECIAL_HI downto TILE_SPECIAL_LO)));
+	map_floor <= unsigned(map_data_i(TILE_FLOORH_HI downto TILE_FLOORH_LO)) & "000";
+	map_ceil <= to_unsigned(64, 7) - (unsigned(map_data_i(TILE_CEILH_HI downto TILE_CEILH_LO)) & "000");
+	map_solid <= '0' when (unsigned(map_data_i(TILE_WALL_HI downto TILE_WALL_LO)) = 0) else
+		'0' when ((map_sp >= 1) and (map_sp <= 3) and (dopen = '1')) else
+		'1';
+	map_top <= resize(map_floor, 9) + BODY_H when (resize(map_floor, 9) > resize(bz, 9)) else resize(bz, 9) + BODY_H;
+	map_hblk <= '1' when (((map_sp /= SPECIAL_RAMP) and (resize(map_floor, 9) > resize(bz, 9) + STEP_MAX)) or
+		(resize(map_ceil, 9) < map_top)) else '0';
+	dk <= to_integer(di);
+
+	-- Line of sight (Game.los()): start deltas, then one Bresenham step
+	-- (e2 = 2 err; e2 > -dy steps x, e2 < dx steps y)
+	los_dx <= signed(resize(unsigned(std_logic_vector(px(21 downto 16))), 8)) - signed(resize(a_x(15 downto 10), 8));
+	los_dy <= signed(resize(unsigned(std_logic_vector(py(21 downto 16))), 8)) - signed(resize(a_y(15 downto 10), 8));
+	los_e2 <= shift_left(lerr, 1);
+	los_sx <= '1' when (los_e2 > -resize(ldy, 9)) else '0';
+	los_sy <= '1' when (los_e2 < resize(ldx, 9)) else '0';
+	los_nx <= lx + unsigned(resize(lsx, 6)) when (los_sx = '1') else lx;
+	los_ny <= ly + unsigned(resize(lsy, 6)) when (los_sy = '1') else ly;
+	los_nerr <= lerr - resize(ldy, 9) + resize(ldx, 9) when ((los_sx = '1') and (los_sy = '1')) else
+		lerr - resize(ldy, 9) when (los_sx = '1') else
+		lerr + resize(ldx, 9) when (los_sy = '1') else
+		lerr;
+	-- The step lands on the target's column / row (timing: both outcomes are
+	-- compared from registers, los_sx / los_sy only pick one)
+	los_tx <= '1' when (((los_sx = '1') and (lx + unsigned(resize(lsx, 6)) = lx1)) or
+		((los_sx = '0') and (lx = lx1))) else '0';
+	los_ty <= '1' when (((los_sy = '1') and (ly + unsigned(resize(lsy, 6)) = ly1)) or
+		((los_sy = '0') and (ly = ly1))) else '0';
+
+	-- Fireball: one velocity step (mod 2^16); health holds its direction
+	-- 0..15, the FIRE_VEL row
+	fly_x <= a_x + unsigned(to_signed(FIRE_VEL(to_integer(a_health(3 downto 0)))(0), 16));
+	fly_y <= a_y + unsigned(to_signed(FIRE_VEL(to_integer(a_health(3 downto 0)))(1), 16));
+	-- actors.direction16(): direction 0..15 toward (atx, aty), compares of
+	-- small multiples only (5 ay < ax, 3 ay < 2 ax, 2 ay < 3 ax, ay < 5 ax)
+	dir_ax <= resize(unsigned(abs(atx)), 22);
+	dir_ay <= resize(unsigned(abs(aty)), 22);
+	dir_sub <= to_unsigned(0, 4) when (shift_left(dir_ay, 2) + dir_ay < dir_ax) else
+		to_unsigned(1, 4) when (shift_left(dir_ay, 1) + dir_ay < shift_left(dir_ax, 1)) else
+		to_unsigned(2, 4) when (shift_left(dir_ay, 1) < shift_left(dir_ax, 1) + dir_ax) else
+		to_unsigned(3, 4) when (dir_ay < shift_left(dir_ax, 2) + dir_ax) else
+		to_unsigned(4, 4);
+	fire_dir <= dir_sub when ((atx >= 0) and (aty >= 0)) else
+		8 - dir_sub when ((atx < 0) and (aty >= 0)) else
+		8 + dir_sub when ((atx < 0) and (aty < 0)) else
+		0 - dir_sub; -- (16 - sub) & 15
+	-- Pan = clamp((lateral >> 16) >> 11, -31, 31), lateral = acc + prod
+	pan_sum <= resize(acc, 43) + resize(prod, 43);
+	pan_c <= to_signed(31, 6) when (lat > 31) else
+		to_signed(-31, 6) when (lat < -31) else
+		lat(5 downto 0);
+
+	-- Light offsets of the four light types for effects frame fxn
+	-- (render.light_mods): steady 0, flicker -5 when FLICK, strobe -8 when
+	-- bit 4, glow -(triangle(n mod 32) / 2); the muzzle flash adds 2 to all
+	-- four. Type k at 5k + 4 .. 5k (5-bit signed)
+	lm_f <= to_signed(2, FX_LMOD_W) when (flash /= 0) else to_signed(0, FX_LMOD_W);
+	lm_tri <= fxn(3 downto 1) when (fxn(4) = '0') else not fxn(3 downto 1); -- triangle / 2
+	lm_next(FX_LMOD_W - 1 downto 0) <= std_logic_vector(lm_f);
+	lm_next(2 * FX_LMOD_W - 1 downto FX_LMOD_W) <= std_logic_vector(lm_f - 5) when (FLICK(to_integer(fxn)) = '1') else
+		std_logic_vector(lm_f);
+	lm_next(3 * FX_LMOD_W - 1 downto 2 * FX_LMOD_W) <= std_logic_vector(lm_f - 8) when (fxn(4) = '1') else
+		std_logic_vector(lm_f);
+	lm_next(4 * FX_LMOD_W - 1 downto 3 * FX_LMOD_W) <= std_logic_vector(lm_f - signed(resize(lm_tri, FX_LMOD_W)));
+	-- Sprite light: clamp(tile light + offset of the tile's light type, 0, 15)
+	with spr_ty select spr_lmod <=
+		signed(lm(FX_LMOD_W - 1 downto 0)) when "00",
+		signed(lm(2 * FX_LMOD_W - 1 downto FX_LMOD_W)) when "01",
+		signed(lm(3 * FX_LMOD_W - 1 downto 2 * FX_LMOD_W)) when "10",
+		signed(lm(4 * FX_LMOD_W - 1 downto 3 * FX_LMOD_W)) when others;
+	spr_lsum <= signed(resize(unsigned(spr_e(SPR_LIGHT_HI downto SPR_LIGHT_LO)), 6)) + resize(spr_lmod, 6);
+	spr_light <= "0000" when (spr_lsum < 0) else
+		"1111" when (spr_lsum > 15) else
+		std_logic_vector(spr_lsum(3 downto 0));
+
+	------------------------------------------------------------------
+	-- State machine: one Game.step per frame (see the header for the
+	-- flow). Every read of the map, span, z or actor port goes through
+	-- CORE_WAIT: the state sets the address and wret, CORE_WAIT gives the
+	-- memory its clock, wret sees the data.
+	------------------------------------------------------------------
 	process(clk_i, rst_i)
 	begin
 		if (rst_i = '1') then
-			r <= REGS_INIT;
+			core_state <= CORE_INIT;
+			wret <= CORE_INIT;
+			box_ret <= CORE_INIT;
+			los_ret <= CORE_INIT;
+			db_ret <= CORE_INIT;
+			snd_ret <= CORE_INIT;
+			dp_ret <= CORE_INIT;
+			en_ret <= CORE_INIT;
+			sp_ret <= CORE_INIT;
+			fat_ret <= CORE_INIT;
+			bfl_ret <= CORE_INIT;
+			armed <= '0';
+			pending <= '0';
+			snap_in <= (others => '0');
+			snap <= (others => '0');
+			in_step <= '0';
+			flow <= FL_TITLE;
+			level <= "01";
+			prev_fire <= '0';
+			debug <= '0';
+			pl_health <= to_unsigned(100, 8);
+			pl_armor <= (others => '0');
+			pl_bullets <= to_unsigned(50, 8);
+			pl_shells <= (others => '0');
+			pl_weapons <= "01";
+			pl_weapon <= "01";
+			saved_health <= to_unsigned(100, 8);
+			saved_armor <= (others => '0');
+			saved_bullets <= to_unsigned(50, 8);
+			saved_shells <= (others => '0');
+			saved_weapons <= "01";
+			saved_weapon <= "01";
+			px <= (others => '0');
+			py <= (others => '0');
+			angle <= (others => '0');
+			eye <= to_unsigned(32, 7);
+			z <= (others => '0');
+			vz <= (others => '0');
+			off <= (others => '0');
+			cam_x <= (others => '0');
+			cam_y <= (others => '0');
+			keys <= (others => '0');
+			cooldown <= (others => '0');
+			flash <= (others => '0');
+			dflash <= (others => '0');
+			pflash <= (others => '0');
+			msg <= (others => '0');
+			msg_timer <= (others => '0');
+			phase <= (others => '0');
+			kills <= (others => '0');
+			items <= (others => '0');
+			secrets <= (others => '0');
+			tkills <= (others => '0');
+			titems <= (others => '0');
+			tsecrets <= (others => '0');
+			t_frames <= (others => '0');
+			t_sec <= (others => '0');
+			t_min <= (others => '0');
+			lfsr <= (others => '0');
+			boss_timer <= (others => '0');
+			level_done <= '0';
+			dead_timer <= (others => '0');
+			automap <= '0';
+			on_toxic <= '0';
+			door_x <= (others => (others => '0'));
+			door_y <= (others => (others => '0'));
+			door_amt <= (others => (others => '0'));
+			door_state <= (others => DS_IDLE);
+			door_timer <= (others => (others => '0'));
+			cs <= (others => '0');
+			sn <= (others => '0');
+			mdx <= (others => '0');
+			mdy <= (others => '0');
+			my <= '0';
+			maddr <= (others => '0');
+			bx <= (others => '0');
+			by <= (others => '0');
+			bsmall <= '0';
+			bk <= (others => '0');
+			hit <= '0';
+			bz <= (others => '0');
+			fpx <= (others => '0');
+			fpy <= (others => '0');
+			ff <= (others => '0');
+			fs <= (others => '0');
+			fat <= (others => '0');
+			bfk <= (others => '0');
+			bfl <= (others => '0');
+			lx <= (others => '0');
+			ly <= (others => '0');
+			lx1 <= (others => '0');
+			ly1 <= (others => '0');
+			ldx <= (others => '0');
+			ldy <= (others => '0');
+			lsx <= (others => '0');
+			lsy <= (others => '0');
+			lerr <= (others => '0');
+			lcnt <= (others => '0');
+			los <= '0';
+			di <= (others => '0');
+			blocked <= '0';
+			snd_id <= (others => '0');
+			snd_act <= '0';
+			svol <= (others => '0');
+			mul_a <= (others => '0');
+			mul_b <= (others => '0');
+			acc <= (others => '0');
+			lat <= (others => '0');
+			sq <= (others => (others => '0'));
+			sq_n <= (others => '0');
+			oq <= (others => (others => '0'));
+			oq_n <= (others => '0');
+			oq_p <= (others => '0');
+			dmg <= (others => '0');
+			a_x <= (others => '0');
+			a_y <= (others => '0');
+			a_state <= (others => '0');
+			a_timer <= (others => '0');
+			a_health <= (others => '0');
+			a_typ <= (others => '0');
+			a_active <= '0';
+			a_solid <= '0';
+			a_awake <= '0';
+			a_ambush <= '0';
+			ai <= (others => '0');
+			aaddr <= (others => '0');
+			en_s <= (others => '0');
+			sp_type <= (others => '0');
+			sp_state <= (others => '0');
+			sp_health <= (others => '0');
+			cdist <= (others => '0');
+			csx <= (others => '0');
+			csy <= (others => '0');
+			hk <= (others => '0');
+			hshot <= '0';
+			hdmg <= (others => '0');
+			zw <= (others => '0');
+			span_addr <= (others => '0');
+			zw_addr <= (others => '0');
+			best_v <= '0';
+			best_i <= (others => '0');
+			best_z <= (others => '0');
+			tp1 <= '0';
+			spr_n <= (others => '0');
+			spr_e <= (others => '0');
+			spr_ty <= (others => '0');
+			fxn <= (others => '0');
+			lm <= (others => '0');
+			kp <= (others => '0');
+			bank <= '0';
+			cw <= (others => '0');
+			cb <= (others => '0');
+			cword <= (others => '0');
+			load_req <= '0';
+			loaded <= '0';
+			start <= '0';
+			cam_x_out <= (others => '0');
+			cam_y_out <= (others => '0');
+			angle_out <= (others => '0');
+			eye_out <= (others => '0');
+			doors_out <= (others => '0');
+			player_x_out <= (others => '0');
+			player_y_out <= (others => '0');
+			hud_out <= (others => '0');
+			keypos_out <= (others => '0');
+			music_out <= (others => '0');
+			tint_out <= (others => '0');
+			fx_out <= (others => '0');
+			spr_count_out <= (others => '0');
+			crc_out <= (others => '0');
+			qhead <= (others => '0');
+			qtail <= (others => '0');
+			qra <= (others => '0');
+			cur <= (others => '0');
+			nk <= (others => '0');
+			ncell <= (others => '0');
+			vaddr <= (others => '0');
+			aram_we <= '0';
+			aram_waddr <= (others => '0');
+			aram_wdata <= (others => '0');
+			spr_we <= '0';
+			spr_waddr <= (others => '0');
+			spr_wdata <= (others => '0');
 		elsif rising_edge(clk_i) then
-			r <= r_next;
+			-- Pulses and write enables last one clock
+			load_req <= '0';
+			loaded <= '0';
+			start <= '0';
+			aram_we <= '0';
+			spr_we <= '0';
+
+			-- Snapshot capture (any state): the step after a frame start
+			if (frame_start_i = '1') then
+				armed <= '1';
+			end if;
+			if ((snapshot_valid_i = '1') and ((armed = '1') or (frame_start_i = '1'))) then
+				snap_in <= snapshot_i;
+				pending <= '1';
+				armed <= '0';
+			end if;
+
+			-- Sound commands of the last step go out one per handshake
+			if ((oq_p /= oq_n) and (snd_ready_i = '1')) then
+				oq_p <= oq_p + 1;
+			end if;
+
+			case core_state is
+				--------------------------------------------------------------
+				-- Level load: request, wait (the loader writes the actor
+				-- RAM meanwhile), reset_level_state(), totals
+				--------------------------------------------------------------
+				when CORE_INIT =>
+					-- Game.__init__ loads level 1 (and stays on TITLE)
+					in_step <= '0';
+					core_state <= CORE_LOAD;
+
+				when CORE_LOAD =>
+					load_req <= '1';
+					core_state <= CORE_LOAD_W;
+
+				when CORE_LOAD_W =>
+					-- The loader owns the actor RAM write port
+					aram_we <= act_we_i;
+					aram_waddr <= unsigned(act_addr_i);
+					aram_wdata <= act_data_i;
+					if (load_done_i = '1') then
+						px <= signed(resize(unsigned(start_x_i), 24));
+						py <= signed(resize(unsigned(start_y_i), 24));
+						angle <= unsigned(start_angle_i);
+						eye <= to_unsigned(32, 7);
+						off <= (others => '0');
+						cam_x <= signed(resize(unsigned(start_x_i), 24));
+						cam_y <= signed(resize(unsigned(start_y_i), 24));
+						keys <= (others => '0');
+						cooldown <= (others => '0');
+						flash <= (others => '0');
+						dflash <= (others => '0');
+						pflash <= (others => '0');
+						msg <= (others => '0');
+						msg_timer <= (others => '0');
+						phase <= (others => '0');
+						kills <= (others => '0');
+						items <= (others => '0');
+						secrets <= (others => '0');
+						tkills <= (others => '0');
+						titems <= (others => '0');
+						tsecrets <= (others => '0');
+						t_frames <= (others => '0');
+						t_sec <= (others => '0');
+						t_min <= (others => '0');
+						lfsr <= x"ACE1" xor ("000000" & level & x"00"); -- Seed 0xACE1 ^ (level << 8)
+						boss_timer <= (others => '0');
+						level_done <= '0';
+						dead_timer <= (others => '0');
+						automap <= '0';
+						door_x <= (others => (others => '0'));
+						door_y <= (others => (others => '0'));
+						door_amt <= (others => (others => '0'));
+						door_state <= (others => DS_IDLE);
+						door_timer <= (others => (others => '0'));
+						aaddr <= (others => '0');
+						wret <= CORE_TOTA;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_TOTA =>
+					-- Monsters (types 0..3) and items among the active actors
+					if (aq(ACTOR_ACTIVE) = '1') then
+						if (q_typ < 4) then
+							tkills <= tkills + 1;
+						elsif (q_typ = T_ITEM) then
+							titems <= titems + 1;
+						end if;
+					end if;
+					if (aaddr = 31) then
+						core_state <= CORE_TOT0;
+					else
+						aaddr <= aaddr + 1;
+						wret <= CORE_TOTA;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_TOT0 =>
+					maddr <= (others => '0');
+					tp1 <= '0';
+					core_state <= CORE_TOT;
+
+				when CORE_TOT =>
+					-- Secret tiles: one address per clock; map_data_i is the
+					-- tile of the address one clock earlier (tp1 marks it valid)
+					if ((tp1 = '1') and (map_sp = SPECIAL_PUSHWALL)) then
+						tsecrets <= tsecrets + 1;
+					end if;
+					tp1 <= '1';
+					if (maddr = 4095) then
+						core_state <= CORE_TOT_LAST;
+					else
+						maddr <= maddr + 1;
+					end if;
+
+				when CORE_TOT_LAST =>
+					if (map_sp = SPECIAL_PUSHWALL) then
+						tsecrets <= tsecrets + 1;
+					end if;
+					tp1 <= '0';
+					-- z = box_floor(start), vz = 0 (Game.reset_level_state)
+					bx <= px;
+					by <= py;
+					bfl_ret <= CORE_LOAD_Z;
+					core_state <= CORE_BFL;
+
+				when CORE_LOAD_Z =>
+					z <= bfl;
+					vz <= (others => '0');
+					loaded <= '1';
+					if (in_step = '1') then
+						core_state <= CORE_END;
+					else
+						core_state <= CORE_IDLE;
+					end if;
+
+				--------------------------------------------------------------
+				-- Frame start and game flow (Game.step)
+				--------------------------------------------------------------
+				when CORE_IDLE =>
+					if (pending = '1') then
+						snap <= snap_in;
+						pending <= '0';
+						core_state <= CORE_STEP;
+					end if;
+
+				when CORE_STEP =>
+					sq_n <= (others => '0');
+					prev_fire <= snap(SNAP_FIRE);
+					if (snap(SNAP_DEBUG) = '1') then
+						debug <= not debug;
+					end if;
+					in_step <= '1';
+					core_state <= CORE_END;
+					case flow is
+						when FL_TITLE =>
+							if (go = '1') then
+								pl_health <= to_unsigned(100, 8);
+								pl_armor <= (others => '0');
+								pl_bullets <= to_unsigned(50, 8);
+								pl_shells <= (others => '0');
+								pl_weapons <= "01";
+								pl_weapon <= "01";
+								level <= "01";
+								flow <= FL_BRIEFING;
+							end if;
+						when FL_BRIEFING =>
+							if (go = '1') then
+								saved_health <= pl_health;
+								saved_armor <= pl_armor;
+								saved_bullets <= pl_bullets;
+								saved_shells <= pl_shells;
+								saved_weapons <= pl_weapons;
+								saved_weapon <= pl_weapon;
+								flow <= FL_PLAYING;
+								core_state <= CORE_LOAD;
+							end if;
+						when FL_PAUSED =>
+							if (snap(SNAP_MENU) = '1') then
+								flow <= FL_PLAYING;
+							end if;
+						when FL_DEAD =>
+							if (dead_timer /= 63) then
+								dead_timer <= dead_timer + 1;
+							end if;
+							if (eye > 8) then
+								eye <= eye - 2;
+							end if;
+							-- The new dead_timer > 30, i.e. the old one >= 30
+							if ((dead_timer >= 30) and (go = '1')) then
+								pl_health <= saved_health;
+								pl_armor <= saved_armor;
+								pl_bullets <= saved_bullets;
+								pl_shells <= saved_shells;
+								pl_weapons <= saved_weapons;
+								pl_weapon <= saved_weapon;
+								flow <= FL_PLAYING;
+								core_state <= CORE_LOAD;
+							end if;
+						when FL_SCORE =>
+							if (go = '1') then
+								if (level < LEVELS) then
+									level <= level + 1;
+									flow <= FL_BRIEFING;
+								else
+									flow <= FL_ENDING;
+								end if;
+							end if;
+						when FL_ENDING =>
+							if (go = '1') then
+								flow <= FL_TITLE;
+							end if;
+						when others =>
+							-- PLAYING
+							if (snap(SNAP_MENU) = '1') then
+								flow <= FL_PAUSED;
+							else
+								core_state <= CORE_PLAY;
+							end if;
+					end case;
+
+				--------------------------------------------------------------
+				-- 1. Level clock, turn, duck and peek easing, automap
+				--------------------------------------------------------------
+				when CORE_PLAY =>
+					if (t_frames = 59) then
+						t_frames <= (others => '0');
+						if (t_sec = 59) then
+							t_sec <= (others => '0');
+							if (t_min /= 99) then -- The level clock stops at 99 minutes
+								t_min <= t_min + 1;
+							end if;
+						else
+							t_sec <= t_sec + 1;
+						end if;
+					else
+						t_frames <= t_frames + 1;
+					end if;
+					-- Adding the low 10 bits of the signed turn is mod 1024
+					angle <= angle + unsigned(snap(SNAP_TURN_LO + 9 downto SNAP_TURN_LO));
+					if (eye < eye_t) then
+						eye <= eye + 2;
+					elsif (eye > eye_t) then
+						eye <= eye - 2;
+					end if;
+					if (off < peek_t) then
+						off <= off + 2;
+					elsif (off > peek_t) then
+						off <= off - 2;
+					end if;
+					if (snap(SNAP_AUTOMAP) = '1') then
+						automap <= not automap;
+					end if;
+					core_state <= CORE_P_SIN;
+
+				when CORE_P_SIN =>
+					-- rom_addr = angle, sin arrives in CORE_P_COS
+					core_state <= CORE_P_COS;
+
+				when CORE_P_COS =>
+					-- rom_addr = angle + 256, cos arrives in CORE_P_VEL
+					sn <= rom_data;
+					core_state <= CORE_P_VEL;
+
+				when CORE_P_VEL =>
+					-- Velocity >> 3 running or >> 4 walking, one more when ducking
+					cs <= rom_data;
+					if ((snap(SNAP_RUN) = '1') and (snap(SNAP_DUCK) = '0')) then
+						mdx <= resize(shift_right(vel_x, 3), 24);
+						mdy <= resize(shift_right(vel_y, 3), 24);
+					elsif ((snap(SNAP_RUN) = '1') or (snap(SNAP_DUCK) = '0')) then
+						mdx <= resize(shift_right(vel_x, 4), 24);
+						mdy <= resize(shift_right(vel_y, 4), 24);
+					else
+						mdx <= resize(shift_right(vel_x, 5), 24);
+						mdy <= resize(shift_right(vel_y, 5), 24);
+					end if;
+					my <= '0';
+					core_state <= CORE_MOVE;
+
+				--------------------------------------------------------------
+				-- 2. Move x, then y (Game.move_x, move_y)
+				--------------------------------------------------------------
+				when CORE_MOVE =>
+					if (my = '0') then
+						bx <= px + mdx;
+						by <= py;
+					else
+						bx <= px;
+						by <= py + mdy;
+					end if;
+					if (((my = '0') and (mdx = 0)) or ((my = '1') and (mdy = 0))) then
+						core_state <= CORE_MOVE_NEXT;
+					else
+						bsmall <= '0';
+						bz <= z;
+						box_ret <= CORE_MOVE_BOX;
+						core_state <= CORE_BOX;
+					end if;
+
+				when CORE_MOVE_BOX =>
+					if (hit = '1') then
+						-- Flush against the cell the box ran into
+						if (my = '0') then
+							if (mdx > 0) then
+								if (flush_xp > px) then
+									px <= flush_xp;
+								end if;
+							else
+								if (flush_xn < px) then
+									px <= flush_xn;
+								end if;
+							end if;
+						else
+							if (mdy > 0) then
+								if (flush_yp > py) then
+									py <= flush_yp;
+								end if;
+							else
+								if (flush_yn < py) then
+									py <= flush_yn;
+								end if;
+							end if;
+						end if;
+						core_state <= CORE_MOVE_NEXT;
+					else
+						aaddr <= (others => '0');
+						wret <= CORE_AB;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_AB =>
+					-- Game.actor_blocks(): one actor per clock
+					if (hit_block = '1') then
+						core_state <= CORE_MOVE_NEXT;
+					elsif (aaddr = 31) then
+						if (my = '0') then
+							px <= bx;
+						else
+							py <= by;
+						end if;
+						core_state <= CORE_MOVE_NEXT;
+					else
+						aaddr <= aaddr + 1;
+						wret <= CORE_AB;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_MOVE_NEXT =>
+					if (my = '0') then
+						my <= '1';
+						core_state <= CORE_MOVE;
+					else
+						if ((snap(SNAP_MOVE_HI downto SNAP_MOVE_LO) /= "00") or
+							(snap(SNAP_STRAFE_HI downto SNAP_STRAFE_LO) /= "00")) then
+							phase <= phase + 1;
+						end if;
+						core_state <= CORE_ZF;
+					end if;
+
+				--------------------------------------------------------------
+				-- Floor contact: step up at once, fall with gravity
+				--------------------------------------------------------------
+				when CORE_ZF =>
+					bx <= px;
+					by <= py;
+					bfl_ret <= CORE_ZF2;
+					core_state <= CORE_BFL;
+
+				when CORE_ZF2 =>
+					-- fall_v = min(vz + FALL_ACC, FALL_MAX)
+					if (z > bfl) then
+						if (z - bfl <= fall_v) then
+							z <= bfl;
+							vz <= (others => '0');
+						else
+							z <= z - fall_v;
+							vz <= fall_v;
+						end if;
+					else
+						z <= bfl;
+						vz <= (others => '0');
+					end if;
+					core_state <= CORE_PEEK;
+
+				--------------------------------------------------------------
+				-- 3. Peek camera: (px + (-sn off >> 6), py + (cs off >> 6));
+				-- the offset shrinks by 2 until the camera box is free
+				--------------------------------------------------------------
+				when CORE_PEEK =>
+					if (off = 0) then
+						cam_x <= px;
+						cam_y <= py;
+						core_state <= CORE_PICK;
+					else
+						mul_a <= resize(off, 24);
+						mul_b <= -sn;
+						core_state <= CORE_PEEK_M1;
+					end if;
+
+				when CORE_PEEK_M1 =>
+					mul_b <= cs;
+					core_state <= CORE_PEEK_M2;
+
+				when CORE_PEEK_M2 =>
+					acc <= prod; -- -sn * off
+					core_state <= CORE_PEEK_M3;
+
+				when CORE_PEEK_M3 =>
+					bx <= px + resize(shift_right(acc, 6), 24);
+					by <= py + resize(shift_right(prod, 6), 24); -- cs * off
+					bsmall <= '1';
+					box_ret <= CORE_PEEK2;
+					core_state <= CORE_BOX;
+
+				when CORE_PEEK2 =>
+					if (hit = '0') then
+						cam_x <= bx;
+						cam_y <= by;
+						core_state <= CORE_PICK;
+					else
+						if (off > 0) then
+							off <= off - 2;
+						else
+							off <= off + 2;
+						end if;
+						core_state <= CORE_PEEK;
+					end if;
+
+				--------------------------------------------------------------
+				-- 4. Pickups in actor order, then the floor under the player
+				--------------------------------------------------------------
+				when CORE_PICK =>
+					aaddr <= (others => '0');
+					wret <= CORE_PICK_T;
+					core_state <= CORE_WAIT;
+
+				when CORE_PICK_T =>
+					core_state <= CORE_PICK_N;
+					if (hit_pick = '1') then
+						case q_kind is
+							when 0 =>
+								if (pl_health < 90) then
+									pl_health <= pl_health + 10;
+								else
+									pl_health <= to_unsigned(100, 8);
+								end if;
+							when 1 =>
+								if (pl_health < 75) then
+									pl_health <= pl_health + 25;
+								else
+									pl_health <= to_unsigned(100, 8);
+								end if;
+							when 2 =>
+								if (pl_armor < 100) then
+									pl_armor <= to_unsigned(100, 8);
+								end if;
+							when 3 =>
+								if (pl_bullets < 190) then
+									pl_bullets <= pl_bullets + 10;
+								else
+									pl_bullets <= to_unsigned(200, 8);
+								end if;
+							when 4 =>
+								if (pl_shells < 46) then
+									pl_shells <= pl_shells + 4;
+								else
+									pl_shells <= to_unsigned(50, 6);
+								end if;
+							when 5 =>
+								pl_weapons <= pl_weapons or "10";
+								pl_weapon <= "10";
+								if (pl_shells < 42) then
+									pl_shells <= pl_shells + 8;
+								else
+									pl_shells <= to_unsigned(50, 6);
+								end if;
+							when 6 =>
+								keys <= keys or "01";
+							when others =>
+								keys <= keys or "10";
+						end case;
+						if (took = '1') then
+							-- Write the item back inactive
+							aram_we <= '1';
+							aram_waddr <= aaddr;
+							aram_wdata <= aq;
+							aram_wdata(ACTOR_ACTIVE) <= '0';
+							items <= items + 1;
+							pflash <= to_unsigned(6, 3);
+							msg <= to_unsigned(q_kind + 1, 4); -- ITEM_MSG[kind]
+							msg_timer <= to_unsigned(MSG_TIME, 7);
+							if (q_kind = I_SHOTGUN) then
+								snd_id <= to_unsigned(SND_WEAPON, 5);
+							else
+								snd_id <= to_unsigned(SND_ITEM, 5);
+							end if;
+							snd_act <= '0';
+							snd_ret <= CORE_PICK_N;
+							core_state <= CORE_SND;
+						end if;
+					end if;
+
+				when CORE_PICK_N =>
+					if (aaddr = 31) then
+						core_state <= CORE_SPEC;
+					else
+						aaddr <= aaddr + 1;
+						wret <= CORE_PICK_T;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_SPEC =>
+					maddr <= pcell;
+					wret <= CORE_SPEC2;
+					core_state <= CORE_WAIT;
+
+				when CORE_SPEC2 =>
+					-- Secret: count it once (map_we_o clears the special in the
+					-- map this clock); toxic floor: 5 damage every 32 frames
+					if (map_sp = SPECIAL_TOXIC) then
+						on_toxic <= '1';
+					else
+						on_toxic <= '0';
+					end if;
+					core_state <= CORE_USE;
+					if (map_sp = SPECIAL_PUSHWALL) then
+						secrets <= secrets + 1;
+						msg <= to_unsigned(11, 4); -- M_SECRET
+						msg_timer <= to_unsigned(MSG_TIME, 7);
+					elsif ((map_sp = SPECIAL_TOXIC) and (t_frames(4 downto 0) = 0)) then
+						dmg <= to_unsigned(5, 6);
+						dp_ret <= CORE_USE;
+						core_state <= CORE_DP;
+					end if;
+
+				--------------------------------------------------------------
+				-- 5. Use: the cell 0.75 tile ahead
+				--------------------------------------------------------------
+				when CORE_USE =>
+					maddr <= use_cell;
+					if (snap(SNAP_USE) = '1') then
+						wret <= CORE_USE2;
+						core_state <= CORE_WAIT;
+					else
+						core_state <= CORE_WPN;
+					end if;
+
+				when CORE_USE2 =>
+					core_state <= CORE_WPN;
+					snd_act <= '0';
+					snd_ret <= CORE_WPN;
+					case map_sp is
+						when SPECIAL_DOOR =>
+							core_state <= CORE_UDOOR;
+						when SPECIAL_LOCKED1 | SPECIAL_LOCKED2 =>
+							if (((map_sp = SPECIAL_LOCKED1) and (keys(0) = '1')) or
+								((map_sp = SPECIAL_LOCKED2) and (keys(1) = '1'))) then
+								core_state <= CORE_UDOOR;
+							else
+								if (map_sp = SPECIAL_LOCKED1) then
+									msg <= to_unsigned(9, 4); -- M_NEED1
+								else
+									msg <= to_unsigned(10, 4); -- M_NEED2
+								end if;
+								msg_timer <= to_unsigned(MSG_TIME, 7);
+								snd_id <= to_unsigned(SND_NOWAY, 5);
+								core_state <= CORE_SND;
+							end if;
+						when SPECIAL_EXIT =>
+							level_done <= '1';
+							snd_id <= to_unsigned(SND_SWITCH, 5);
+							core_state <= CORE_SND;
+						when others =>
+							null;
+					end case;
+
+				when CORE_UDOOR =>
+					-- Game.use_door(): new entry, close an open door, reopen a
+					-- closing one
+					core_state <= CORE_WPN;
+					snd_act <= '0';
+					snd_ret <= CORE_WPN;
+					if (didx = 8) then
+						if (dfree < 8) then
+							door_x(dfree mod 8) <= maddr(5 downto 0);
+							door_y(dfree mod 8) <= maddr(11 downto 6);
+							door_amt(dfree mod 8) <= (others => '0');
+							door_timer(dfree mod 8) <= (others => '0');
+							door_state(dfree mod 8) <= DS_OPENING;
+							snd_id <= to_unsigned(SND_DOOR_OPEN, 5);
+							core_state <= CORE_SND;
+						end if;
+					elsif (door_state(didx mod 8) = DS_OPEN) then
+						di <= to_unsigned(didx mod 8, 3);
+						db_ret <= CORE_UDOOR2;
+						core_state <= CORE_DB;
+					elsif (door_state(didx mod 8) = DS_CLOSING) then
+						door_state(didx mod 8) <= DS_OPENING;
+					end if;
+
+				when CORE_UDOOR2 =>
+					core_state <= CORE_WPN;
+					if (blocked = '0') then
+						door_state(dk) <= DS_CLOSING;
+						snd_id <= to_unsigned(SND_DOOR_CLOSE, 5);
+						snd_act <= '0';
+						snd_ret <= CORE_WPN;
+						core_state <= CORE_SND;
+					end if;
+
+				--------------------------------------------------------------
+				-- 6. Weapon: select, cooldown, fire
+				--------------------------------------------------------------
+				when CORE_WPN =>
+					pl_weapon <= wpn_next;
+					if (cooldown > 0) then
+						cooldown <= cooldown - 1;
+					end if;
+					if (flash > 0) then
+						flash <= flash - 1;
+					end if;
+					core_state <= CORE_ACTORS;
+					snd_act <= '0';
+					snd_ret <= CORE_HS_COL;
+					-- Fire when the cooldown is 0 after this frame's count
+					if ((snap(SNAP_FIRE) = '1') and (cooldown <= 1)) then
+						if ((wpn_next = 1) and (pl_bullets > 0)) then
+							pl_bullets <= pl_bullets - 1;
+							cooldown <= to_unsigned(14, 6);
+							flash <= to_unsigned(4, 3);
+							snd_id <= to_unsigned(SND_PISTOL, 5);
+							hk <= to_unsigned(3, 3); -- Column 160 only
+							hshot <= '0';
+							core_state <= CORE_SND;
+						elsif ((wpn_next = 2) and (pl_shells > 0)) then
+							pl_shells <= pl_shells - 1;
+							cooldown <= to_unsigned(40, 6);
+							flash <= to_unsigned(4, 3);
+							snd_id <= to_unsigned(SND_SHOTGUN, 5);
+							hk <= to_unsigned(0, 3); -- Columns 136, 144 .. 184
+							hshot <= '1';
+							core_state <= CORE_SND;
+						end if;
+					end if;
+
+				--------------------------------------------------------------
+				-- Hitscan (Game.hitscan): the nearest span over the column in
+				-- front of the wall; damage 5 * (1 + (random & 3)) drawn first
+				--------------------------------------------------------------
+				when CORE_HS_COL =>
+					lfsr <= lfsr_n;
+					hdmg <= times_const(lfsr_n(1 downto 0) + "0001", 5);
+					zw_addr <= to_unsigned(136, 9) + shift_left(resize(hk, 9), 3);
+					wret <= CORE_HS_ZW;
+					core_state <= CORE_WAIT;
+
+				when CORE_HS_ZW =>
+					zw <= unsigned(zwall_data_i);
+					best_v <= '0';
+					span_addr <= (others => '0');
+					if (unsigned(span_count_i) = 0) then
+						core_state <= CORE_HS_END;
+					else
+						wret <= CORE_HS_SP;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_HS_SP =>
+					-- Span over column zw_addr, in front of the wall, nearest so far
+					if ((unsigned(span_data_i(SPAN_X0_HI downto SPAN_X0_LO)) <= zw_addr) and
+						(zw_addr <= unsigned(span_data_i(SPAN_X1_HI downto SPAN_X1_LO))) and
+						(unsigned(span_data_i(SPAN_Z_HI downto SPAN_Z_LO)) < zw) and
+						((best_v = '0') or (unsigned(span_data_i(SPAN_Z_HI downto SPAN_Z_LO)) < best_z))) then
+						best_v <= '1';
+						best_i <= unsigned(span_data_i(SPAN_IDX_HI downto SPAN_IDX_LO));
+						best_z <= unsigned(span_data_i(SPAN_Z_HI downto SPAN_Z_LO));
+					end if;
+					if (resize(span_addr, 6) + 1 = unsigned(span_count_i)) then -- That was the last span
+						core_state <= CORE_HS_END;
+					else
+						span_addr <= span_addr + 1;
+						wret <= CORE_HS_SP;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_HS_END =>
+					if (best_v = '1') then
+						aaddr <= best_i;
+						ai <= best_i;
+						wret <= CORE_DA;
+						core_state <= CORE_WAIT;
+					else
+						core_state <= CORE_HS_NEXT;
+					end if;
+
+				when CORE_DA =>
+					-- Game.damage_actor(): only living (solid) actors; a = the
+					-- target with its new health
+					core_state <= CORE_HS_NEXT;
+					if ((aq(ACTOR_ACTIVE) = '1') and (aq(ACTOR_SOLID) = '1')) then
+						en_ret <= CORE_HS_WB;
+						a_x <= q_x;
+						a_y <= q_y;
+						a_state <= q_state;
+						a_timer <= unsigned(aq(ACTOR_TIMER_HI downto ACTOR_TIMER_LO));
+						a_typ <= q_typ;
+						a_active <= aq(ACTOR_ACTIVE);
+						a_solid <= aq(ACTOR_SOLID);
+						a_awake <= aq(ACTOR_AWAKE);
+						a_ambush <= aq(ACTOR_AMBUSH);
+						if (da_hp <= 0) then
+							a_health <= (others => '0');
+							en_s <= to_unsigned(TYPE_TABLE(q_k)(TP_DIE_ST), 7);
+							core_state <= CORE_ENTER;
+						else
+							a_health <= unsigned(da_hp(11 downto 0));
+							a_awake <= '1';
+							lfsr <= lfsr_n;
+							core_state <= CORE_HS_WB;
+							if (to_integer(lfsr_n(7 downto 0)) < TYPE_TABLE(q_k)(TP_PAIN)) then -- Pain chance out of 256
+								en_s <= to_unsigned(TYPE_TABLE(q_k)(TP_PAIN_ST), 7);
+								core_state <= CORE_ENTER;
+							elsif (aq(ACTOR_AWAKE) = '0') then
+								en_s <= to_unsigned(TYPE_TABLE(q_k)(TP_CHASE), 7);
+								core_state <= CORE_ENTER;
+							end if;
+						end if;
+					end if;
+
+				when CORE_HS_WB =>
+					aram_we <= '1';
+					aram_waddr <= ai;
+					aram_wdata <= a_word;
+					core_state <= CORE_HS_NEXT;
+
+				when CORE_HS_NEXT =>
+					if ((hshot = '1') and (hk /= 6)) then
+						hk <= hk + 1;
+						core_state <= CORE_HS_COL;
+					else
+						core_state <= CORE_AL0;
+					end if;
+
+				--------------------------------------------------------------
+				-- Sound alert (Game.alert), after the shot's hitscans:
+				-- breadth-first flood fill from the player's cell over the 4
+				-- neighbors that are not solid (walls, closed doors), then the
+				-- actor pass, then the visited bits are cleared through the
+				-- queue. The RAM writes are the al_* decodes above.
+				--------------------------------------------------------------
+				when CORE_AL0 =>
+					-- The player's cell is queued and marked this clock
+					qhead <= (others => '0');
+					qtail <= to_unsigned(1, 13); -- 13 bits: 4096 queued cells must not look empty
+					core_state <= CORE_AL_POP;
+
+				when CORE_AL_POP =>
+					if (qhead = qtail) then
+						-- Fill done: the actors in slot order
+						ai <= (others => '0');
+						aaddr <= (others => '0');
+						wret <= CORE_AL_LD;
+						core_state <= CORE_WAIT;
+					else
+						qra <= qhead(11 downto 0);
+						core_state <= CORE_AL_POPW;
+					end if;
+
+				when CORE_AL_POPW =>
+					-- The queue address is at the memory now; data next clock
+					core_state <= CORE_AL_CUR;
+
+				when CORE_AL_CUR =>
+					cur <= unsigned(alq_q);
+					qhead <= qhead + 1;
+					nk <= "00";
+					core_state <= CORE_AL_NB;
+
+				when CORE_AL_NB =>
+					-- Neighbor nk of the current cell
+					ncell <= nb_cell;
+					maddr <= nb_cell;
+					vaddr <= nb_cell;
+					wret <= CORE_AL_NBD;
+					core_state <= CORE_WAIT;
+
+				when CORE_AL_NBD =>
+					-- Tile word, door-open flag and visited bit of ncell are here:
+					-- an open, unvisited cell is marked and queued
+					if (al_open = '1') then
+						qtail <= qtail + 1;
+					end if;
+					if (nk = 3) then
+						core_state <= CORE_AL_POP;
+					else
+						nk <= nk + 1;
+						core_state <= CORE_AL_NB;
+					end if;
+
+				when CORE_AL_LD =>
+					a_x <= q_x;
+					a_y <= q_y;
+					a_state <= q_state;
+					a_timer <= unsigned(aq(ACTOR_TIMER_HI downto ACTOR_TIMER_LO));
+					a_health <= q_health;
+					a_typ <= q_typ;
+					a_active <= aq(ACTOR_ACTIVE);
+					a_solid <= aq(ACTOR_SOLID);
+					a_awake <= aq(ACTOR_AWAKE);
+					a_ambush <= aq(ACTOR_AMBUSH);
+					vaddr <= q_y(15 downto 10) & q_x(15 downto 10); -- Integer parts of Q6.10: the actor's cell
+					core_state <= CORE_AL_LD2;
+
+				when CORE_AL_LD2 =>
+					-- The actor cell's visited bit arrives next clock
+					core_state <= CORE_AL_CHK;
+
+				when CORE_AL_CHK =>
+					-- A sleeping, living monster in a LOOK state, not an ambusher,
+					-- in a reached cell wakes as in LOOK (CORE_LOOK2, CORE_LOOK3)
+					core_state <= CORE_AL_NX;
+					if ((a_active = '1') and (a_solid = '1') and (a_typ < 4) and (a_awake = '0') and
+						(a_ambush = '0') and (a_act = A_LOOK) and (vis_q = '1')) then
+						a_awake <= '1';
+						if (a_typ = T_BOSS) then
+							snd_id <= to_unsigned(SND_BOSS_SIGHT, 5);
+						else
+							snd_id <= to_unsigned(SND_SIGHT, 5);
+						end if;
+						snd_act <= '1';
+						snd_ret <= CORE_AL_ENT;
+						core_state <= CORE_SND;
+					end if;
+
+				when CORE_AL_ENT =>
+					en_s <= to_unsigned(TYPE_TABLE(a_k)(TP_CHASE), 7);
+					en_ret <= CORE_AL_WB;
+					core_state <= CORE_ENTER;
+
+				when CORE_AL_WB =>
+					aram_we <= '1';
+					aram_waddr <= ai;
+					aram_wdata <= a_word;
+					core_state <= CORE_AL_NX;
+
+				when CORE_AL_NX =>
+					if (ai = 31) then
+						qhead <= (others => '0');
+						core_state <= CORE_AL_CLR;
+					else
+						ai <= ai + 1;
+						aaddr <= ai + 1;
+						wret <= CORE_AL_LD;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_AL_CLR =>
+					-- Clear the visited bit of every queued cell (qhead counts)
+					if (qhead = qtail) then
+						core_state <= CORE_ACTORS;
+					else
+						qra <= qhead(11 downto 0);
+						core_state <= CORE_AL_CLRW;
+					end if;
+
+				when CORE_AL_CLRW =>
+					core_state <= CORE_AL_CLR2;
+
+				when CORE_AL_CLR2 =>
+					-- The bit of cell alq_q is cleared this clock
+					qhead <= qhead + 1;
+					core_state <= CORE_AL_CLR;
+
+				--------------------------------------------------------------
+				-- 7. Actors 0..31 (Game.actor_step): load the record into the
+				-- working copy a_*, run the per-frame action, count the timer
+				-- down, write it back
+				--------------------------------------------------------------
+				when CORE_ACTORS =>
+					ai <= (others => '0');
+					aaddr <= (others => '0');
+					wret <= CORE_ACT_LD;
+					core_state <= CORE_WAIT;
+
+				when CORE_ACT_LD =>
+					a_x <= q_x;
+					a_y <= q_y;
+					a_state <= q_state;
+					a_timer <= unsigned(aq(ACTOR_TIMER_HI downto ACTOR_TIMER_LO));
+					a_health <= q_health;
+					a_typ <= q_typ;
+					a_active <= aq(ACTOR_ACTIVE);
+					a_solid <= aq(ACTOR_SOLID);
+					a_awake <= aq(ACTOR_AWAKE);
+					a_ambush <= aq(ACTOR_AMBUSH);
+					if (aq(ACTOR_ACTIVE) = '0') then
+						core_state <= CORE_ACT_NX;
+					else
+						core_state <= CORE_ACT_GO;
+					end if;
+
+				when CORE_ACT_GO =>
+					-- One clock for the helpers (adist, atx, aty) of the new a
+					case a_act is
+						when A_LOOK =>
+							core_state <= CORE_LOOK;
+						when A_CHASE =>
+							core_state <= CORE_CHASE;
+						when A_FLY =>
+							core_state <= CORE_FLY;
+						when others =>
+							core_state <= CORE_TICK;
+					end case;
+
+				when CORE_LOOK =>
+					core_state <= CORE_TICK;
+					if (adist < WAKE_RANGE) then
+						los_ret <= CORE_LOOK2;
+						core_state <= CORE_LOS;
+					end if;
+
+				when CORE_LOOK2 =>
+					core_state <= CORE_TICK;
+					if (los = '1') then
+						a_awake <= '1';
+						if (a_typ = T_BOSS) then
+							snd_id <= to_unsigned(SND_BOSS_SIGHT, 5);
+						else
+							snd_id <= to_unsigned(SND_SIGHT, 5);
+						end if;
+						snd_act <= '1';
+						snd_ret <= CORE_LOOK3;
+						core_state <= CORE_SND;
+					end if;
+
+				when CORE_LOOK3 =>
+					en_s <= to_unsigned(TYPE_TABLE(a_k)(TP_CHASE), 7);
+					en_ret <= CORE_ACT_WB;
+					core_state <= CORE_ENTER;
+
+				when CORE_CHASE =>
+					-- Ranged attack check needs the line of sight
+					-- (TP_RANGE is in tiles; * 1024 makes it Q6.10 like adist)
+					cdist <= adist;
+					core_state <= CORE_CHASE3;
+					if ((TYPE_TABLE(a_k)(TP_RANGED) /= 0) and (adist < TYPE_TABLE(a_k)(TP_RANGE) * 1024)) then
+						los_ret <= CORE_CHASE2;
+						core_state <= CORE_LOS;
+					end if;
+
+				when CORE_CHASE2 =>
+					core_state <= CORE_CHASE3;
+					if (los = '1') then
+						lfsr <= lfsr_n;
+						if ((lfsr_n(7 downto 0) and to_unsigned(TYPE_TABLE(a_k)(TP_MASK), 8)) = 0) then -- 1 chance in mask + 1
+							en_s <= to_unsigned(TYPE_TABLE(a_k)(TP_AIM_ST), 7);
+							en_ret <= CORE_ACT_WB;
+							core_state <= CORE_ENTER;
+						end if;
+					end if;
+
+				when CORE_CHASE3 =>
+					-- Melee, else walk toward the player (each axis clamped to
+					-- the speed, x first; a step into a solid cell is skipped)
+					if ((TYPE_TABLE(a_k)(TP_MELEE) /= 0) and (cdist < MELEE_RANGE)) then
+						en_s <= to_unsigned(TYPE_TABLE(a_k)(TP_MELEE_ST), 7);
+						en_ret <= CORE_ACT_WB;
+						core_state <= CORE_ENTER;
+					elsif (cdist >= STOP_RANGE) then
+						if (atx > a_spd) then
+							csx <= to_signed(a_spd, 8);
+						elsif (atx < -a_spd) then
+							csx <= to_signed(-a_spd, 8);
+						else
+							csx <= atx(7 downto 0);
+						end if;
+						if (aty > a_spd) then
+							csy <= to_signed(a_spd, 8);
+						elsif (aty < -a_spd) then
+							csy <= to_signed(-a_spd, 8);
+						else
+							csy <= aty(7 downto 0);
+						end if;
+						core_state <= CORE_CHASE3B;
+					else
+						core_state <= CORE_TICK;
+					end if;
+
+				when CORE_CHASE3B =>
+					-- actor_move_ok(x + sx, y, actor_floor(a)): floor first
+					core_state <= CORE_CHASE5;
+					if (csx /= 0) then
+						fpx <= q16(a_x);
+						fpy <= q16(a_y);
+						fat_ret <= CORE_CHASE3C;
+						core_state <= CORE_FAT;
+					end if;
+
+				when CORE_CHASE3C =>
+					bz <= fat;
+					bx <= q16(a_x + unsigned(resize(csx, 16)));
+					by <= q16(a_y);
+					bsmall <= '0';
+					box_ret <= CORE_CHASE4;
+					core_state <= CORE_BOX;
+
+				when CORE_CHASE4 =>
+					if (hit = '0') then
+						a_x <= a_x + unsigned(resize(csx, 16));
+					end if;
+					core_state <= CORE_CHASE5;
+
+				when CORE_CHASE5 =>
+					-- The floor again: a_x may have moved
+					core_state <= CORE_TICK;
+					if (csy /= 0) then
+						fpx <= q16(a_x);
+						fpy <= q16(a_y);
+						fat_ret <= CORE_CHASE5B;
+						core_state <= CORE_FAT;
+					end if;
+
+				when CORE_CHASE5B =>
+					bz <= fat;
+					bx <= q16(a_x);
+					by <= q16(a_y + unsigned(resize(csy, 16)));
+					bsmall <= '0';
+					box_ret <= CORE_CHASE6;
+					core_state <= CORE_BOX;
+
+				when CORE_CHASE6 =>
+					if (hit = '0') then
+						a_y <= a_y + unsigned(resize(csy, 16));
+					end if;
+					core_state <= CORE_TICK;
+
+				when CORE_FLY =>
+					-- Fireball: one velocity step, then its cell
+					a_x <= fly_x;
+					a_y <= fly_y;
+					maddr <= fly_y(15 downto 10) & fly_x(15 downto 10);
+					wret <= CORE_FLY2;
+					core_state <= CORE_WAIT;
+
+				when CORE_FLY2 =>
+					en_s <= to_unsigned(ST_EXPL_A, 7);
+					en_ret <= CORE_ACT_WB;
+					if (map_solid = '1') then
+						core_state <= CORE_ENTER;
+					elsif ((unsigned(abs(atx)) < FIRE_HIT) and (unsigned(abs(aty)) < FIRE_HIT)) then
+						lfsr <= lfsr_n;
+						dmg <= times_const(resize(lfsr_n(2 downto 0), 4) + 1, 3); -- 3 * (1 + (random & 7))
+						dp_ret <= CORE_FLY3;
+						core_state <= CORE_DP;
+					else
+						core_state <= CORE_TICK;
+					end if;
+
+				when CORE_FLY3 =>
+					core_state <= CORE_ENTER;
+
+				when CORE_TICK =>
+					core_state <= CORE_ACT_WB;
+					if (a_timer /= FOREVER) then
+						a_timer <= a_timer - 1;
+						if (a_timer = 1) then -- Runs out this frame: on to the next state
+							en_s <= a_next;
+							en_ret <= CORE_ACT_WB;
+							core_state <= CORE_ENTER;
+						end if;
+					end if;
+
+				when CORE_ACT_WB =>
+					aram_we <= '1';
+					aram_waddr <= ai;
+					aram_wdata <= a_word;
+					core_state <= CORE_ACT_NX;
+
+				when CORE_ACT_NX =>
+					if (ai = 31) then
+						di <= (others => '0');
+						core_state <= CORE_DOORS;
+					else
+						ai <= ai + 1;
+						aaddr <= ai + 1;
+						wret <= CORE_ACT_LD;
+						core_state <= CORE_WAIT;
+					end if;
+
+				--------------------------------------------------------------
+				-- 8. Doors (Game.update_doors), then the world timers
+				--------------------------------------------------------------
+				when CORE_DOORS =>
+					core_state <= CORE_DOOR_NX;
+					db_ret <= CORE_DOOR_NX;
+					case door_state(dk) is
+						when DS_OPENING =>
+							if (door_amt(dk) + DOOR_STEP >= DOOR_OPEN) then
+								door_amt(dk) <= to_signed(DOOR_OPEN, 8);
+								door_state(dk) <= DS_OPEN;
+								door_timer(dk) <= to_unsigned(DOOR_STAY, 8);
+							else
+								door_amt(dk) <= door_amt(dk) + DOOR_STEP;
+							end if;
+						when DS_OPEN =>
+							door_timer(dk) <= door_timer(dk) - 1;
+							if (door_timer(dk) = 1) then -- Runs out this frame
+								db_ret <= CORE_DOOR_OPEN2;
+								core_state <= CORE_DB;
+							end if;
+						when DS_CLOSING =>
+							db_ret <= CORE_DOOR_CL2;
+							core_state <= CORE_DB;
+						when others =>
+							null;
+					end case;
+
+				when CORE_DOOR_OPEN2 =>
+					if (blocked = '1') then
+						door_timer(dk) <= to_unsigned(DOOR_RETRY, 8);
+					else
+						door_state(dk) <= DS_CLOSING;
+					end if;
+					core_state <= CORE_DOOR_NX;
+
+				when CORE_DOOR_CL2 =>
+					if (blocked = '1') then
+						door_state(dk) <= DS_OPENING;
+					elsif (door_amt(dk) - DOOR_STEP <= 0) then
+						door_amt(dk) <= (others => '0');
+						door_state(dk) <= DS_IDLE;
+					else
+						door_amt(dk) <= door_amt(dk) - DOOR_STEP;
+					end if;
+					core_state <= CORE_DOOR_NX;
+
+				when CORE_DOOR_NX =>
+					if (di = 7) then
+						core_state <= CORE_WORLD;
+					else
+						di <= di + 1;
+						core_state <= CORE_DOORS;
+					end if;
+
+				when CORE_WORLD =>
+					if (boss_timer > 0) then
+						boss_timer <= boss_timer - 1;
+						if (boss_timer = 1) then
+							level_done <= '1';
+						end if;
+					end if;
+					if (dflash > 0) then
+						dflash <= dflash - 1;
+					end if;
+					if (pflash > 0) then
+						pflash <= pflash - 1;
+					end if;
+					if (msg_timer > 0) then
+						msg_timer <= msg_timer - 1;
+						if (msg_timer = 1) then
+							msg <= (others => '0');
+						end if;
+					end if;
+					if (pl_health = 0) then
+						flow <= FL_DEAD;
+						dead_timer <= (others => '0');
+					elsif ((level_done = '1') or (boss_timer = 1)) then -- level_done after this clock
+						flow <= FL_SCORE;
+					end if;
+					core_state <= CORE_END;
+
+				--------------------------------------------------------------
+				-- End of every step: sprite table, key positions, checksum,
+				-- outputs
+				--------------------------------------------------------------
+				when CORE_END =>
+					-- Effects frame of this step: (t_sec * 60 + t_frames) mod 256, t_sec * 60 as
+					-- (t_sec << 6) - (t_sec << 2)
+					fxn <= resize(shift_left(resize(t_sec, 12), 6) - shift_left(resize(t_sec, 12), 2) +
+						resize(t_frames, 12), 8);
+					aaddr <= (others => '0');
+					spr_n <= (others => '0');
+					kp <= (others => '0');
+					wret <= CORE_SPR_T;
+					core_state <= CORE_WAIT;
+
+				when CORE_SPR_T =>
+					-- Light offsets of this step's effects frame (registered: the table and
+					-- adders stay off the sprite light path)
+					lm <= lm_next;
+					core_state <= CORE_SPR_N;
+					if (aq(ACTOR_ACTIVE) = '1') then
+						spr_e <= (others => '0');
+						spr_e(SPR_IDX_HI downto SPR_IDX_LO) <= std_logic_vector(aaddr);
+						spr_e(SPR_X_HI downto SPR_X_LO) <= std_logic_vector(q_x);
+						spr_e(SPR_Y_HI downto SPR_Y_LO) <= std_logic_vector(q_y);
+						spr_e(SPR_FRAME_HI downto SPR_FRAME_LO) <= std_logic_vector(q_art);
+						if (q_typ = T_FIREBALL) then
+							spr_e(SPR_BRIGHT) <= '1';
+						end if;
+						if ((aq(ACTOR_SOLID) = '1') and (q_typ < 4)) then
+							spr_e(SPR_TARGET) <= '1';
+						end if;
+						-- Keys still on the floor (first of each kind): 13-bit entry, the
+						-- cell (y & x) above a valid bit
+						if ((q_typ = T_ITEM) and (q_health = I_KEY1) and (kp(KEYPOS_BLUE) = '0')) then
+							kp(KEYPOS_BLUE + 12 downto KEYPOS_BLUE) <= aq(ACTOR_Y_HI downto ACTOR_Y_HI - 5) &
+								aq(ACTOR_X_HI downto ACTOR_X_HI - 5) & '1';
+						end if;
+						if ((q_typ = T_ITEM) and (q_health = I_KEY2) and (kp(KEYPOS_RED) = '0')) then
+							kp(KEYPOS_RED + 12 downto KEYPOS_RED) <= aq(ACTOR_Y_HI downto ACTOR_Y_HI - 5) &
+								aq(ACTOR_X_HI downto ACTOR_X_HI - 5) & '1';
+						end if;
+						maddr <= q_y(15 downto 10) & q_x(15 downto 10);
+						wret <= CORE_SPR_L;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_SPR_L =>
+					-- Light of the center tile, then the floor under the center
+					spr_e(SPR_LIGHT_HI downto SPR_LIGHT_LO) <= map_data_i(TILE_LIGHT_HI downto TILE_LIGHT_LO);
+					spr_ty <= map_data_i(TILE_LTYPE_HI downto TILE_LTYPE_LO);
+					fpx <= q16(unsigned(spr_e(SPR_X_HI downto SPR_X_LO)));
+					fpy <= q16(unsigned(spr_e(SPR_Y_HI downto SPR_Y_LO)));
+					fat_ret <= CORE_SPR_F;
+					core_state <= CORE_FAT;
+
+				when CORE_SPR_F =>
+					-- Entry spr_n into the half the renderer is not reading
+					spr_we <= '1';
+					spr_waddr <= (not bank) & spr_n(4 downto 0);
+					spr_wdata <= spr_e;
+					spr_wdata(SPR_FLOOR_HI downto SPR_FLOOR_LO) <= std_logic_vector(fat(6 downto 0)); -- 0..64 fits 7 bits
+					spr_wdata(SPR_LIGHT_HI downto SPR_LIGHT_LO) <= spr_light;
+					spr_n <= spr_n + 1;
+					core_state <= CORE_SPR_N;
+
+				when CORE_SPR_N =>
+					if (aaddr = 31) then
+						core_state <= CORE_CRC0;
+					else
+						aaddr <= aaddr + 1;
+						wret <= CORE_SPR_T;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_CRC0 =>
+					cw <= (others => '0');
+					core_state <= CORE_CRC_W;
+
+				when CORE_CRC_W =>
+					cword <= word; -- waddr = cw in this state
+					cb <= (others => '0');
+					core_state <= CORE_CRC_B;
+
+				when CORE_CRC_B =>
+					-- Byte cb of the word (on cword(7:0)) goes into the CRC
+					cword <= x"00" & cword(63 downto 8);
+					cb <= cb + 1;
+					if (cb = 7) then
+						if (cw = STATE_WORDS - 1) then
+							core_state <= CORE_OUT;
+						else
+							cw <= cw + 1;
+							core_state <= CORE_CRC_W;
+						end if;
+					end if;
+
+				when CORE_OUT =>
+					fx_out <= std_logic_vector(fxn(4 downto 3)) & lm; -- anim = (n >> 3) & 3
+					cam_x_out <= std_logic_vector(cam_x(POS_BITS - 1 downto 0));
+					cam_y_out <= std_logic_vector(cam_y(POS_BITS - 1 downto 0));
+					angle_out <= std_logic_vector(angle);
+					-- view_eye() = min(127, z + eye)
+					if (resize(z, 9) + eye > 127) then
+						eye_out <= (others => '1');
+					else
+						eye_out <= std_logic_vector(resize(z, 7) + eye);
+					end if;
+					player_x_out <= std_logic_vector(px(POS_BITS - 1 downto 0));
+					player_y_out <= std_logic_vector(py(POS_BITS - 1 downto 0));
+					for k in 0 to 7 loop
+						if (door_state(k) = DS_IDLE) then
+							doors_out(DOOR_BITS * k + DOOR_BITS - 1 downto DOOR_BITS * k) <= (others => '0');
+						else
+							doors_out(DOOR_BITS * k + DOOR_X_HI downto DOOR_BITS * k + DOOR_X_LO) <=
+								std_logic_vector(door_x(k));
+							doors_out(DOOR_BITS * k + DOOR_Y_HI downto DOOR_BITS * k + DOOR_Y_LO) <=
+								std_logic_vector(door_y(k));
+							doors_out(DOOR_BITS * k + DOOR_OPEN_HI downto DOOR_BITS * k + DOOR_OPEN_LO) <=
+								std_logic_vector(door_amt(k)(6 downto 0));
+						end if;
+					end loop;
+					-- HUD word (game.hud())
+					hud_out <= (others => '0');
+					hud_out(HUD_FLOW_HI downto HUD_FLOW_LO) <= std_logic_vector(flow);
+					hud_out(HUD_LEVEL_HI downto HUD_LEVEL_LO) <= std_logic_vector(level);
+					hud_out(HUD_HEALTH_HI downto HUD_HEALTH_LO) <= std_logic_vector(pl_health);
+					hud_out(HUD_ARMOR_HI downto HUD_ARMOR_LO) <= std_logic_vector(pl_armor);
+					if (pl_weapon = 1) then
+						hud_out(HUD_AMMO_HI downto HUD_AMMO_LO) <= std_logic_vector(pl_bullets);
+						if (flash > 0) then
+							hud_out(HUD_WFRAME_HI downto HUD_WFRAME_LO) <= std_logic_vector(to_unsigned(WEAPON_BASE + 1, 8));
+						else
+							hud_out(HUD_WFRAME_HI downto HUD_WFRAME_LO) <= std_logic_vector(to_unsigned(WEAPON_BASE, 8));
+						end if;
+					else
+						hud_out(HUD_AMMO_HI downto HUD_AMMO_LO) <= std_logic_vector(resize(pl_shells, 8));
+						-- Shotgun pump frames over its 40-frame cooldown
+						if (cooldown > 36) then
+							hud_out(HUD_WFRAME_HI downto HUD_WFRAME_LO) <= std_logic_vector(to_unsigned(WEAPON_BASE + 3, 8));
+						elsif (cooldown > 16) then
+							hud_out(HUD_WFRAME_HI downto HUD_WFRAME_LO) <= std_logic_vector(to_unsigned(WEAPON_BASE + 4, 8));
+						else
+							hud_out(HUD_WFRAME_HI downto HUD_WFRAME_LO) <= std_logic_vector(to_unsigned(WEAPON_BASE + 2, 8));
+						end if;
+					end if;
+					hud_out(HUD_WEAPON_HI downto HUD_WEAPON_LO) <= std_logic_vector(pl_weapon);
+					hud_out(HUD_KEYS_HI downto HUD_KEYS_LO) <= std_logic_vector(keys);
+					-- BOB = 0 1 2 3 4 3 2 1 by phase bits 4:2, only while PLAYING
+					if (flow = FL_PLAYING) then
+						case phase(4 downto 2) is
+							when "000" =>
+								hud_out(HUD_BOB_HI downto HUD_BOB_LO) <= "000";
+							when "001" | "111" =>
+								hud_out(HUD_BOB_HI downto HUD_BOB_LO) <= "001";
+							when "010" | "110" =>
+								hud_out(HUD_BOB_HI downto HUD_BOB_LO) <= "010";
+							when "011" | "101" =>
+								hud_out(HUD_BOB_HI downto HUD_BOB_LO) <= "011";
+							when others =>
+								hud_out(HUD_BOB_HI downto HUD_BOB_LO) <= "100";
+						end case;
+					end if;
+					hud_out(HUD_MSG_HI downto HUD_MSG_LO) <= std_logic_vector(msg);
+					hud_out(HUD_KILLS_HI downto HUD_KILLS_LO) <= std_logic_vector(kills);
+					hud_out(HUD_TKILLS_HI downto HUD_TKILLS_LO) <= std_logic_vector(tkills);
+					hud_out(HUD_ITEMS_HI downto HUD_ITEMS_LO) <= std_logic_vector(items);
+					hud_out(HUD_TITEMS_HI downto HUD_TITEMS_LO) <= std_logic_vector(titems);
+					hud_out(HUD_SECRETS_HI downto HUD_SECRETS_LO) <= std_logic_vector(secrets);
+					hud_out(HUD_TSECRETS_HI downto HUD_TSECRETS_LO) <= std_logic_vector(tsecrets);
+					hud_out(HUD_TMIN_HI downto HUD_TMIN_LO) <= std_logic_vector(t_min);
+					hud_out(HUD_TSEC_HI downto HUD_TSEC_LO) <= std_logic_vector(t_sec);
+					hud_out(HUD_AUTOMAP) <= automap;
+					hud_out(HUD_DEBUG) <= debug;
+					keypos_out <= kp;
+					if ((flow = FL_PLAYING) or (flow = FL_PAUSED) or (flow = FL_DEAD)) then
+						music_out <= std_logic_vector(level);
+					else
+						music_out <= "00";
+					end if;
+					-- Screen tint (game.tint()): damage flash, pickup flash, toxic floor
+					if (dflash > 0) then
+						tint_out <= "01";
+					elsif (pflash > 0) then
+						tint_out <= "10";
+					elsif ((flow = FL_PLAYING) and (on_toxic = '1')) then
+						tint_out <= "11";
+					else
+						tint_out <= "00";
+					end if;
+					spr_count_out <= std_logic_vector(spr_n);
+					crc_out <= crc;
+					bank <= not bank;
+					oq <= sq;
+					oq_n <= sq_n;
+					oq_p <= (others => '0');
+					start <= '1';
+					core_state <= CORE_IDLE;
+
+				--------------------------------------------------------------
+				-- Subroutines
+				--------------------------------------------------------------
+				when CORE_WAIT =>
+					-- The address register is at the memory now; data next clock
+					core_state <= wret;
+
+				when CORE_BOX =>
+					-- Game.box_hits(): 2 x 2 cells, stop at the first solid one
+					-- (corner 0: x -, y -)
+					bk <= "00";
+					hit <= '0';
+					maddr <= unsigned(std_logic_vector(box_y0(21 downto 16))) & unsigned(std_logic_vector(box_x0(21 downto 16)));
+					wret <= CORE_BOX_D;
+					core_state <= CORE_WAIT;
+
+				when CORE_BOX_D =>
+					-- Game.blocks(): solid, or (not for the peek camera box,
+					-- which only tests solid cells) too high a step or too
+					-- little headroom for a body at bz
+					if ((map_solid = '1') or ((bsmall = '0') and (map_hblk = '1'))) then
+						hit <= '1';
+						core_state <= box_ret;
+					elsif (bk = 3) then
+						core_state <= box_ret;
+					else
+						-- Corner bk + 1: bit 0 picks x -/+, bit 1 picks y -/+
+						bk <= bk + 1;
+						case bk is
+							when "00" =>
+								maddr <= unsigned(std_logic_vector(box_y0(21 downto 16))) & unsigned(std_logic_vector(box_x1(21 downto 16)));
+							when "01" =>
+								maddr <= unsigned(std_logic_vector(box_y1(21 downto 16))) & unsigned(std_logic_vector(box_x0(21 downto 16)));
+							when others =>
+								maddr <= unsigned(std_logic_vector(box_y1(21 downto 16))) & unsigned(std_logic_vector(box_x1(21 downto 16)));
+						end case;
+						wret <= CORE_BOX_D;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_FAT =>
+					-- Game.floor_at(fpx, fpy): the tile's floor; a ramp adds
+					-- (rise * s) >> 16, rise from the next tile in its direction
+					maddr <= unsigned(std_logic_vector(fpy(21 downto 16))) & unsigned(std_logic_vector(fpx(21 downto 16)));
+					wret <= CORE_FAT_D;
+					core_state <= CORE_WAIT;
+
+				when CORE_FAT_D =>
+					ff <= resize(map_floor, 8);
+					if (map_sp /= SPECIAL_RAMP) then
+						fat <= resize(map_floor, 8);
+						core_state <= fat_ret;
+					else
+						-- Ramp direction in ceil_tex: 0 +x, 1 -x, 2 +y, 3 -y; s from
+						-- the fraction along it
+						case map_data_i(TILE_CEIL_HI downto TILE_CEIL_LO) is
+							when "00" =>
+								fs <= resize(unsigned(std_logic_vector(fpx(15 downto 0))), 17);
+								maddr <= maddr(11 downto 6) & (maddr(5 downto 0) + 1);
+							when "01" =>
+								fs <= to_unsigned(65536, 17) - unsigned(std_logic_vector(fpx(15 downto 0)));
+								maddr <= maddr(11 downto 6) & (maddr(5 downto 0) - 1);
+							when "10" =>
+								fs <= resize(unsigned(std_logic_vector(fpy(15 downto 0))), 17);
+								maddr <= (maddr(11 downto 6) + 1) & maddr(5 downto 0);
+							when others =>
+								fs <= to_unsigned(65536, 17) - unsigned(std_logic_vector(fpy(15 downto 0)));
+								maddr <= (maddr(11 downto 6) - 1) & maddr(5 downto 0);
+						end case;
+						wret <= CORE_FAT_N;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_FAT_N =>
+					-- rise (multiple of 8, -56..56) times s on the shared multiplier
+					mul_a <= resize(signed(resize(map_floor, 9)) - signed(resize(ff, 9)), 24);
+					mul_b <= signed(resize(fs, 18));
+					core_state <= CORE_FAT_W;
+
+				when CORE_FAT_W =>
+					core_state <= CORE_FAT_M;
+
+				when CORE_FAT_M =>
+					-- floor + (rise * s) >> 16, mod 256 (bits 23:16 of the product)
+					fat <= ff + unsigned(prod(23 downto 16));
+					core_state <= fat_ret;
+
+				when CORE_BFL =>
+					-- Game.box_floor(bx, by, HALF): the highest floor_at() of the
+					-- four box corners (bfk bit 0 picks x -/+, bit 1 picks y -/+)
+					bfk <= "00";
+					bfl <= (others => '0');
+					fpx <= bx - HALF;
+					fpy <= by - HALF;
+					fat_ret <= CORE_BFL_N;
+					core_state <= CORE_FAT;
+
+				when CORE_BFL_N =>
+					if (fat > bfl) then
+						bfl <= fat;
+					end if;
+					if (bfk = 3) then
+						core_state <= bfl_ret;
+					else
+						bfk <= bfk + 1;
+						-- Corner bfk + 1: x - when its bit 0 is 0, y + from corner 2 on
+						if (bfk(0) = '1') then
+							fpx <= bx - HALF;
+						else
+							fpx <= bx + HALF;
+						end if;
+						if (bfk = 0) then
+							fpy <= by - HALF;
+						else
+							fpy <= by + HALF;
+						end if;
+						fat_ret <= CORE_BFL_N;
+						core_state <= CORE_FAT;
+					end if;
+
+				when CORE_LOS =>
+					-- Game.los(): Bresenham from the actor's cell to the player's
+					lx <= a_x(15 downto 10);
+					ly <= a_y(15 downto 10);
+					lx1 <= unsigned(std_logic_vector(px(21 downto 16)));
+					ly1 <= unsigned(std_logic_vector(py(21 downto 16)));
+					ldx <= abs(los_dx);
+					ldy <= abs(los_dy);
+					if (los_dx > 0) then
+						lsx <= "01";
+					elsif (los_dx < 0) then
+						lsx <= "11";
+					else
+						lsx <= "00";
+					end if;
+					if (los_dy > 0) then
+						lsy <= "01";
+					elsif (los_dy < 0) then
+						lsy <= "11";
+					else
+						lsy <= "00";
+					end if;
+					lerr <= resize(abs(los_dx), 9) - resize(abs(los_dy), 9);
+					lcnt <= (others => '0');
+					core_state <= CORE_LOS_IT;
+
+				when CORE_LOS_IT =>
+					-- One loop iteration: at the target -> visible; else step
+					-- and test the new cell unless it is the target
+					if ((lx = lx1) and (ly = ly1)) then
+						los <= '1';
+						core_state <= los_ret;
+					elsif (lcnt = 64) then -- Step limit (the model's loop bound)
+						los <= '0';
+						core_state <= los_ret;
+					else
+						lerr <= los_nerr;
+						lx <= los_nx;
+						ly <= los_ny;
+						lcnt <= lcnt + 1;
+						if ((los_tx = '0') or (los_ty = '0')) then -- Not the target: test the cell
+							maddr <= los_ny & los_nx;
+							wret <= CORE_LOS_D;
+							core_state <= CORE_WAIT;
+						end if;
+					end if;
+
+				when CORE_LOS_D =>
+					if (map_solid = '1') then
+						los <= '0';
+						core_state <= los_ret;
+					else
+						core_state <= CORE_LOS_IT;
+					end if;
+
+				when CORE_DB =>
+					-- Game.door_blocked(door di): the player, then every
+					-- active solid actor (one per clock)
+					if (in_cell(px, py, door_x(dk), door_y(dk))) then
+						blocked <= '1';
+						core_state <= db_ret;
+					else
+						aaddr <= (others => '0');
+						wret <= CORE_DB_S;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_DB_S =>
+					if (hit_door = '1') then
+						blocked <= '1';
+						core_state <= db_ret;
+					elsif (aaddr = 31) then
+						blocked <= '0';
+						core_state <= db_ret;
+					else
+						aaddr <= aaddr + 1;
+						wret <= CORE_DB_S;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when CORE_SND =>
+					-- Game.sound(): at most 4 per step; an actor's sound gets a
+					-- volume from its distance (0 drops it) and a pan from its
+					-- sideways offset (two products on the shared multiplier)
+					core_state <= snd_ret;
+					if (sq_n /= 4) then
+						if (snd_act = '0') then
+							-- The player's own sound: full volume, centred
+							sq(to_integer(sq_n(1 downto 0))) <= "000000" & "111111" & std_logic_vector(snd_id);
+							sq_n <= sq_n + 1;
+						else
+							core_state <= CORE_SND_W;
+						end if;
+					end if;
+
+				when CORE_SND_W =>
+					core_state <= CORE_SND_V;
+
+				when CORE_SND_V =>
+					-- avol is three clocks behind a; a may have changed in the
+					-- clock before CORE_SND (CORE_DA -> CORE_ENTER -> CORE_SND)
+					svol <= avol;
+					core_state <= snd_ret;
+					if (avol /= 0) then
+						mul_a <= q16(a_x) - px; -- rx
+						mul_b <= -sn;
+						core_state <= CORE_SND_M1;
+					end if;
+
+				when CORE_SND_M1 =>
+					mul_a <= q16(a_y) - py; -- ry
+					mul_b <= cs;
+					core_state <= CORE_SND_M2;
+
+				when CORE_SND_M2 =>
+					acc <= prod; -- rx * -sin
+					core_state <= CORE_SND_M3;
+
+				when CORE_SND_M3 =>
+					lat <= pan_sum(42 downto 27); -- (acc + ry * cos) >> 27
+					core_state <= CORE_SND_M4;
+
+				when CORE_SND_M4 =>
+					sq(to_integer(sq_n(1 downto 0))) <= std_logic_vector(pan_c) & std_logic_vector(svol) &
+						std_logic_vector(snd_id);
+					sq_n <= sq_n + 1;
+					core_state <= snd_ret;
+
+				when CORE_DP =>
+					-- Game.damage_player(dmg): armor first (arm_save)
+					core_state <= dp_ret;
+					if (pl_health /= 0) then
+						if (pl_armor > 0) then
+							pl_armor <= pl_armor - arm_save(7 downto 0);
+							dmg <= dmg - arm_save(5 downto 0);
+						end if;
+						core_state <= CORE_DP2;
+					end if;
+
+				when CORE_DP2 =>
+					-- Health minus what the armor did not take, floor 0
+					if (pl_health > dmg) then
+						pl_health <= pl_health - dmg;
+						snd_id <= to_unsigned(SND_PLAYER_PAIN, 5);
+					else
+						pl_health <= (others => '0');
+						snd_id <= to_unsigned(SND_PLAYER_DEATH, 5);
+					end if;
+					dflash <= to_unsigned(8, 4);
+					snd_act <= '0';
+					snd_ret <= dp_ret;
+					core_state <= CORE_SND;
+
+				when CORE_ENTER =>
+					-- Game.enter(): new state and timer; entry actions run now
+					-- (LOOK, CHASE and FLY run every frame in CORE_ACT_GO instead)
+					a_state <= en_s;
+					a_timer <= en_dur;
+					core_state <= en_ret;
+					snd_act <= '1';
+					snd_ret <= en_ret;
+					case en_act is
+						when A_SHOOT =>
+							snd_id <= to_unsigned(SND_SHOOT, 5);
+							snd_ret <= CORE_A_SHOOT2;
+							core_state <= CORE_SND;
+						when A_FIRE =>
+							snd_id <= to_unsigned(SND_FIRE, 5);
+							snd_ret <= CORE_A_FIRE2;
+							core_state <= CORE_SND;
+						when A_MELEE =>
+							snd_id <= to_unsigned(SND_CLAW, 5);
+							snd_ret <= CORE_A_MELEE2;
+							core_state <= CORE_SND;
+						when A_PAIN =>
+							snd_id <= to_unsigned(SND_PAIN, 5);
+							core_state <= CORE_SND;
+						when A_DIE =>
+							a_solid <= '0';
+							kills <= kills + 1;
+							if (a_typ = T_BOSS) then
+								boss_timer <= to_unsigned(BOSS_TIME, 8);
+							end if;
+							snd_id <= to_unsigned(SND_DEATH, 5);
+							snd_ret <= CORE_A_DIE2;
+							core_state <= CORE_SND;
+						when A_EXPLODE =>
+							snd_id <= to_unsigned(SND_EXPLODE, 5);
+							core_state <= CORE_SND;
+						when A_REMOVE =>
+							a_active <= '0';
+						when others =>
+							null;
+					end case;
+
+				when CORE_A_SHOOT2 =>
+					los_ret <= CORE_A_SHOOT3;
+					core_state <= CORE_LOS;
+
+				when CORE_A_SHOOT3 =>
+					-- Hit chance max(40, 200 - (dist >> 7)), then 3 * (1 + (random & 3)).
+					-- From dist >> 7 = 160 on the floor of 40 applies; closer,
+					-- random + (dist >> 7) < 200 is random < 200 - (dist >> 7)
+					core_state <= en_ret;
+					if (los = '1') then
+						lfsr <= lfsr_n;
+						if ((adist(18 downto 7) >= 160) and (lfsr_n(7 downto 0) < 40)) or
+							((adist(18 downto 7) < 160) and (resize(lfsr_n(7 downto 0), 12) + adist(18 downto 7) < 200)) then
+							core_state <= CORE_A_SHOOT4;
+						end if;
+					end if;
+
+				when CORE_A_SHOOT4 =>
+					lfsr <= lfsr_n;
+					dmg <= times_const(resize(lfsr_n(1 downto 0), 4) + 1, 3);
+					dp_ret <= en_ret;
+					core_state <= CORE_DP;
+
+				when CORE_A_FIRE2 =>
+					-- Fireball toward the player from the actor's position
+					sp_type <= to_unsigned(T_FIREBALL, 3);
+					sp_state <= to_unsigned(ST_FLY_A, 7);
+					sp_health <= resize(fire_dir, 12);
+					sp_ret <= en_ret;
+					core_state <= CORE_SPAWN;
+
+				when CORE_A_MELEE2 =>
+					core_state <= en_ret;
+					if (adist < MELEE_RANGE) then
+						lfsr <= lfsr_n;
+						dmg <= times_const(resize(lfsr_n(2 downto 0), 4) + 1, TYPE_TABLE(a_k)(TP_MULT)); -- mult * (1 + (random & 7))
+						dp_ret <= en_ret;
+						core_state <= CORE_DP;
+					end if;
+
+				when CORE_A_DIE2 =>
+					-- A grunt drops a box of bullets
+					core_state <= en_ret;
+					if (a_typ = T_GRUNT) then
+						sp_type <= to_unsigned(T_ITEM, 3);
+						sp_state <= to_unsigned(ST_ITEM_IDLE, 7);
+						sp_health <= to_unsigned(I_BULLETS, 12);
+						sp_ret <= en_ret;
+						core_state <= CORE_SPAWN;
+					end if;
+
+				when CORE_SPAWN =>
+					aaddr <= (others => '0');
+					wret <= CORE_SPAWN_S;
+					core_state <= CORE_WAIT;
+
+				when CORE_SPAWN_S =>
+					-- Game.spawn(): first inactive slot (none free: nothing); a new
+					-- active actor at a's position, not solid, awake or ambush
+					if (aq(ACTOR_ACTIVE) = '0') then
+						aram_we <= '1';
+						aram_waddr <= aaddr;
+						aram_wdata <= "0001" & std_logic_vector(sp_type) & std_logic_vector(sp_health) &
+							std_logic_vector(sp_dur) & std_logic_vector(sp_state) & std_logic_vector(a_y) &
+							std_logic_vector(a_x);
+						core_state <= sp_ret;
+					elsif (aaddr = 31) then
+						core_state <= sp_ret;
+					else
+						aaddr <= aaddr + 1;
+						wret <= CORE_SPAWN_S;
+						core_state <= CORE_WAIT;
+					end if;
+
+				when others =>
+					null;
+			end case;
 		end if;
 	end process;
 
-	load_req_o <= r.load_req;
-	load_level_o <= std_logic_vector(r.level);
-	map_addr_o <= std_logic_vector(r.maddr);
+	------------------------------------------------------------------
+	-- Outputs
+	------------------------------------------------------------------
+	load_req_o <= load_req;
+	load_level_o <= std_logic_vector(level);
+	map_addr_o <= std_logic_vector(maddr);
+	-- Secret found (CORE_SPEC2 on a pushwall tile): the same tile with its
+	-- special (16:14) cleared
+	map_we <= '1' when ((core_state = CORE_SPEC2) and (map_sp = SPECIAL_PUSHWALL)) else '0';
 	map_we_o <= map_we;
-	-- Secret found: the same tile with its special (16:14) cleared
 	map_wdata_o <= map_data_i(23 downto 17) & "000" & map_data_i(13 downto 0);
-	span_addr_o <= std_logic_vector(r.span_addr);
-	zwall_addr_o <= std_logic_vector(r.zw_addr);
-	cam_x_o <= r.cam_x_o;
-	cam_y_o <= r.cam_y_o;
-	angle_o <= r.angle_o;
-	eye_o <= r.eye_o;
-	doors_o <= r.doors_o;
-	player_x_o <= r.player_x_o;
-	player_y_o <= r.player_y_o;
-	hud_o <= r.hud_o;
-	keypos_o <= r.keypos_o;
-	music_o <= r.music_o;
-	tint_o <= r.tint_o;
-	fx_o <= r.fx_o;
+	span_addr_o <= std_logic_vector(span_addr);
+	zwall_addr_o <= std_logic_vector(zw_addr);
+	cam_x_o <= cam_x_out;
+	cam_y_o <= cam_y_out;
+	angle_o <= angle_out;
+	eye_o <= eye_out;
+	doors_o <= doors_out;
+	player_x_o <= player_x_out;
+	player_y_o <= player_y_out;
+	hud_o <= hud_out;
+	keypos_o <= keypos_out;
+	music_o <= music_out;
+	tint_o <= tint_out;
+	fx_o <= fx_out;
 	spr_data_o <= spr_q;
-	spr_count_o <= r.spr_count_o;
-	render_start_o <= r.start;
-	busy_o <= '0' when (r.st = S_IDLE) else '1';
-	snd_valid_o <= '1' when (r.oq_p /= r.oq_n) else '0';
+	spr_count_o <= spr_count_out;
+	render_start_o <= start;
+	busy_o <= '0' when (core_state = CORE_IDLE) else '1';
+	snd_valid_o <= '1' when (oq_p /= oq_n) else '0';
 	-- Command at the queue read pointer: priority (from the id) & pan & volume & id
-	snd_data_o <= std_logic_vector(to_unsigned(SOUND_PRIORITY(to_integer(r.oq(to_integer(r.oq_p(1 downto 0))).id)), 4)) &
-		std_logic_vector(r.oq(to_integer(r.oq_p(1 downto 0))).pan) &
-		std_logic_vector(r.oq(to_integer(r.oq_p(1 downto 0))).vol) &
-		std_logic_vector(r.oq(to_integer(r.oq_p(1 downto 0))).id);
-	level_loaded_o <= r.loaded;
+	oq_word <= oq(to_integer(oq_p(1 downto 0)));
+	snd_data_o <= std_logic_vector(to_unsigned(SOUND_PRIORITY(to_integer(unsigned(oq_word(SND_ID_HI downto SND_ID_LO)))), 4)) &
+		oq_word;
+	level_loaded_o <= loaded;
 	state_data_o <= sdata;
-	crc_o <= r.crc_o;
+	crc_o <= crc_out;
 end arch;

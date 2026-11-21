@@ -18,15 +18,20 @@
 --                 1. Directed: write then read back, read-to-write and
 --                    write-to-read turnarounds, back-to-back reads.
 --                 2. Random traffic from all four masters at once over a
---                    small address window (many address collisions); a
---                    shadow memory updated at grant time predicts every
---                    read, per-master queues check the returned order.
+--                    small address window (many address collisions); the
+--                    response checker keeps a shadow memory, updated at
+--                    grant time, that predicts every read, and per-master
+--                    queues that check the returned order.
 --                 3. Display deadline: 320-byte line reads from master 0
 --                    finish within 320 x CYCLES + 60 cycles under full
 --                    write traffic (the deadline is 6,400 cycles).
 --                 Throughout: the SRAM model's timing checks, and no
 --                 cycle where the FPGA and the SRAM drive the bus at the
 --                 same time.
+--                 Each checking process counts its own checks; the two
+--                 monitors and the response checker copy their counts to
+--                 their own signals, and the stimulus process adds them at
+--                 the end.
 --                 RUN_VARIANTS: CYCLES=2 CYCLES=3
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -36,6 +41,9 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type; one
+--                 response checker process owns the shadow memory and
+--                 the read queues
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -136,26 +144,6 @@ architecture arch of tb_sram is
 	constant T_RD_SHIFT: time := 1.04 ns; -- clk_sram_rd lag (37.5 deg)
 	constant RANDOM_OPS: natural := 3000; -- Requests per random master
 
-	-- Reference memory updated when a write is granted
-	type shadow_t is protected
-		procedure write(addr: natural; data: std_logic_vector(7 downto 0));
-		impure function read(addr: natural) return std_logic_vector;
-	end protected shadow_t;
-	type shadow_t is protected body
-		type arr_t is array (0 to 2 ** 19 - 1) of std_logic_vector(7 downto 0);
-		variable arr: arr_t := (others => (others => 'U'));
-		procedure write(addr: natural; data: std_logic_vector(7 downto 0)) is
-		begin
-			arr(addr) := data;
-		end procedure;
-		impure function read(addr: natural) return std_logic_vector is
-		begin
-			return arr(addr);
-		end function;
-	end protected body shadow_t;
-
-	shared variable chk: checker_t;
-	shared variable shadow: shadow_t;
 
 	signal clk: std_logic := '0';
 	signal clk_rd: std_logic := '0';
@@ -205,6 +193,11 @@ architecture arch of tb_sram is
 	signal sram_driving: boolean;
 	signal sram_errors: natural;
 
+	-- Check counts of the monitors and the response checker (one driver each)
+	signal bus_checks, bus_errors: natural := 0;
+	signal dqt_checks, dqt_errors: natural := 0;
+	signal rsp_checks, rsp_errors: natural := 0;
+
 	-- Issue one request on a master port and wait for its grant. Called
 	-- from the stimulus processes right after a rising edge.
 	procedure request(signal p: inout mport_t; signal gnt: in std_logic;
@@ -218,9 +211,6 @@ architecture arch of tb_sram is
 			wait until rising_edge(clk);
 			exit when (gnt = '1');
 		end loop;
-		if (write) then
-			shadow.write(a, std_logic_vector(to_unsigned(d, 8)));
-		end if;
 		p.req <= '0';
 	end procedure;
 begin
@@ -328,48 +318,78 @@ begin
 
 	-- Bus contention monitor
 	process(brd_fpga_drive, sram_driving)
+		variable checks, errors: natural := 0;
 	begin
 		if (brd_fpga_drive and sram_driving) then
-			chk.check(false, "bus contention at " & time'image(now));
+			check(false, "bus contention at " & time'image(now), checks, errors);
+			bus_checks <= checks;
+			bus_errors <= errors;
 		end if;
 	end process;
 
 	-- All dq_t bits must move together (the top level uses bit 0 above)
 	process(pin_dq_t, rst)
+		variable checks, errors: natural := 0;
 	begin
 		if (rst = '0') then
-			chk.check((pin_dq_t = x"00") or (pin_dq_t = x"FF"), "dq_t bits differ");
+			check((pin_dq_t = x"00") or (pin_dq_t = x"FF"), "dq_t bits differ", checks, errors);
+			dqt_checks <= checks;
+			dqt_errors <= errors;
 		end if;
 	end process;
 
 	------------------------------------------------------------------
-	-- Response checkers, one per master: expected data queued at grant
+	-- Response checker: a shadow memory, updated when a write is
+	-- granted, predicts every read; each master has a queue (a ring
+	-- buffer with head and tail) of the bytes its granted reads must
+	-- return, in order. The checker sees each grant on the same clock
+	-- edge as the master's request procedure; the arbiter grants one
+	-- master per clock.
 	------------------------------------------------------------------
-	checkers: for m in 0 to 3 generate
-		process
-			type queue_t is array (0 to 255) of std_logic_vector(7 downto 0);
-			variable q: queue_t;
-			variable head, tail: natural := 0;
-			variable a: natural;
-		begin
+	process
+		type shadow_t is array (0 to 2 ** 19 - 1) of std_logic_vector(7 downto 0);
+		type queue_t is array (0 to 255) of std_logic_vector(7 downto 0);
+		type queues_t is array (0 to 3) of queue_t;
+		type index_t is array (0 to 3) of natural;
+		variable shadow: shadow_t := (others => (others => 'U'));
+		variable q: queues_t;
+		variable head, tail: index_t := (others => 0);
+		variable checks, errors: natural := 0;
+	begin
+		-- The same bytes the stimulus process preloads through the SRAM
+		-- model's back door
+		for a in 0 to 4095 loop
+			shadow(a) := std_logic_vector(to_unsigned(a mod 251, 8));
+		end loop;
+		for i in 0 to 18 loop
+			shadow(2 ** i) := x"00";
+		end loop;
+		loop
 			wait until rising_edge(clk);
-			-- Grant of a read: remember what it must return
-			if ((m_gnt(m) = '1') and (m_we(m) = '0')) then
-				a := mp(m).addr;
-				q(tail) := shadow.read(a);
-				tail := (tail + 1) mod 256;
-			end if;
-			if (m_rvalid(m) = '1') then
-				if (head = tail) then
-					chk.check(false, "master " & integer'image(m) & " got unexpected data");
-				else
-					chk.check(m_rdata = q(head), "master " & integer'image(m) & " read " &
-						to_hex(m_rdata) & " expected " & to_hex(q(head)));
-					head := (head + 1) mod 256;
+			for m in 0 to 3 loop
+				if (m_gnt(m) = '1') then
+					if (m_we(m) = '1') then
+						shadow(mp(m).addr) := std_logic_vector(to_unsigned(mp(m).wdata, 8));
+					else
+						q(m)(tail(m)) := shadow(mp(m).addr);
+						tail(m) := (tail(m) + 1) mod 256;
+					end if;
 				end if;
-			end if;
-		end process;
-	end generate;
+				if (m_rvalid(m) = '1') then
+					if (head(m) = tail(m)) then
+						check(false, "master " & integer'image(m) & " got unexpected data",
+							checks, errors);
+					else
+						check(m_rdata = q(m)(head(m)), "master " & integer'image(m) & " read " &
+							to_hex(m_rdata) & " expected " & to_hex(q(m)(head(m))), checks, errors);
+						head(m) := (head(m) + 1) mod 256;
+					end if;
+				end if;
+			end loop;
+			rsp_checks <= checks;
+			rsp_errors <= errors;
+		end loop;
+	end process;
 
 	------------------------------------------------------------------
 	-- Stimulus: directed tests and master 0 (display)
@@ -378,17 +398,16 @@ begin
 		variable t0: time;
 		variable seed1, seed2: positive := 7;
 		variable r: real;
+		variable checks, errors: natural := 0;
 	begin
 		-- Preload the low 4 KB and the deadline-test address through the
 		-- back door so every read has a known expected value
 		-- (mod 251, a prime, so the pattern does not repeat at power-of-two strides)
 		for a in 0 to 4095 loop
 			sram_mem.write(a, std_logic_vector(to_unsigned(a mod 251, 8)));
-			shadow.write(a, std_logic_vector(to_unsigned(a mod 251, 8)));
 		end loop;
 		for i in 0 to 18 loop
 			sram_mem.write(2 ** i, x"00");
-			shadow.write(2 ** i, x"00");
 		end loop;
 		wait until (rst = '0');
 		wait until rising_edge(clk);
@@ -445,19 +464,22 @@ begin
 			end loop;
 			-- 320 accesses at CYCLES clocks each, plus a little latency;
 			-- the real deadline is 6,400 cycles (two scanlines)
-			chk.check(now - t0 < (320 * CYCLES + 60) * PERIOD, "display line took " &
-				integer'image((now - t0) / PERIOD) & " cycles");
+			check(now - t0 < (320 * CYCLES + 60) * PERIOD, "display line took " &
+				integer'image((now - t0) / PERIOD) & " cycles", checks, errors);
 		end loop;
 		phase <= 3;
 		for i in 1 to 20 loop
 			wait until rising_edge(clk);
 		end loop;
 
-		chk.check(sram_errors = 0, "SRAM model timing errors: " & integer'image(sram_errors));
+		check(sram_errors = 0, "SRAM model timing errors: " & integer'image(sram_errors),
+			checks, errors);
 		tb_print("busy cycles: " & integer'image(to_integer(unsigned(busy_count))) &
 			" of " & integer'image(now / PERIOD));
 		done <= true;
-		tb_finish("tb_sram_c" & integer'image(CYCLES), chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_sram_c" & integer'image(CYCLES), checks + bus_checks + dqt_checks + rsp_checks,
+			errors + bus_errors + dqt_errors + rsp_errors);
 		wait;
 	end process;
 

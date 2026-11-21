@@ -4,10 +4,18 @@ Usage:
     python scripts/run_sim.py            run every testbench in sim/
     python scripts/run_sim.py tb_vga     run the testbenches whose names contain "tb_vga"
     python scripts/run_sim.py --list     list the testbenches
+    python scripts/run_sim.py --changed  run only the testbenches whose inputs changed since
+                                         they last passed (the others are reported as skipped)
 
 Every testbench prints one line "TB_RESULT <name> PASS checks=<n>" when it finishes cleanly.
 A testbench passes only if that line appears and xsim reports no errors or failures.
-A "RUN_VARIANTS: NAME=value NAME=value" line in a testbench header runs it once per setting.
+A "RUN_VARIANTS: NAME=value NAME=value" line in a testbench header runs it once per setting;
+one setting may set several generics, joined by commas ("BOOT_ART=false,CHECK_FRAMES=12").
+
+--changed: every passing run is recorded in <SIM_WORK>/passed.json with a fingerprint of its
+inputs: the testbench, every design file and package it reaches (component declarations and
+"use work." clauses, followed transitively), the golden and build/ data files it names, its
+generics and this script. A run is skipped only if that fingerprint is unchanged.
 
 Environment (optional):
     SIM_WORK   work directory (default build/sim), so several runs can go in parallel
@@ -20,14 +28,22 @@ Environment (optional):
                soon as its snapshot is ready, in its own directory next to the work directory
                (same depth, so the testbenches' "../../" paths still hold), sharing xsim.dir
     VIVADO_BIN Vivado bin directory (default D:/Xilinx/2025.1/Vivado/bin)
+
+Speed: snapshots are elaborated with xelab --O3 (about 8% faster runs than the default --O2,
+measured on tb_game_core), and the slowest testbenches (SLOW_FIRST) are elaborated first so
+the system test starts right after compilation instead of after every other elaboration. The
+system test itself runs as two variants side by side (the boot path, and the whole session
+with the art preloaded), and --changed skips runs whose inputs did not change.
 """
 
+import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,10 +52,66 @@ JOBS = int(os.environ.get("SIM_JOBS") or os.cpu_count() or 1)
 ONLY = [f for f in os.environ.get("SIM_ONLY", "").split(",") if f]
 GENERICS = os.environ.get("SIM_GENERIC", "").split()
 VIVADO_BIN = Path(os.environ.get("VIVADO_BIN", "D:/Xilinx/2025.1/Vivado/bin"))
+# Longest runs first, so they start while the short ones are still being elaborated
+SLOW_FIRST = ["tb_shooter_top", "tb_game_core", "tb_game_top", "tb_bringup_top", "tb_asset_loader"]
 
 
 def tool(name):
     return str(VIVADO_BIN / (name + (".bat" if os.name == "nt" else "")))
+
+
+UNIT_RE = re.compile(r"^\s*(?:entity|package)\s+(\w+)\s+is\b", re.I | re.M)
+REF_RE = re.compile(r"^\s*(?:use\s+work\.|component\s+)(\w+)", re.I | re.M)
+DATA_RE = re.compile(r'"\.\./\.\./([^"]+)"')
+
+
+def code_of(path):
+    """File text without "--" comments (good enough for the patterns above)."""
+    return "\n".join(l.split("--", 1)[0] for l in path.read_text(encoding="utf-8").splitlines())
+
+
+def make_fingerprints(files):
+    """Returns fingerprint(tb_path, generic): a hash of everything the run depends on."""
+    units = {}
+    for f in files:
+        for name in UNIT_RE.findall(code_of(f)):
+            units[name.lower()] = f
+    cache = {}
+
+    def deps(tb):
+        if tb not in cache:
+            seen, todo = set(), [tb]
+            while todo:
+                f = todo.pop()
+                if f in seen:
+                    continue
+                seen.add(f)
+                todo += [units[n.lower()] for n in REF_RE.findall(code_of(f)) if n.lower() in units]
+            data = set()
+            for f in seen:
+                text = f.read_text(encoding="utf-8")
+                for rel in DATA_RE.findall(text):
+                    p = ROOT / rel
+                    if p.is_dir():
+                        # A directory constant joined with names ("../../sim/golden/" &
+                        # "ray4_poses.txt", or "frame4_" & k): the files those names start
+                        # with, or the whole directory if no name matches
+                        names = set(re.findall(r'"([\w.]+)"', text))
+                        hits = [q for s in names for q in p.glob(s + "*") if q.is_file()]
+                        data.update(hits or [q for q in p.iterdir() if q.is_file()])
+                    else:
+                        # A name prefix such as "../../build/level" stands for build/level*.bin
+                        data.update([p] if p.is_file() else p.parent.glob(p.name + "*"))
+            cache[tb] = sorted(seen | data | {Path(__file__).resolve()})
+        return cache[tb]
+
+    def fingerprint(tb, generic):
+        h = hashlib.sha1((generic or "").encode())
+        for p in deps(tb):
+            h.update(str(p.relative_to(ROOT)).encode())
+            h.update(p.read_bytes() if p.is_file() else b"")
+        return h.hexdigest()
+    return fingerprint
 
 
 def sources():
@@ -70,7 +142,7 @@ def run(cmd, log_name, cwd=None):
 
 
 def compile_all(files):
-    """The design (rtl/, packages included) is VHDL-93, as in the course; the testbenches,
+    """The design (rtl/, packages included) is VHDL-93; the testbenches,
     models and sim packages use VHDL-2008 (protected types, external names). Both go into the
     same work library, the design first. The file list goes in a project file (--prj), not on
     the command line: about 100 absolute paths can pass Windows' 8,191-character limit when the
@@ -105,15 +177,15 @@ def variants(tb_path):
 
 
 def tag_of(name, generic):
-    return name + ("_" + generic.replace("=", "") if generic else "")
+    return name + ("_" + generic.replace("=", "").replace(",", "_") if generic else "")
 
 
 def elaborate(name, generic=None):
     """Builds the snapshot; returns an error text or None."""
     tag = tag_of(name, generic)
-    opts = ["--nolog", "-L", "unisim", "-debug", "off", "-s", tag + "_snap"]
-    if generic:
-        opts += ["-generic_top", generic]
+    opts = ["--nolog", "--O3", "-L", "unisim", "-debug", "off", "-s", tag + "_snap"]
+    for g in (generic.split(",") if generic else []):
+        opts += ["-generic_top", g]
     # Options go through a file: the .bat wrapper splits arguments at "="
     WORK.mkdir(parents=True, exist_ok=True)
     (WORK / (tag + "_elab.opt")).write_text(" ".join(opts + ["work." + name]) + "\n")
@@ -151,36 +223,60 @@ def simulate(tag):
 def main():
     files, tbs = sources()
     names = [t.stem for t in tbs]
-    args = sys.argv[1:]
-    if "--list" in args:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if "--list" in sys.argv:
         print("\n".join(names))
         return
+    changed_only = "--changed" in sys.argv
     if args:
         names = [n for n in names if any(a in n for a in args)]
     compile_all(files)
+    names.sort(key=lambda n: SLOW_FIRST.index(n) if n in SLOW_FIRST else len(SLOW_FIRST))
     runs = [(n, g) for n in names for g in variants(ROOT / "sim" / (n + ".vhd"))]
     results = {}
+    skipped = []
+    fingerprint = make_fingerprints(files)
+    passed_file = WORK / "passed.json"
+    try:
+        passed = json.loads(passed_file.read_text())
+    except (OSError, ValueError):
+        passed = {}
+    prints = {}
 
     def report(label, ok, info, bad):
         if bad:
             print("\n".join(bad))
         results[label] = (ok, info)
+        if ok:
+            passed[label] = prints[label]
+        else:
+            passed.pop(label, None)
         print("%-32s %s  %s" % (label, "PASS" if ok else "FAIL", info), flush=True)
 
     with ThreadPoolExecutor(max_workers=JOBS) as pool:
         pending = []
         for n, g in runs:
             label = n + (" " + g if g else "")
+            prints[label] = fingerprint(ROOT / "sim" / (n + ".vhd"), g)
+            if changed_only and passed.get(label) == prints[label]:
+                skipped.append(label)
+                print("%-32s SKIP  (unchanged since it last passed)" % label, flush=True)
+                continue
             err = elaborate(n, g)
             if err:
                 report(label, False, err, [])
                 continue
             pending.append((label, pool.submit(simulate, tag_of(n, g))))
-        for label, fut in pending:
+        # Report each run as it finishes (the long system test was started first)
+        labels = {fut: label for label, fut in pending}
+        for fut in as_completed(labels):
             ok, info, bad = fut.result()
-            report(label, ok, info, bad)
+            report(labels[fut], ok, info, bad)
+    WORK.mkdir(parents=True, exist_ok=True)
+    passed_file.write_text(json.dumps(passed, indent=1, sort_keys=True))
     failed = [l for l, (ok, _) in results.items() if not ok]
-    print("%d of %d testbenches passed" % (len(results) - len(failed), len(results)))
+    print("%d of %d testbenches passed%s" % (len(results) - len(failed), len(results),
+          ", %d skipped (unchanged)" % len(skipped) if skipped else ""))
     sys.exit(1 if failed else 0)
 
 

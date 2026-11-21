@@ -25,7 +25,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
--- Revision 1.20 - Stage 4: span descriptor, clip entry, sprite floor height,
+-- Revision 1.20 - Heights: span descriptor, clip entry, sprite floor height,
 --                 effects
 -- Additional Comments:
 --                 None.
@@ -71,7 +71,7 @@ package render_types_pkg is
 	constant DESC_RX_HI: natural := 104;
 	constant DESC_RY_LO: natural := 105; -- 122:105 ray y, Q2.16 signed
 	constant DESC_RY_HI: natural := 122;
-	-- Stage 4: the descriptor is one span of a column (tools/model/render.py); rows
+	-- Heights: the descriptor is one span of a column (tools/model/render.py); rows
 	-- y0..y1 are drawn as the kind says. A column is a run of spans ending with the
 	-- LAST bit. Wall spans (walls, risers, upper walls) use the texture fields; floor
 	-- and ceiling spans use E and the ray (rowDist = (E * RINV(y)) >> 8)
@@ -85,7 +85,7 @@ package render_types_pkg is
 	constant KIND_FLOOR: std_logic_vector(1 downto 0) := "01";
 	constant KIND_WALL: std_logic_vector(1 downto 0) := "10";
 
-	-- Stage 4 effects register (game core -> renderer, render.py "Stage 4 effects"): the light
+	-- Effects register (game core -> renderer, render.py "Light effects"): the light
 	-- offset of each light type (0 steady, 1 flicker, 2 strobe, 3 glow), signed -8..2, already
 	-- including the muzzle flash, added to every tile light before distance; and the animated
 	-- texture frame (slime cycles through wall ROM slots 5, 8, 9, 10)
@@ -94,7 +94,7 @@ package render_types_pkg is
 	constant FX_ANIM_LO: natural := 20; -- 21:20 animation frame 0..3
 	constant FX_ANIM_HI: natural := 21;
 
-	-- Stage 4 clip entry (ray engine -> sprite engine): the open window after a height edge,
+	-- Clip entry (ray engine -> sprite engine): the open window after a height edge,
 	-- up to CLIP_MAX (render_pkg) per column, nearest first; a closed window is (z, 1, 0)
 	constant CLIP_BITS: natural := 32;
 	constant CLIP_Z_LO: natural := 0; -- 15:0 z of the edge, Q6.10 (as the z-buffer)
@@ -105,7 +105,7 @@ package render_types_pkg is
 	constant CLIP_BOT_HI: natural := 31;
 
 	------------------------------------------------------------------
-	-- Stage 2/3 (as in tools/model/game.py, sprites.py, overlay.py)
+	-- Sprites, game core, overlay (as in tools/model/game.py, sprites.py, overlay.py)
 	------------------------------------------------------------------
 	-- Sprite table entry, game core -> sprite engine (32 entries, actor order)
 	constant SPR_BITS: natural := 64;
@@ -121,7 +121,7 @@ package render_types_pkg is
 	constant SPR_LIGHT_HI: natural := 48;
 	constant SPR_BRIGHT: natural := 49; -- Fullbright (fireballs)
 	constant SPR_TARGET: natural := 50; -- Hitscan target (living monster)
-	constant SPR_FLOOR_LO: natural := 51; -- 57:51 stage 4: floor height under the sprite, 0..64
+	constant SPR_FLOOR_LO: natural := 51; -- 57:51 floor height under the sprite, 0..64
 	constant SPR_FLOOR_HI: natural := 57;
 
 	-- Hitscan span, sprite engine -> game core (32 entries, drawing order)

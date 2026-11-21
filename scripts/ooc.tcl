@@ -3,7 +3,7 @@
 #
 # Usage (from the repository root):
 #   vivado -mode batch -source scripts/ooc.tcl -tclargs block1 [block2 ...]
-#   with no arguments, every stage-0 block in the list below
+#   with no arguments, every block in the list below
 #   set OOC_ONLY (see below) to read only some RTL files
 #
 # Every input port whose name contains "clk" gets a clock: 40 ns for pixel-domain ports
@@ -65,7 +65,7 @@ if {[info exists ::env(VIVADO_THREADS)]} {
 }
 set_param general.maxThreads $threads
 puts "Vivado threads: [get_param general.maxThreads]"
-# The design is VHDL-93 (the course's standard); only the testbenches use VHDL-2008
+# The design is VHDL-93; only the testbenches use VHDL-2008
 read_vhdl $pkgs
 read_vhdl $others
 

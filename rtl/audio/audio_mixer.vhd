@@ -75,6 +75,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - State type and state names renamed (<name>_state_type, prefixed states)
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -147,9 +148,9 @@ architecture arch of audio_mixer is
 	-- Fetch machine (owns the directory, the fill counters, the flash
 	-- port and the RAM write port)
 	------------------------------------------------------------------
-	type fstate_t is (F_OFF, F_HDR_REQ, F_HDR, F_ENT_REQ, F_ENT, F_HEAD_REQ, F_HEAD,
-		F_SCAN, F_DECIDE, F_REQ, F_DATA, F_COMMIT);
-	signal f_state: fstate_t := F_OFF;
+	type fill_state_type is (FILL_OFF, FILL_HDR_REQ, FILL_HDR, FILL_ENT_REQ, FILL_ENT,
+		FILL_HEAD_REQ, FILL_HEAD, FILL_SCAN, FILL_DECIDE, FILL_REQ, FILL_DATA, FILL_COMMIT);
+	signal fill_state: fill_state_type := FILL_OFF;
 	signal item_addr: addr_array_t := (others => (others => '0')); -- Flash address of each item
 	signal item_len: len_array_t := (others => (others => '0')); -- Its length in bytes (0: absent)
 	signal tbl_we: std_logic := '0';
@@ -165,7 +166,7 @@ architecture arch of audio_mixer is
 	signal fv: natural range 0 to ITEMS := 0; -- Item (heads) or voice (refills) being served
 	signal sv: natural range 0 to 8 := 0; -- Ring the refill scan looks at next
 	signal cur_gen: unsigned(7 downto 0) := (others => '0'); -- gen of the voice when its chunk was requested
-	-- Copy of the ring under scan (F_SCAN -> F_DECIDE)
+	-- Copy of the ring under scan (FILL_SCAN -> FILL_DECIDE)
 	signal s_act, s_genok: std_logic := '0';
 	signal s_gen: unsigned(7 downto 0) := (others => '0');
 	signal s_fill, s_idx, s_len, s_off: unsigned(19 downto 0) := (others => '0'); -- s_off: item offset of the next fetch
@@ -183,9 +184,10 @@ architecture arch of audio_mixer is
 	-- Mix machine (owns the voices, the music position, the command
 	-- queue, the RAM read address and the outputs)
 	------------------------------------------------------------------
-	type mstate_t is (M_IDLE, M_CMD, M_ALLOC, M_START, M_VLOOK, M_VOICE, M_VWAIT, M_VREAD, M_VMUL,
-		M_VACC, M_MUSIC, M_MWAIT, M_MREAD, M_MMUL, M_MACC, M_MADV, M_OUT1, M_OUT2);
-	signal m_state: mstate_t := M_IDLE;
+	type mix_state_type is (MIX_IDLE, MIX_CMD, MIX_ALLOC, MIX_START, MIX_VLOOK, MIX_VOICE,
+		MIX_VWAIT, MIX_VREAD, MIX_VMUL, MIX_VACC, MIX_MUSIC, MIX_MWAIT, MIX_MREAD, MIX_MMUL,
+		MIX_MACC, MIX_MADV, MIX_OUT1, MIX_OUT2);
+	signal mix_state: mix_state_type := MIX_IDLE;
 	signal fifo: fifo_t := (others => (others => '0'));
 	signal wp, rp: unsigned(4 downto 0) := (others => '0');
 	signal napply: unsigned(4 downto 0) := (others => '0');
@@ -205,7 +207,7 @@ architecture arch of audio_mixer is
 	signal ru: unsigned(19 downto 0) := (others => '0');
 	signal mhead: std_logic := '1'; -- Music still reading its head
 	signal mv: natural range 0 to 7 := 0;
-	-- Copy of voice mv (M_VLOOK)
+	-- Copy of voice mv (MIX_VLOOK)
 	signal v_act, v_ok: std_logic := '0';
 	signal v_item: unsigned(4 downto 0) := (others => '0');
 	signal v_pos: unsigned(31 downto 0) := (others => '0');
@@ -292,7 +294,7 @@ begin
 		variable item: integer range -1 to ITEMS - 1;
 	begin
 		if (rst_i = '1') then
-			f_state <= F_OFF;
+			fill_state <= FILL_OFF;
 			tbl_we <= '0';
 			tbl_item <= 0;
 			tbl_addr <= (others => '0');
@@ -326,27 +328,27 @@ begin
 		elsif rising_edge(clk_i) then
 			ram_we <= '0';
 			tbl_we <= '0';
-			case f_state is
-				when F_OFF =>
+			case fill_state is
+				when FILL_OFF =>
 					if (enable_i = '1') then
 						if (ready = '1') then
-							f_state <= F_SCAN;
+							fill_state <= FILL_SCAN;
 						else
-							f_state <= F_HDR_REQ;
+							fill_state <= FILL_HDR_REQ;
 						end if;
 					end if;
 
-				-- Directory header: "SHOOTER0", version, entry count
-				when F_HDR_REQ =>
+				-- Directory header: "FPGADATA", version, entry count
+				when FILL_HDR_REQ =>
 					f_req_valid <= '1';
 					f_req_addr <= to_unsigned(FLASH_DATA_BASE, 24);
 					f_req_len <= to_unsigned(12, 24);
 					bytes <= (others => '0');
 					if ((f_req_valid = '1') and (req_ready_i = '1')) then
 						f_req_valid <= '0';
-						f_state <= F_HDR;
+						fill_state <= FILL_HDR;
 					end if;
-				when F_HDR =>
+				when FILL_HDR =>
 					if (data_valid_i = '1') then
 						bytes <= bytes + 1;
 						-- Entry count is header bytes 10..11, little endian
@@ -356,21 +358,21 @@ begin
 							entries(15 downto 8) <= unsigned(data_i);
 						end if;
 						if (data_last_i = '1') then
-							f_state <= F_ENT_REQ;
+							fill_state <= FILL_ENT_REQ;
 						end if;
 					end if;
 
 				-- Directory entries: id, offset, length (12 bytes each)
-				when F_ENT_REQ =>
+				when FILL_ENT_REQ =>
 					f_req_valid <= '1';
 					f_req_addr <= to_unsigned(FLASH_DATA_BASE + 12, 24);
 					f_req_len <= resize(entries * 12, 24);
 					bytes <= (others => '0');
 					if ((f_req_valid = '1') and (req_ready_i = '1')) then
 						f_req_valid <= '0';
-						f_state <= F_ENT;
+						fill_state <= FILL_ENT;
 					end if;
-				when F_ENT =>
+				when FILL_ENT =>
 					if (data_valid_i = '1') then
 						-- Bytes arrive first to last: shift in from the top
 						entry <= data_i & entry(95 downto 8);
@@ -399,16 +401,16 @@ begin
 						end if;
 						if (data_last_i = '1') then
 							fv <= 0;
-							f_state <= F_HEAD_REQ;
+							fill_state <= FILL_HEAD_REQ;
 						end if;
 					end if;
 
 				-- Heads: the first 64 bytes of every item
-				when F_HEAD_REQ =>
+				when FILL_HEAD_REQ =>
 					if (fv = ITEMS) then
 						ready <= '1';
 						fv <= 0;
-						f_state <= F_SCAN;
+						fill_state <= FILL_SCAN;
 					elsif (item_len(fv) = 0) then
 						fv <= fv + 1;
 					else
@@ -418,10 +420,10 @@ begin
 						bytes <= (others => '0');
 						if ((f_req_valid = '1') and (req_ready_i = '1')) then
 							f_req_valid <= '0';
-							f_state <= F_HEAD;
+							fill_state <= FILL_HEAD;
 						end if;
 					end if;
-				when F_HEAD =>
+				when FILL_HEAD =>
 					if (data_valid_i = '1') then
 						ram_we <= '1';
 						ram_waddr <= to_unsigned(HEAD_BASE + fv * HEAD, 12) + bytes(11 downto 0);
@@ -429,15 +431,15 @@ begin
 						bytes <= bytes + 1;
 						if (data_last_i = '1') then
 							fv <= fv + 1;
-							f_state <= F_HEAD_REQ;
+							fill_state <= FILL_HEAD_REQ;
 						end if;
 					end if;
 
-				-- Refills: visit the nine rings in turn. F_SCAN copies the
-				-- ring's state into s_* registers, F_DECIDE acts on them
+				-- Refills: visit the nine rings in turn. FILL_SCAN copies the
+				-- ring's state into s_* registers, FILL_DECIDE acts on them
 				-- (two clocks per ring keep the multiplexers out of the
 				-- request arithmetic).
-				when F_SCAN =>
+				when FILL_SCAN =>
 					s_gen <= gen(sv);
 					if (fill_gen(sv) = gen(sv)) then
 						s_genok <= '1';
@@ -463,13 +465,13 @@ begin
 						s_off <= mfpos;
 					end if;
 					if (enable_i = '0') then
-						f_state <= F_OFF;
+						fill_state <= FILL_OFF;
 					else
-						f_state <= F_DECIDE;
+						fill_state <= FILL_DECIDE;
 					end if;
-				when F_DECIDE =>
+				when FILL_DECIDE =>
 					sv <= next9(sv);
-					f_state <= F_SCAN;
+					fill_state <= FILL_SCAN;
 					if (s_genok = '0') then
 						-- The voice was restarted: start its ring again
 						fill_gen(sv) <= s_gen;
@@ -488,14 +490,14 @@ begin
 						fv <= sv;
 						w_fill <= s_fill;
 						w_mf <= s_off;
-						f_state <= F_REQ;
+						fill_state <= FILL_REQ;
 					end if;
-				when F_REQ =>
+				when FILL_REQ =>
 					if (req_ready_i = '1') then
 						f_req_valid <= '0';
-						f_state <= F_DATA;
+						fill_state <= FILL_DATA;
 					end if;
-				when F_DATA =>
+				when FILL_DATA =>
 					-- w_fill / w_mf count the chunk's bytes; they are
 					-- committed to fill / mfpos after the last one
 					if (data_valid_i = '1') then
@@ -509,10 +511,10 @@ begin
 							w_mf <= w_mf + 1;
 						end if;
 						if (data_last_i = '1') then
-							f_state <= F_COMMIT;
+							fill_state <= FILL_COMMIT;
 						end if;
 					end if;
-				when F_COMMIT =>
+				when FILL_COMMIT =>
 					-- A chunk fetched for a sound that has been replaced
 					-- since is not committed (its ring restarts instead)
 					if (gen(fv) = cur_gen) then
@@ -521,7 +523,7 @@ begin
 							mfpos <= w_mf;
 						end if;
 					end if;
-					f_state <= F_SCAN;
+					fill_state <= FILL_SCAN;
 			end case;
 		end if;
 	end process;
@@ -558,7 +560,7 @@ begin
 		variable g: unsigned(6 downto 0);
 	begin
 		if (rst_i = '1') then
-			m_state <= M_IDLE;
+			mix_state <= MIX_IDLE;
 			wp <= (others => '0');
 			rp <= (others => '0');
 			napply <= (others => '0');
@@ -610,8 +612,8 @@ begin
 				wp <= wp + 1;
 			end if;
 
-			case m_state is
-				when M_IDLE =>
+			case mix_state is
+				when MIX_IDLE =>
 					if (sample_req_i = '1') then
 						if ((enable_i = '0') or (ready = '0')) then
 							-- Silent: drop waiting commands, stop every voice
@@ -636,18 +638,18 @@ begin
 							acc_l <= (others => '0');
 							acc_r <= (others => '0');
 							busy_n <= (others => '0');
-							m_state <= M_CMD;
+							mix_state <= MIX_CMD;
 						end if;
 					end if;
 
-				-- Start the waiting sounds in order: M_CMD takes one from
-				-- the queue, M_ALLOC looks at voices 0..7 one per clock
+				-- Start the waiting sounds in order: MIX_CMD takes one from
+				-- the queue, MIX_ALLOC looks at voices 0..7 one per clock
 				-- (first free voice, lowest priority with lowest index),
-				-- M_START sets up the chosen voice. 10 clocks per command.
-				when M_CMD =>
+				-- MIX_START sets up the chosen voice. 10 clocks per command.
+				when MIX_CMD =>
 					if (napply = 0) then
 						mv <= 0;
-						m_state <= M_VLOOK;
+						mix_state <= MIX_VLOOK;
 					else
 						c_cmd <= fifo(to_integer(rp(3 downto 0)));
 						rp <= rp + 1;
@@ -655,9 +657,9 @@ begin
 						c_free <= '0';
 						c_low <= 0;
 						sc <= 0;
-						m_state <= M_ALLOC;
+						mix_state <= MIX_ALLOC;
 					end if;
-				when M_ALLOC =>
+				when MIX_ALLOC =>
 					vol := unsigned(c_cmd(SND_VOL_HI downto SND_VOL_LO));
 					pan := resize(signed(c_cmd(SND_PAN_HI downto SND_PAN_LO)), 7);
 					-- Gains (vol * (31 - pan)) >> 5 left and (vol * (31 + pan)) >> 5 right
@@ -671,11 +673,11 @@ begin
 						c_low <= sc;
 					end if;
 					if (sc = 7) then
-						m_state <= M_START;
+						mix_state <= MIX_START;
 					else
 						sc <= sc + 1;
 					end if;
-				when M_START =>
+				when MIX_START =>
 					slot := -1;
 					if (c_free = '1') then
 						slot := c_slot;
@@ -694,13 +696,13 @@ begin
 						pri(slot) <= unsigned(c_cmd(SND_PRI_HI downto SND_PRI_LO));
 						gen(slot) <= gen(slot) + 1;
 					end if;
-					m_state <= M_CMD;
+					mix_state <= MIX_CMD;
 
-				-- Effect voices 0..7. M_VLOOK copies voice mv into v_*;
-				-- M_VOICE ends it or sets the RAM address; the RAM reads
-				-- at the M_VWAIT clock; M_VREAD takes the byte, M_VMUL
-				-- multiplies by the gains, M_VACC adds and advances.
-				when M_VLOOK =>
+				-- Effect voices 0..7. MIX_VLOOK copies voice mv into v_*;
+				-- MIX_VOICE ends it or sets the RAM address; the RAM reads
+				-- at the MIX_VWAIT clock; MIX_VREAD takes the byte, MIX_VMUL
+				-- multiplies by the gains, MIX_VACC adds and advances.
+				when MIX_VLOOK =>
 					v_act <= active(mv);
 					v_item <= vitem(mv);
 					v_pos <= pos(mv);
@@ -713,18 +715,18 @@ begin
 						v_ok <= '0';
 					end if;
 					v_fill <= fill(mv);
-					m_state <= M_VOICE;
-				when M_VOICE =>
+					mix_state <= MIX_VOICE;
+				when MIX_VOICE =>
 					idx := resize(v_pos(31 downto 16), 20); -- Byte index: integer part of the Q.16 position
 					if ((v_act = '0') or (idx >= v_len)) then
 						-- Free, or the sound has ended (the model frees it
 						-- here too, without output)
 						active(mv) <= '0';
 						if (mv = 7) then
-							m_state <= M_MUSIC;
+							mix_state <= MIX_MUSIC;
 						else
 							mv <= mv + 1;
-							m_state <= M_VLOOK;
+							mix_state <= MIX_VLOOK;
 						end if;
 					else
 						-- Bytes 0..63 from the item's head, later ones from ring mv once fetched
@@ -738,11 +740,11 @@ begin
 						else
 							valid_byte <= '0';
 						end if;
-						m_state <= M_VWAIT;
+						mix_state <= MIX_VWAIT;
 					end if;
-				when M_VWAIT =>
-					m_state <= M_VREAD;
-				when M_VREAD =>
+				when MIX_VWAIT =>
+					mix_state <= MIX_VREAD;
+				when MIX_VREAD =>
 					if (valid_byte = '1') then
 						smp <= signed(resize(unsigned(ram_rdata), 9)) - 128;
 					else
@@ -751,28 +753,28 @@ begin
 							underflows <= underflows + 1;
 						end if;
 					end if;
-					m_state <= M_VMUL;
-				when M_VMUL =>
+					mix_state <= MIX_VMUL;
+				when MIX_VMUL =>
 					prod_l <= smp * signed('0' & v_gl);
 					prod_r <= smp * signed('0' & v_gr);
-					m_state <= M_VACC;
-				when M_VACC =>
+					mix_state <= MIX_VACC;
+				when MIX_VACC =>
 					acc_l <= acc_l + resize(prod_l, 22);
 					acc_r <= acc_r + resize(prod_r, 22);
 					pos(mv) <= v_pos + STEP;
 					busy_n <= busy_n + 1;
 					if (mv = 7) then
-						m_state <= M_MUSIC;
+						mix_state <= MIX_MUSIC;
 					else
 						mv <= mv + 1;
-						m_state <= M_VLOOK;
+						mix_state <= MIX_VLOOK;
 					end if;
 
 				-- Music voice: same steps, then the position advances and
-				-- wraps at the end of the track in M_MACC / M_MADV
-				when M_MUSIC =>
+				-- wraps at the end of the track in MIX_MACC / MIX_MADV
+				when MIX_MUSIC =>
 					if (track = 0) then
-						m_state <= M_OUT1;
+						mix_state <= MIX_OUT1;
 					else
 						mitem := MUSIC_ITEM0 + to_integer(track);
 						m_len <= item_len(mitem);
@@ -785,11 +787,11 @@ begin
 						else
 							valid_byte <= '0';
 						end if;
-						m_state <= M_MWAIT;
+						mix_state <= MIX_MWAIT;
 					end if;
-				when M_MWAIT =>
-					m_state <= M_MREAD;
-				when M_MREAD =>
+				when MIX_MWAIT =>
+					mix_state <= MIX_MREAD;
+				when MIX_MREAD =>
 					if (valid_byte = '1') then
 						smp <= signed(resize(unsigned(ram_rdata), 9)) - 128;
 					else
@@ -798,8 +800,8 @@ begin
 							underflows <= underflows + 1;
 						end if;
 					end if;
-					m_state <= M_MMUL;
-				when M_MMUL =>
+					mix_state <= MIX_MMUL;
+				when MIX_MMUL =>
 					if (busy_n > 4) then
 						g := to_unsigned(MUSIC_VOL / 2, 7);
 					else
@@ -807,13 +809,13 @@ begin
 					end if;
 					prod_l <= smp * signed('0' & g);
 					prod_r <= smp * signed('0' & g);
-					m_state <= M_MACC;
-				when M_MACC =>
+					mix_state <= MIX_MACC;
+				when MIX_MACC =>
 					acc_l <= acc_l + resize(prod_l, 22);
 					acc_r <= acc_r + resize(prod_r, 22);
 					mnext <= mpos + STEP;
-					m_state <= M_MADV;
-				when M_MADV =>
+					mix_state <= MIX_MADV;
+				when MIX_MADV =>
 					-- Wrap at the track length (the model's mpos -= len << 16)
 					if (mnext(35 downto 16) >= m_len) then
 						mpos <= (mnext(35 downto 16) - m_len) & mnext(15 downto 0);
@@ -828,17 +830,17 @@ begin
 							mhead <= '0';
 						end if;
 					end if;
-					m_state <= M_OUT1;
+					mix_state <= MIX_OUT1;
 
 				-- Output: (mix * master) >> 4, saturated to 16 bits
-				when M_OUT1 =>
+				when MIX_OUT1 =>
 					out_l <= acc_l * signed('0' & master_i);
 					out_r <= acc_r * signed('0' & master_i);
-					m_state <= M_OUT2;
-				when M_OUT2 =>
+					mix_state <= MIX_OUT2;
+				when MIX_OUT2 =>
 					left_q <= sat16(out_l(28 downto 4));
 					right_q <= sat16(out_r(28 downto 4));
-					m_state <= M_IDLE;
+					mix_state <= MIX_IDLE;
 			end case;
 		end if;
 	end process;

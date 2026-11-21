@@ -127,7 +127,7 @@ def draw_overlay(image, hud, cam, tiles, seen, keys, blob, table, debug_values=(
         cv.rect(0, 0, W, H, C_TITLE_BG)
         cv.text_center(52, 2, C_YELLOW, "FIRST-PERSON")     # the title, two lines at
         cv.text_center(72, 2, C_YELLOW, "GATE ARRAY")       # scale 2 (one would be 368 px)
-        cv.text_center(106, 1, C_WHITE, "A SHOOTER IN HARDWARE - NO CPU INSIDE")
+        cv.text_center(106, 1, C_WHITE, "A SHOOTER GAME IN HARDWARE - NO CPU")
         cv.text_center(184, 1, C_WHITE, "PRESS SPACE OR FIRE")
         return
     if flow == 1:   # BRIEFING

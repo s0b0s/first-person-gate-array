@@ -167,8 +167,7 @@ set_false_path -to [get_ports {led[*] led0_* uart_rxd_out vga_* i2s_* kb_clk kb_
 set_false_path -to [get_ports {qspi_cs_n qspi_sck qspi_dq[*]}]
 set_false_path -from [get_ports {qspi_dq[*]}]
 
-## CDC waivers: these pins are sampled by IOB registers on purpose; their
-## timing is the hand-checked I/O window (SRAM, above)
-## or a mid-bit sample 30 ns after SCK falls (flash), not a clock-domain crossing.
-create_waiver -type CDC -id {CDC-1} -from [get_ports {sram_dq[*]}] -description {SRAM read data, IOB capture on clk_sram_rd, hand-checked window}
-create_waiver -type CDC -id {CDC-1} -from [get_ports {qspi_dq[1]}] -description {Flash MISO, sampled 30 ns after SCK falls}
+## Note on the CDC report: it lists sram_dq[*] and qspi_dq[1] as unclocked
+## inputs (CDC-1) because of the false paths above. Both are expected and
+## safe: SRAM read data is captured by IOB registers inside the hand-checked
+## window above, and flash MISO is sampled 30 ns after SCK falls (mid-bit).

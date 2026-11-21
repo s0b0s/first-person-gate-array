@@ -1,7 +1,7 @@
 """Game palette and light table.
 
 Palette: 256 entries of 18-bit color (6 bits per channel).
-    0..15     the 16 basic colors of the stage-0 palette (text and test pages use them)
+    0..15     the 16 basic colors of the bring-up palette (text and test pages use them)
     16..255   15 ramps of 16 shades, ramp r at 16 r .. 16 r + 15, darkest first
     255       (brightest shade of ramp 15) is reserved as the sprite transparent index
 

@@ -31,6 +31,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -90,7 +91,6 @@ architecture arch of tb_i2s is
 		x"0001", x"8001", x"1234", x"FEDC", x"00FF", x"FF00");
 	constant RIGHTS: word_list_t := (x"FFFF", x"0000", x"8000", x"7FFF", x"AAAA", x"5555",
 		x"C3A5", x"3C5A", x"4321", x"0F0F", x"F0F0", x"0100");
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -190,19 +190,20 @@ begin
 		variable smax, smin: integer;
 		variable first_up, last_up, ups: integer;
 		variable n0: natural;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 
 		-- 1. Frame 0 carries the reset value (0, 0); frame f >= 1 carries
 		-- pair f - 1 (it is taken at the end of frame f - 1)
 		wait until (rx_count = 1);
-		chk.check((rx_left = x"0000") and (rx_right = x"0000"), "frame 0 is silence");
+		check((rx_left = x"0000") and (rx_right = x"0000"), "frame 0 is silence", checks, errors);
 		for k in 0 to NPAIRS - 1 loop
 			wait until (rx_count = k + 2);
-			chk.check(rx_left = LEFTS(k), "pair " & integer'image(k) & " left " &
-				to_hex(rx_left) & " want " & to_hex(LEFTS(k)));
-			chk.check(rx_right = RIGHTS(k), "pair " & integer'image(k) & " right " &
-				to_hex(rx_right) & " want " & to_hex(RIGHTS(k)));
+			check(rx_left = LEFTS(k), "pair " & integer'image(k) & " left " &
+				to_hex(rx_left) & " want " & to_hex(LEFTS(k)), checks, errors);
+			check(rx_right = RIGHTS(k), "pair " & integer'image(k) & " right " &
+				to_hex(rx_right) & " want " & to_hex(RIGHTS(k)), checks, errors);
 		end loop;
 
 		-- LRCK rate: 10 frames of 2048 clocks = 204.8 us
@@ -211,7 +212,7 @@ begin
 		for i in 1 to 10 loop
 			wait until falling_edge(lrck);
 		end loop;
-		chk.check(now - t0 = 204_800 ns, "10 LRCK periods took " & time'image(now - t0));
+		check(now - t0 = 204_800 ns, "10 LRCK periods took " & time'image(now - t0), checks, errors);
 
 		-- 2. Tone on both channels
 		use_tone <= true;
@@ -221,7 +222,7 @@ begin
 		for i in 0 to TONE_SAMPLES - 1 loop
 			wait until (rx_count = n0 + i + 1);
 			s(i) := to_integer(signed(rx_left));
-			chk.check(rx_left = rx_right, "tone is the same on both channels");
+			check(rx_left = rx_right, "tone is the same on both channels", checks, errors);
 		end loop;
 		smax := s(0);
 		smin := s(0);
@@ -243,26 +244,27 @@ begin
 				ups := ups + 1;
 			end if;
 		end loop;
-		chk.check((smax >= 8184) and (smax <= 8192), "tone peak " & integer'image(smax));
-		chk.check((smin <= -8184) and (smin >= -8192), "tone trough " & integer'image(smin));
-		chk.check(ups >= 4, "tone has upward zero crossings: " & integer'image(ups));
+		check((smax >= 8184) and (smax <= 8192), "tone peak " & integer'image(smax), checks, errors);
+		check((smin <= -8184) and (smin >= -8192), "tone trough " & integer'image(smin),
+			checks, errors);
+		check(ups >= 4, "tone has upward zero crossings: " & integer'image(ups), checks, errors);
 		if (ups >= 2) then
 			-- 110.97 samples per period: allow 110.47 .. 111.47
-			chk.check((100 * (last_up - first_up) >= 11047 * (ups - 1)) and
+			check((100 * (last_up - first_up) >= 11047 * (ups - 1)) and
 				(100 * (last_up - first_up) <= 11147 * (ups - 1)),
 				"tone period: " & integer'image(last_up - first_up) & " samples over " &
-				integer'image(ups - 1) & " periods");
+				integer'image(ups - 1) & " periods", checks, errors);
 		end if;
 
 		-- 3. Disabled tone is silence
 		tone_en <= '0';
 		n0 := rx_count + 3;
 		wait until (rx_count = n0);
-		chk.check((rx_left = x"0000") and (rx_right = x"0000"), "disabled tone is silent");
+		check((rx_left = x"0000") and (rx_right = x"0000"), "disabled tone is silent", checks, errors);
 
-		chk.check(rx_errors = 0, "I2S format errors: " & integer'image(rx_errors));
+		check(rx_errors = 0, "I2S format errors: " & integer'image(rx_errors), checks, errors);
 		done <= true;
-		tb_finish("tb_i2s", chk.checks, chk.errors);
+		tb_finish("tb_i2s", checks, errors);
 		wait;
 	end process;
 end arch;

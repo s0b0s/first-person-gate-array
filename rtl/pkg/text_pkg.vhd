@@ -47,7 +47,7 @@ package text_pkg is
 	constant BRIEF_3_3: string := "END THIS.";
 	constant TITLE_0: string := "FIRST-PERSON";
 	constant TITLE_1: string := "GATE ARRAY";
-	constant TITLE_2: string := "A SHOOTER IN HARDWARE - NO CPU INSIDE";
+	constant TITLE_2: string := "A SHOOTER GAME IN HARDWARE - NO CPU";
 	constant PRESS: string := "PRESS SPACE OR FIRE";
 	constant END_0: string := "YOU WIN";
 	constant END_1: string := "THE BOSS IS DEAD AND THE BASE IS QUIET.";

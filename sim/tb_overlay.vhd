@@ -18,7 +18,11 @@
 --                 positions and debug counters, fills a framebuffer with
 --                 the base image B, runs the overlay once, applies every
 --                 pixel write, and compares the whole framebuffer with the
---                 expected image E.
+--                 expected image E. (B is a variable of the stimulus
+--                 process; the write process keeps the pixels written in
+--                 the signal img, -1 = not written, cleared through
+--                 clear_store before each case; a pixel not written shows
+--                 B.)
 --                 The weapon art comes from a behavioral SRAM master port
 --                 that answers from build/art.bin at ART_BASE, with random
 --                 grant delays and a fixed read latency; the pixel port is
@@ -34,6 +38,8 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type; base
+--                 image in a variable, written pixels in a signal
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -91,26 +97,9 @@ architecture arch of tb_overlay is
 	constant ART_MAX: natural := 262144; -- Art window of the SRAM model, bytes
 	constant SRAM_LATENCY: natural := 3; -- Clocks from grant to rvalid
 
-	-- Framebuffer
-	type image_store_t is protected
-		procedure put(addr: natural; value: natural);
-		impure function get(addr: natural) return natural;
-	end protected image_store_t;
-	type image_store_t is protected body
-		type image_t is array (0 to PIXELS - 1) of natural range 0 to 255;
-		variable img: image_t := (others => 0);
-		procedure put(addr: natural; value: natural) is
-		begin
-			img(addr) := value;
-		end procedure;
-		impure function get(addr: natural) return natural is
-		begin
-			return img(addr);
-		end function;
-	end protected body image_store_t;
-
-	shared variable chk: checker_t;
-	shared variable fb: image_store_t;
+	-- Base image (stimulus process) and pixels written (write process)
+	type image_t is array (0 to PIXELS - 1) of natural range 0 to 255;
+	type written_t is array (0 to PIXELS - 1) of integer range -1 to 255;
 
 	type tiles_t is array (0 to 4095) of std_logic_vector(23 downto 0);
 	type seen_t is array (0 to 4095) of std_logic;
@@ -143,6 +132,10 @@ architecture arch of tb_overlay is
 	signal busy, done: std_logic;
 	signal dones: natural := 0;
 	signal bad_buf: natural := 0;
+	-- Pixels written in the current case (-1 = not written); driven by the
+	-- write process, cleared when clear_store is true on a clock edge
+	signal img: written_t := (others => -1);
+	signal clear_store: boolean := false;
 	signal bad_addr: natural := 0;
 
 	function hexval(c: character) return natural is
@@ -154,8 +147,8 @@ architecture arch of tb_overlay is
 		end if;
 	end function;
 
-	-- Read 240 lines of 640 hex digits into the framebuffer
-	procedure read_image(file f: text) is
+	-- Read 240 lines of 640 hex digits into an image
+	procedure read_image(file f: text; variable b: out image_t) is
 		variable l: line;
 		variable s: string(1 to 640);
 	begin
@@ -163,7 +156,7 @@ architecture arch of tb_overlay is
 			readline(f, l);
 			read(l, s);
 			for x in 0 to 319 loop
-				fb.put(y * 320 + x, hexval(s(2 * x + 1)) * 16 + hexval(s(2 * x + 2)));
+				b(y * 320 + x) := hexval(s(2 * x + 1)) * 16 + hexval(s(2 * x + 2));
 			end loop;
 		end loop;
 	end procedure;
@@ -295,9 +288,12 @@ begin
 	process(clk)
 	begin
 		if rising_edge(clk) then
+			if (clear_store) then
+				img <= (others => -1);
+			end if;
 			if ((pix_valid = '1') and (pix_ready = '1')) then
-				fb.put(to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO))),
-					to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO))));
+				img(to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)))) <=
+					to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO)));
 				if (pix_data(PIXW_BUF) /= buf) then
 					bad_buf <= bad_buf + 1;
 				end if;
@@ -327,8 +323,10 @@ begin
 		variable px, py, ang: integer;
 		variable cycles: natural;
 		variable mism, want, got: natural;
+		variable base: image_t;
 		variable dones0: natural;
 		variable k: natural := 0; -- Case number
+		variable checks, errors: natural := 0;
 	begin
 		file_open(gf, GOLDEN_FILE, read_mode);
 		wait until (rst = '0');
@@ -430,9 +428,9 @@ begin
 				read(l, hv);
 				dv(24 * i + 23 downto 24 * i) := std_logic_vector(to_unsigned(hv, 24));
 			end loop;
-			-- B base image into the framebuffer
+			-- B base image
 			readline(gf, l);
-			read_image(gf);
+			read_image(gf, base);
 
 			hud <= hw;
 			player_x <= std_logic_vector(to_unsigned(px, POS_BITS));
@@ -447,7 +445,9 @@ begin
 			else
 				buf <= '0';
 			end if;
+			clear_store <= true;
 			wait until rising_edge(clk);
+			clear_store <= false;
 			wait until rising_edge(clk);
 
 			-- Run the overlay once
@@ -463,8 +463,8 @@ begin
 			for i in 1 to 4 loop
 				wait until rising_edge(clk);
 			end loop;
-			chk.check(busy = '0', "case " & integer'image(k) & ": busy after done");
-			chk.check(dones = dones0 + 1, "case " & integer'image(k) & ": one done pulse");
+			check(busy = '0', "case " & integer'image(k) & ": busy after done", checks, errors);
+			check(dones = dones0 + 1, "case " & integer'image(k) & ": one done pulse", checks, errors);
 
 			-- E expected image: compare with the framebuffer
 			readline(gf, l);
@@ -474,7 +474,11 @@ begin
 				read(l, s640);
 				for x in 0 to 319 loop
 					want := hexval(s640(2 * x + 1)) * 16 + hexval(s640(2 * x + 2));
-					got := fb.get(y * 320 + x);
+					if (img(y * 320 + x) = -1) then
+						got := base(y * 320 + x);
+					else
+						got := img(y * 320 + x);
+					end if;
 					if (want /= got) then
 						if (mism < 8) then
 							tb_print("case " & integer'image(k) & " pixel (" & integer'image(x) &
@@ -485,18 +489,18 @@ begin
 					end if;
 				end loop;
 			end loop;
-			chk.check(mism = 0, "case " & integer'image(k) & ": " & integer'image(mism) &
-				" pixels differ");
+			check(mism = 0, "case " & integer'image(k) & ": " & integer'image(mism) &
+				" pixels differ", checks, errors);
 			tb_print("case " & integer'image(k) & ": " & integer'image(cycles) & " clocks, " &
 				integer'image(mism) & " pixels differ");
 			k := k + 1;
 		end loop;
-		chk.check(k = 14, integer'image(k) & " cases run");
+		check(k = 14, integer'image(k) & " cases run", checks, errors);
 		file_close(gf);
-		chk.check(bad_buf = 0, "buffer bit of pixel writes");
-		chk.check(bad_addr = 0, "SRAM reads outside the art");
+		check(bad_buf = 0, "buffer bit of pixel writes", checks, errors);
+		check(bad_addr = 0, "SRAM reads outside the art", checks, errors);
 		finished <= true;
-		tb_finish("tb_overlay", chk.checks, chk.errors);
+		tb_finish("tb_overlay", checks, errors);
 		wait;
 	end process;
 end arch;

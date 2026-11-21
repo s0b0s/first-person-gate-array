@@ -10,7 +10,7 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    Draws the spans of every screen column through the pixel
---                 write port (stage 4, with floor and ceiling heights).
+--                 write port (with floor and ceiling heights).
 --                 Bit for bit the same as raster_spans() and
 --                 row_dist() in tools/model/render.py.
 --                 A span (render_types_pkg, DESC_*) is rows y0..y1 of one
@@ -73,9 +73,10 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
--- Revision 2.10 - Stage 4 effects: light types, sky, animated slime (2.00:
+-- Revision 2.10 - Effects: light types, sky, animated slime (2.00:
 --                 spans for heights and ramps; per-row reciprocal ROM instead
 --                 of the per-frame divider table)
+-- Revision 2.20 - Plain signals instead of records; one-process state machine
 -- Additional Comments:
 --                 start_i is only taken while idle. Spans must have
 --                 y0 <= y1; the frame ends after 320 LAST spans.
@@ -168,68 +169,44 @@ architecture arch of column_rasterizer is
 	constant CREDITS: natural := 2 ** FIFO_BITS - 1; -- Output FIFO capacity (latency is 9)
 
 	------------------------------------------------------------------
-	-- Control (two-segment: record r, next state r_next)
+	-- Control (one-process FSM)
 	------------------------------------------------------------------
-	-- S_WAIT_DESC: take the next span; S_SPAN: issue its rows; S_DRAIN:
-	-- every span issued, wait until every credit is back
-	type state_t is (S_IDLE, S_WAIT_DESC, S_SPAN, S_DRAIN);
-	type regs_t is record
-		state: state_t;
-		px: unsigned(POS_BITS - 1 downto 0);
-		py: unsigned(POS_BITS - 1 downto 0);
-		angle: unsigned(ANGLE_BITS - 1 downto 0);
-		fx: std_logic_vector(FX_BITS - 1 downto 0);
-		buf: std_logic;
-		-- Current span
-		col: unsigned(8 downto 0);
-		y1: unsigned(7 downto 0);
-		wall: std_logic; -- Textured span
-		ceil: std_logic; -- Ceiling span
-		last: std_logic; -- Last span of the column
-		e: unsigned(6 downto 0); -- Eye distance of a floor or ceiling span
-		slot: unsigned(3 downto 0); -- Wall ROM slot (render.wall_texture_index)
-		tcol: unsigned(5 downto 0);
-		v: unsigned(31 downto 0); -- Texture row accumulator, Q16.16
-		step: unsigned(23 downto 0);
-		wlight: unsigned(3 downto 0);
-		rx: signed(17 downto 0);
-		ry: signed(17 downto 0);
-		y: unsigned(7 downto 0); -- Next row to issue
-		row_base: unsigned(16 downto 0); -- y * 320
-		cols: natural range 0 to SCREEN_W; -- Columns fully issued
-		credit: natural range 0 to CREDITS;
-		done: std_logic;
-	end record;
+	-- RAS_WAIT_DESC: take the next span; RAS_SPAN: issue its rows;
+	-- RAS_DRAIN: every span issued, wait until every credit is back
+	type ras_state_type is (RAS_IDLE, RAS_WAIT_DESC, RAS_SPAN, RAS_DRAIN);
+	signal ras_state: ras_state_type := RAS_IDLE;
+	-- Frame inputs, latched at start_i
+	signal px: unsigned(POS_BITS - 1 downto 0) := (others => '0');
+	signal py: unsigned(POS_BITS - 1 downto 0) := (others => '0');
+	signal angle: unsigned(ANGLE_BITS - 1 downto 0) := (others => '0');
+	signal fx: std_logic_vector(FX_BITS - 1 downto 0) := (others => '0');
+	signal buf: std_logic := '0';
+	-- Current span
+	signal col: unsigned(8 downto 0) := (others => '0');
+	signal y1: unsigned(7 downto 0) := (others => '0');
+	signal wall: std_logic := '0'; -- Textured span
+	signal ceil: std_logic := '0'; -- Ceiling span
+	signal last: std_logic := '0'; -- Last span of the column
+	signal e: unsigned(6 downto 0) := (others => '0'); -- Eye distance of a floor or ceiling span
+	signal slot: unsigned(3 downto 0) := (others => '0'); -- Wall ROM slot (render.wall_texture_index)
+	signal tcol: unsigned(5 downto 0) := (others => '0');
+	signal tex_v: unsigned(31 downto 0) := (others => '0'); -- Texture row accumulator, Q16.16
+	signal tex_step: unsigned(23 downto 0) := (others => '0');
+	signal wlight: unsigned(3 downto 0) := (others => '0');
+	signal rx: signed(17 downto 0) := (others => '0');
+	signal ry: signed(17 downto 0) := (others => '0');
+	signal y: unsigned(7 downto 0) := (others => '0'); -- Next row to issue
+	signal row_base: unsigned(16 downto 0) := (others => '0'); -- y * 320
+	signal cols: natural range 0 to SCREEN_W := 0; -- Columns fully issued
+	signal credit: natural range 0 to CREDITS := CREDITS;
+	signal done: std_logic := '0';
 
-	constant REGS_INIT: regs_t := (
-		state => S_IDLE,
-		px => (others => '0'),
-		py => (others => '0'),
-		angle => (others => '0'),
-		fx => (others => '0'),
-		buf => '0',
-		col => (others => '0'),
-		y1 => (others => '0'),
-		wall => '0',
-		ceil => '0',
-		last => '0',
-		e => (others => '0'),
-		slot => (others => '0'),
-		tcol => (others => '0'),
-		v => (others => '0'),
-		step => (others => '0'),
-		wlight => (others => '0'),
-		rx => (others => '0'),
-		ry => (others => '0'),
-		y => (others => '0'),
-		row_base => (others => '0'),
-		cols => 0,
-		credit => CREDITS,
-		done => '0'
-	);
-
-	signal r: regs_t := REGS_INIT;
-	signal r_next: regs_t;
+	-- Fields of the waiting descriptor
+	signal desc_tex: unsigned(3 downto 0); -- Texture id
+	signal desc_tex_m1: unsigned(3 downto 0); -- id - 1
+	signal desc_y0: unsigned(7 downto 0);
+	signal anim_slot: unsigned(3 downto 0); -- Slime slot of this animation frame
+	signal desc_slot: unsigned(3 downto 0);
 
 	-- Issue (S0)
 	signal issue: std_logic;
@@ -249,8 +226,10 @@ architecture arch of column_rasterizer is
 	signal ceil1, ceil2, ceil3, ceil4, ceil5, ceil6, ceil7: std_logic;
 	signal addr1, addr2, addr3, addr4, addr5, addr6, addr7, addr8, addr9, addr10: unsigned(16 downto 0);
 	-- Sky: SKYX(col) and the sky row at S1, then the ROM address carried to S9
+	signal y17: unsigned(12 downto 0); -- y * 17 (S0)
 	signal skyx1: signed(10 downto 0);
 	signal skyv1: unsigned(5 downto 0);
+	signal sky_u1: signed(11 downto 0); -- angle + SKYX (S1)
 	signal skya2, skya3, skya4, skya5, skya6, skya7, skya8, skya9: std_logic_vector(13 downto 0);
 	signal sky8, sky9, sky10: std_logic; -- The pixel is sky
 	signal sky_q: std_logic_vector(7 downto 0);
@@ -258,6 +237,10 @@ architecture arch of column_rasterizer is
 	signal tl8: unsigned(3 downto 0);
 	signal ty8: unsigned(1 downto 0);
 	signal dt8: unsigned(3 downto 0);
+	signal lmod8: signed(5 downto 0); -- Light offset of the tile's light type
+	signal lsum8: signed(5 downto 0); -- Tile light + offset ...
+	signal lclamp8: signed(5 downto 0); -- ... clamped to 0..15 ...
+	signal ldist8: signed(5 downto 0); -- ... minus the distance term
 	signal fl9: unsigned(3 downto 0);
 	signal ft9: std_logic_vector(7 downto 0);
 	signal wl9: unsigned(3 downto 0);
@@ -285,131 +268,149 @@ architecture arch of column_rasterizer is
 	signal fifo_valid: std_logic;
 begin
 	------------------------------------------------------------------
-	-- Control: next state
+	-- Control
 	------------------------------------------------------------------
-	issue <= '1' when ((r.state = S_SPAN) and (r.credit /= 0)) else '0';
+	issue <= '1' when ((ras_state = RAS_SPAN) and (credit /= 0)) else '0';
 	pop <= fifo_valid and pix_ready_i;
 
-	process(r, start_i, pos_x_i, pos_y_i, angle_i, fx_i, buf_i, desc_valid_i, desc_i, issue, pop)
-		variable v: regs_t;
-		variable tex: unsigned(3 downto 0);
-		variable id: unsigned(3 downto 0);
-		variable y0: unsigned(7 downto 0);
-		variable kind: std_logic_vector(1 downto 0);
-	begin
-		v := r;
-		v.done := '0';
-		-- Credits: one reserved per issue, one returned per accepted pixel
-		if ((issue = '1') and (pop = '0')) then
-			v.credit := r.credit - 1;
-		elsif ((issue = '0') and (pop = '1')) then
-			v.credit := r.credit + 1;
-		end if;
-
-		case r.state is
-			when S_IDLE =>
-				if (start_i = '1') then
-					v.px := unsigned(pos_x_i);
-					v.py := unsigned(pos_y_i);
-					v.angle := unsigned(angle_i);
-					v.fx := fx_i;
-					v.buf := buf_i;
-					v.cols := 0;
-					v.credit := CREDITS;
-					v.state := S_WAIT_DESC;
-				end if;
-
-			when S_WAIT_DESC =>
-				if (desc_valid_i = '1') then
-					id := unsigned(desc_i(DESC_TEX_HI downto DESC_TEX_LO));
-					tex := id - 1;
-					kind := desc_i(DESC_KIND_HI downto DESC_KIND_LO);
-					y0 := unsigned(desc_i(DESC_Y0_HI downto DESC_Y0_LO));
-					v.col := unsigned(desc_i(DESC_COL_HI downto DESC_COL_LO));
-					v.y1 := unsigned(desc_i(DESC_Y1_HI downto DESC_Y1_LO));
-					v.wall := '0';
-					v.ceil := '0';
-					if (kind = KIND_WALL) then
-						v.wall := '1';
-					elsif (kind = KIND_CEIL) then
-						v.ceil := '1';
-					end if;
-					v.last := desc_i(DESC_LAST);
-					v.e := unsigned(desc_i(DESC_E_HI downto DESC_E_LO));
-					-- Slime (texture 6) cycles through slots 5, 8, 9, 10
-					if (id = 6) then
-						case r.fx(FX_ANIM_HI downto FX_ANIM_LO) is
-							when "00" => v.slot := to_unsigned(5, 4);
-							when "01" => v.slot := to_unsigned(8, 4);
-							when "10" => v.slot := to_unsigned(9, 4);
-							when others => v.slot := to_unsigned(10, 4);
-						end case;
-					else
-						v.slot := '0' & tex(2 downto 0);
-					end if;
-					v.tcol := unsigned(desc_i(DESC_TCOL_HI downto DESC_TCOL_LO));
-					v.v := resize(unsigned(desc_i(DESC_V0_HI downto DESC_V0_LO)), 32);
-					v.step := unsigned(desc_i(DESC_STEP_HI downto DESC_STEP_LO));
-					v.wlight := unsigned(desc_i(DESC_LIGHT_HI downto DESC_LIGHT_LO));
-					v.rx := signed(desc_i(DESC_RX_HI downto DESC_RX_LO));
-					v.ry := signed(desc_i(DESC_RY_HI downto DESC_RY_LO));
-					v.y := y0;
-					-- y0 * 320 = (y0 << 8) + (y0 << 6)
-					v.row_base := shift_left(resize(y0, 17), 8) + shift_left(resize(y0, 17), 6);
-					v.state := S_SPAN;
-				end if;
-
-			when S_SPAN =>
-				if (issue = '1') then
-					if (r.wall = '1') then
-						v.v := r.v + r.step;
-					end if;
-					if (r.y = r.y1) then
-						v.state := S_WAIT_DESC;
-						if (r.last = '1') then
-							if (r.cols = SCREEN_W - 1) then
-								v.state := S_DRAIN;
-							end if;
-							v.cols := r.cols + 1;
-						end if;
-					else
-						v.y := r.y + 1;
-						v.row_base := r.row_base + SCREEN_W;
-					end if;
-				end if;
-
-			when S_DRAIN =>
-				-- Every credit back: no pixel left in the pipeline or the FIFO
-				if (r.credit = CREDITS) then
-					v.done := '1';
-					v.state := S_IDLE;
-				end if;
-		end case;
-		r_next <= v;
-	end process;
+	-- Descriptor fields; slime (texture 6) cycles through slots 5, 8, 9, 10,
+	-- every other texture uses slot (id - 1) mod 8
+	desc_tex <= unsigned(desc_i(DESC_TEX_HI downto DESC_TEX_LO));
+	desc_tex_m1 <= desc_tex - 1;
+	desc_y0 <= unsigned(desc_i(DESC_Y0_HI downto DESC_Y0_LO));
+	with fx(FX_ANIM_HI downto FX_ANIM_LO) select
+		anim_slot <= to_unsigned(5, 4) when "00",
+			to_unsigned(8, 4) when "01",
+			to_unsigned(9, 4) when "10",
+			to_unsigned(10, 4) when others;
+	desc_slot <= anim_slot when (desc_tex = 6) else '0' & desc_tex_m1(2 downto 0);
 
 	process(clk_i, rst_i)
 	begin
 		if (rst_i = '1') then
-			r <= REGS_INIT;
+			ras_state <= RAS_IDLE;
+			px <= (others => '0');
+			py <= (others => '0');
+			angle <= (others => '0');
+			fx <= (others => '0');
+			buf <= '0';
+			col <= (others => '0');
+			y1 <= (others => '0');
+			wall <= '0';
+			ceil <= '0';
+			last <= '0';
+			e <= (others => '0');
+			slot <= (others => '0');
+			tcol <= (others => '0');
+			tex_v <= (others => '0');
+			tex_step <= (others => '0');
+			wlight <= (others => '0');
+			rx <= (others => '0');
+			ry <= (others => '0');
+			y <= (others => '0');
+			row_base <= (others => '0');
+			cols <= 0;
+			credit <= CREDITS;
+			done <= '0';
 		elsif rising_edge(clk_i) then
-			r <= r_next;
+			done <= '0';
+			-- Credits: one reserved per issue, one returned per accepted pixel
+			-- (RAS_IDLE overrides this with a full count at start_i)
+			if ((issue = '1') and (pop = '0')) then
+				credit <= credit - 1;
+			elsif ((issue = '0') and (pop = '1')) then
+				credit <= credit + 1;
+			end if;
+
+			case ras_state is
+				when RAS_IDLE =>
+					if (start_i = '1') then
+						px <= unsigned(pos_x_i);
+						py <= unsigned(pos_y_i);
+						angle <= unsigned(angle_i);
+						fx <= fx_i;
+						buf <= buf_i;
+						cols <= 0;
+						credit <= CREDITS;
+						ras_state <= RAS_WAIT_DESC;
+					end if;
+
+				when RAS_WAIT_DESC =>
+					if (desc_valid_i = '1') then
+						col <= unsigned(desc_i(DESC_COL_HI downto DESC_COL_LO));
+						y1 <= unsigned(desc_i(DESC_Y1_HI downto DESC_Y1_LO));
+						if (desc_i(DESC_KIND_HI downto DESC_KIND_LO) = KIND_WALL) then
+							wall <= '1';
+							ceil <= '0';
+						elsif (desc_i(DESC_KIND_HI downto DESC_KIND_LO) = KIND_CEIL) then
+							wall <= '0';
+							ceil <= '1';
+						else
+							wall <= '0';
+							ceil <= '0';
+						end if;
+						last <= desc_i(DESC_LAST);
+						e <= unsigned(desc_i(DESC_E_HI downto DESC_E_LO));
+						slot <= desc_slot;
+						tcol <= unsigned(desc_i(DESC_TCOL_HI downto DESC_TCOL_LO));
+						tex_v <= resize(unsigned(desc_i(DESC_V0_HI downto DESC_V0_LO)), 32);
+						tex_step <= unsigned(desc_i(DESC_STEP_HI downto DESC_STEP_LO));
+						wlight <= unsigned(desc_i(DESC_LIGHT_HI downto DESC_LIGHT_LO));
+						rx <= signed(desc_i(DESC_RX_HI downto DESC_RX_LO));
+						ry <= signed(desc_i(DESC_RY_HI downto DESC_RY_LO));
+						y <= desc_y0;
+						-- y0 * 320 = (y0 << 8) + (y0 << 6)
+						row_base <= shift_left(resize(desc_y0, 17), 8) + shift_left(resize(desc_y0, 17), 6);
+						ras_state <= RAS_SPAN;
+					end if;
+
+				when RAS_SPAN =>
+					if (issue = '1') then
+						if (wall = '1') then
+							tex_v <= tex_v + tex_step;
+						end if;
+						if (y = y1) then
+							-- Span done: the next one, or the drain after column 319
+							if ((last = '1') and (cols = SCREEN_W - 1)) then
+								ras_state <= RAS_DRAIN;
+							else
+								ras_state <= RAS_WAIT_DESC;
+							end if;
+							if (last = '1') then
+								cols <= cols + 1;
+							end if;
+						else
+							y <= y + 1;
+							row_base <= row_base + SCREEN_W;
+						end if;
+					end if;
+
+				when RAS_DRAIN =>
+					-- Every credit back: no pixel left in the pipeline or the FIFO
+					if (credit = CREDITS) then
+						done <= '1';
+						ras_state <= RAS_IDLE;
+					end if;
+
+				when others =>
+					null;
+			end case;
 		end if;
 	end process;
 
-	desc_ready_o <= '1' when (r.state = S_WAIT_DESC) else '0';
-	busy_o <= '0' when (r.state = S_IDLE) else '1';
-	done_o <= r.done;
+	desc_ready_o <= '1' when (ras_state = RAS_WAIT_DESC) else '0';
+	busy_o <= '0' when (ras_state = RAS_IDLE) else '1';
+	done_o <= done;
 
 	------------------------------------------------------------------
 	-- S0: wall ROM address, texture row = min(v >> 16, 63); RINV ROM
 	------------------------------------------------------------------
 	-- Any bit above 21 set means v >> 16 >= 64: clamp the row to 63
-	trow <= (others => '1') when (r.v(31 downto 22) /= 0) else r.v(21 downto 16);
-	wall_addr <= std_logic_vector(unsigned'(r.slot(2 downto 0) & r.tcol & trow));
+	trow <= (others => '1') when (tex_v(31 downto 22) /= 0) else tex_v(21 downto 16);
+	wall_addr <= std_logic_vector(unsigned'(slot(2 downto 0) & tcol & trow));
 	-- Only slots 8..10 address the animation ROM (12,288 entries); other slots read address 0
 	-- there, its output unused (anim1 = '0')
-	anim_addr <= std_logic_vector(unsigned'(r.slot(1 downto 0) & r.tcol & trow)) when (r.slot(3) = '1') else
+	anim_addr <= std_logic_vector(unsigned'(slot(1 downto 0) & tcol & trow)) when (slot(3) = '1') else
 		(others => '0');
 
 	walls: wall_rom
@@ -427,14 +428,14 @@ begin
 		);
 
 	-- S0 -> S1: RINV(y); SKYX(col) and the sky row min(63, (y * 17) >> 5)
+	y17 <= shift_left(resize(y, 13), 4) + resize(y, 13); -- y * 17 = (y << 4) + y
+
 	process(clk_i)
-		variable y17: unsigned(12 downto 0);
 	begin
 		if rising_edge(clk_i) then
-			rinv_q <= to_unsigned(RINV_TABLE(to_integer(r.y)), 27);
-			anim1 <= r.slot(3);
-			skyx1 <= to_signed(SKYX_TABLE(to_integer(r.col)), 11);
-			y17 := shift_left(resize(r.y, 13), 4) + resize(r.y, 13); -- y * 17 = (y << 4) + y
+			rinv_q <= to_unsigned(RINV_TABLE(to_integer(y)), 27);
+			anim1 <= slot(3);
+			skyx1 <= to_signed(SKYX_TABLE(to_integer(col)), 11);
 			if (y17(12 downto 5) > 63) then
 				skyv1 <= (others => '1');
 			else
@@ -473,25 +474,36 @@ begin
 		end if;
 	end process;
 
+	-- S1: sky column u = ((angle + SKYX) >> 1) mod 256 = bits 8:1 of this
+	-- two's complement sum
+	sky_u1 <= signed(resize(angle, 12)) + resize(skyx1, 12);
+
+	-- S8: light = clamp(clamp(tile light + lmod(type), 0, 15) - distance term,
+	-- 0, 15); fx holds one signed 5-bit light offset per light type
+	with ty8 select
+		lmod8 <= resize(signed(fx(4 downto 0)), 6) when "00",
+			resize(signed(fx(9 downto 5)), 6) when "01",
+			resize(signed(fx(14 downto 10)), 6) when "10",
+			resize(signed(fx(19 downto 15)), 6) when others;
+	lsum8 <= signed(resize(tl8, 6)) + lmod8;
+	lclamp8 <= to_signed(0, 6) when (lsum8 < 0) else
+		to_signed(15, 6) when (lsum8 > 15) else
+		lsum8;
+	ldist8 <= lclamp8 - signed(resize(dt8, 6));
+
 	process(clk_i)
-		variable p8: unsigned(33 downto 0);
-		variable sx, sy: unsigned(POS_BITS - 1 downto 0);
-		variable su: signed(11 downto 0);
-		variable lm: signed(5 downto 0);
-		variable lt: signed(5 downto 0);
 	begin
 		if rising_edge(clk_i) then
 			-- S0 -> S1
-			wall1 <= r.wall;
-			ceil1 <= r.ceil;
-			e1 <= r.e;
-			addr1 <= r.row_base + r.col;
-			rx1 <= r.rx;
-			ry1 <= r.ry;
-			wl1 <= r.wlight;
+			wall1 <= wall;
+			ceil1 <= ceil;
+			e1 <= e;
+			addr1 <= row_base + col;
+			rx1 <= rx;
+			ry1 <= ry;
+			wl1 <= wlight;
 
 			-- S1 -> S2: wall texel and RINV(y) have arrived; E * RINV; sky column
-			-- u = ((angle + SKYX) >> 1) mod 256 = bits 8:1 of the two's complement sum
 			wall2 <= wall1;
 			ceil2 <= ceil1;
 			addr2 <= addr1;
@@ -504,10 +516,10 @@ begin
 				wt2 <= wall_q;
 			end if;
 			prod2 <= e1 * rinv_q;
-			su := signed(resize(r.angle, 12)) + resize(skyx1, 12);
-			skya2 <= std_logic_vector(su(8 downto 1)) & std_logic_vector(skyv1);
+			skya2 <= std_logic_vector(sky_u1(8 downto 1)) & std_logic_vector(skyv1);
 
-			-- S2 -> S3: rd = min(DD_MAX, product >> 8)
+			-- S2 -> S3: rd = min(DD_MAX, product >> 8); product >> 8 needs more
+			-- than 24 bits exactly when product bits 33:32 are not 0
 			wall3 <= wall2;
 			ceil3 <= ceil2;
 			addr3 <= addr2;
@@ -516,11 +528,10 @@ begin
 			wl3 <= wl2;
 			wt3 <= wt2;
 			skya3 <= skya2;
-			p8 := shift_right(prod2, 8);
-			if (p8(33 downto 24) /= 0) then
+			if (prod2(33 downto 32) /= 0) then
 				rd3 <= to_unsigned(DD_MAX, 24);
 			else
-				rd3 <= p8(23 downto 0);
+				rd3 <= prod2(31 downto 8);
 			end if;
 
 			-- S3 -> S4: multiplier operands; distance light term
@@ -551,7 +562,8 @@ begin
 			prod_x <= m_rd * m_rx;
 			prod_y <= m_rd * m_ry;
 
-			-- S5 -> S6: world point = pos + (product >> 16), mod 2^22
+			-- S5 -> S6: world point = pos + (product >> 16), mod 2^22: bits 37:16
+			-- are (product >> 16) mod 2^22; the wrap matches the model
 			wall6 <= wall5;
 			ceil6 <= ceil5;
 			addr6 <= addr5;
@@ -559,11 +571,8 @@ begin
 			wt6 <= wt5;
 			dt6 <= dt5;
 			skya6 <= skya5;
-			-- Bits 37:16 = (product >> 16) mod 2^22; the wrap matches the model
-			sx := unsigned(prod_x(37 downto 16));
-			sy := unsigned(prod_y(37 downto 16));
-			wx6 <= r.px + sx;
-			wy6 <= r.py + sy;
+			wx6 <= px + unsigned(prod_x(37 downto 16));
+			wy6 <= py + unsigned(prod_y(37 downto 16));
 
 			-- S6 -> S7: map address is on map_addr_o during S6
 			wall7 <= wall6;
@@ -593,8 +602,7 @@ begin
 				sky8 <= '0';
 			end if;
 
-			-- S8 -> S9: flat texel has arrived; light = clamp(clamp(tile light +
-			-- lmod(type), 0, 15) - distance term, 0, 15)
+			-- S8 -> S9: flat texel has arrived; final light = ldist8 clamped at 0
 			wall9 <= wall8;
 			addr9 <= addr8;
 			wl9 <= wl8;
@@ -602,24 +610,10 @@ begin
 			ft9 <= flat_q;
 			sky9 <= sky8;
 			skya9 <= skya8;
-			-- fx holds one signed 5-bit light offset per light type
-			case ty8 is
-				when "00" => lm := resize(signed(r.fx(4 downto 0)), 6);
-				when "01" => lm := resize(signed(r.fx(9 downto 5)), 6);
-				when "10" => lm := resize(signed(r.fx(14 downto 10)), 6);
-				when others => lm := resize(signed(r.fx(19 downto 15)), 6);
-			end case;
-			lt := signed(resize(tl8, 6)) + lm;
-			if (lt < 0) then
-				lt := (others => '0');
-			elsif (lt > 15) then
-				lt := to_signed(15, 6);
-			end if;
-			lt := lt - signed(resize(dt8, 6));
-			if (lt < 0) then
+			if (ldist8 < 0) then
 				fl9 <= (others => '0');
 			else
-				fl9 <= unsigned(lt(3 downto 0));
+				fl9 <= unsigned(ldist8(3 downto 0));
 			end if;
 
 			-- S9 -> S10: palette index (light ROM) or sky texel (sky ROM) arrives
@@ -667,8 +661,8 @@ begin
 	-- S10: output FIFO (a slot was reserved at issue, so it has room)
 	------------------------------------------------------------------
 	-- Pixel word: buffer, then address y * 320 + x, then palette index
-	fifo_in <= r.buf & std_logic_vector(addr10) & sky_q when (sky10 = '1') else
-		r.buf & std_logic_vector(addr10) & light_q;
+	fifo_in <= buf & std_logic_vector(addr10) & sky_q when (sky10 = '1') else
+		buf & std_logic_vector(addr10) & light_q;
 
 	out_fifo: sync_fifo
 		generic map (

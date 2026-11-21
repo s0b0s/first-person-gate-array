@@ -30,7 +30,7 @@
 --
 -- Revision:
 -- Revision 0.01 - File Created
--- Revision 1.00 - Stage 2
+-- Revision 1.00 - First working version
 -- Additional Comments:
 --                 At most 15 reads in flight (the arbiter port allows
 --                 far fewer: one per access, a few clocks of latency).

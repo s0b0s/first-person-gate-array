@@ -1,4 +1,4 @@
-"""Stage-4 golden files (heights and ramps), written by build_assets.py.
+"""Golden files for heights and ramps, written by build_assets.py.
 
     ray4_maps.txt    the tile maps the poses use: "M <level>" then 4096 hex tile words
     ray4_poses.txt   one pose per line: map level, px, py, angle, eye, door count, then
@@ -65,7 +65,7 @@ def test_map_poses():
 
 
 def effect_poses():
-    """Stage-4 effects: the sky over level 1's slime pit (animated slime walls) and over the
+    """Light effects: the sky over level 1's slime pit (animated slime walls) and over the
     level-3 arena during a strobe, the flickering hall and the glowing room during a muzzle
     flash (render.light_mods gives each frame's offsets)."""
     q = B.q16
@@ -78,7 +78,7 @@ def effect_poses():
 
 
 def all_poses():
-    """The stage-1 level-1 poses (flat; their images equal the stage-1 goldens but for one
+    """The flat level-1 poses of game_top (their images equal its goldens but for one
     pixel), then the heights poses, the test-map poses and the effects poses."""
     lv1 = L.level1()
     return ([(1, fr) for fr in B.test_poses(lv1)] + heights_poses() + test_map_poses() +

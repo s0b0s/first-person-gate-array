@@ -28,7 +28,7 @@
 --
 -- Revision:
 -- Revision 0.01 - File Created
--- Revision 1.00 - Stage 1
+-- Revision 1.00 - First working version
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------

@@ -23,6 +23,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -83,7 +84,6 @@ architecture arch of tb_common is
 
 	constant PERIOD_A: time := 10 ns; -- 100 MHz
 	constant PERIOD_B: time := 40 ns; -- 25 MHz
-	shared variable chk: checker_t;
 
 	signal clk_a: std_logic := '0';
 	signal clk_b: std_logic := '0';
@@ -213,10 +213,11 @@ begin
 
 	-- Stimulus and checks
 	process
+		variable checks, errors: natural := 0;
 	begin
 		wait for 1 ns;
-		chk.check(sync1 = '1', "INIT='1' synchronizer holds '1' in reset");
-		chk.check(rst_out = '1', "reset_sync powers up in reset");
+		check(sync1 = '1', "INIT='1' synchronizer holds '1' in reset", checks, errors);
+		check(rst_out = '1', "reset_sync powers up in reset", checks, errors);
 		wait until (rst = '0');
 		wait until rising_edge(clk_a);
 
@@ -227,36 +228,36 @@ begin
 		for i in 1 to 2 loop
 			wait until rising_edge(clk_a);
 			wait for 1 ns; -- Look just after the edge, once the flops have updated
-			chk.check(sync0 = '0', "synchronizer output early at edge " & integer'image(i));
+			check(sync0 = '0', "synchronizer output early at edge " & integer'image(i), checks, errors);
 		end loop;
 		wait until rising_edge(clk_a);
 		wait for 1 ns;
-		chk.check(sync0 = '1', "synchronizer output after 3 edges");
-		chk.check(sync1 = '1', "INIT='1' synchronizer passes '1'");
+		check(sync0 = '1', "synchronizer output after 3 edges", checks, errors);
+		check(sync1 = '1', "INIT='1' synchronizer passes '1'", checks, errors);
 		din <= '0';
 		for i in 1 to 3 loop
 			wait until rising_edge(clk_a);
 		end loop;
 		wait for 1 ns;
-		chk.check((sync0 = '0') and (sync1 = '0'), "synchronizers pass '0'");
+		check((sync0 = '0') and (sync1 = '0'), "synchronizers pass '0'", checks, errors);
 
 		-- reset_sync: release takes 3 edges, assert is immediate
-		chk.check(rst_out = '0', "reset_sync released after power-on");
+		check(rst_out = '0', "reset_sync released after power-on", checks, errors);
 		wait for 3 ns;
 		arst <= '1';
 		wait for 1 ns;
-		chk.check(rst_out = '1', "reset_sync asserts without a clock edge");
+		check(rst_out = '1', "reset_sync asserts without a clock edge", checks, errors);
 		wait until rising_edge(clk_a);
 		wait for 2 ns;
 		arst <= '0';
 		for i in 1 to 2 loop
 			wait until rising_edge(clk_a);
 			wait for 1 ns;
-			chk.check(rst_out = '1', "reset_sync released early");
+			check(rst_out = '1', "reset_sync released early", checks, errors);
 		end loop;
 		wait until rising_edge(clk_a);
 		wait for 1 ns;
-		chk.check(rst_out = '0', "reset_sync released after 3 edges");
+		check(rst_out = '0', "reset_sync released after 3 edges", checks, errors);
 
 		-- pulse_sync: 20 pulses spaced 25 fast cycles apart (above the
 		-- 5 slow-cycle minimum) all arrive
@@ -270,8 +271,8 @@ begin
 			end loop;
 		end loop;
 		wait for 10 * PERIOD_B;
-		chk.check(pulses_seen = 20, "pulse_sync delivered " & integer'image(pulses_seen) &
-			" of 20 pulses");
+		check(pulses_seen = 20, "pulse_sync delivered " & integer'image(pulses_seen) &
+			" of 20 pulses", checks, errors);
 
 		-- Debounce: counter is 3 bits stepping every 2 clocks, so a press
 		-- must hold about 16 clocks. Glitches of 4 clocks are rejected.
@@ -281,11 +282,11 @@ begin
 			button <= '0';
 			wait for 12 * PERIOD_A;
 		end loop;
-		chk.check(level = '0', "debounce rejects short glitches");
-		chk.check(rises_seen = 0, "no rise pulse from glitches");
+		check(level = '0', "debounce rejects short glitches", checks, errors);
+		check(rises_seen = 0, "no rise pulse from glitches", checks, errors);
 		button <= '1';
 		wait for 40 * PERIOD_A;
-		chk.check(level = '1', "debounce follows a held press");
+		check(level = '1', "debounce follows a held press", checks, errors);
 		-- Bounce while held must not make a second press
 		button <= '0';
 		wait for 3 * PERIOD_A;
@@ -293,11 +294,12 @@ begin
 		wait for 40 * PERIOD_A;
 		button <= '0';
 		wait for 40 * PERIOD_A;
-		chk.check(level = '0', "debounce follows the release");
-		chk.check(rises_seen = 1, "one rise pulse per press, got " & integer'image(rises_seen));
+		check(level = '0', "debounce follows the release", checks, errors);
+		check(rises_seen = 1, "one rise pulse per press, got " & integer'image(rises_seen),
+			checks, errors);
 
 		done <= true;
-		tb_finish("tb_common", chk.checks, chk.errors);
+		tb_finish("tb_common", checks, errors);
 		wait;
 	end process;
 end arch;

@@ -2,7 +2,7 @@
 
 Layout (all numbers little endian; offsets are from the start of the image):
 
-    0x0000  8 bytes   magic "SHOOTER0" (the stage-0 bring-up page shows these bytes)
+    0x0000  8 bytes   magic "FPGADATA" (the bring-up page shows these bytes)
     0x0008  u16       format version (1)
     0x000A  u16       number of directory entries N
     0x000C  N x 12    directory: u32 id, u32 offset, u32 length
@@ -55,7 +55,7 @@ def build(items):
         pad = (-len(data)) % ITEM_ALIGN
         body += data + b"\xFF" * pad
         offset += len(data) + pad
-    header = b"SHOOTER0" + struct.pack("<HH", 1, len(items)) + directory
+    header = b"FPGADATA" + struct.pack("<HH", 1, len(items)) + directory
     header += b"\xFF" * ((-len(header)) % ITEM_ALIGN)
     image = header + body
     assert len(image) <= MAX_BYTES, "game data too large: %d bytes" % len(image)

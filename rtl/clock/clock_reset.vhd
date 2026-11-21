@@ -26,8 +26,8 @@
 --                 Clock domains: produces clk_sys and clk_pix (unrelated
 --                 for timing) and clk_sram_rd (related to clk_sys).
 --
--- Dependencies:   VHDL-93, IEEE.std_logic_1164, UNISIM, UNISIM (MMCME2_BASE,
---                 BUFG), reset_sync
+-- Dependencies:   VHDL-93, IEEE.std_logic_1164, UNISIM (MMCME2_BASE, BUFG),
+--                 reset_sync
 --
 -- Revision:
 -- Revision 0.01 - File Created

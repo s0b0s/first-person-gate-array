@@ -1,4 +1,4 @@
-"""Stage-5 golden files (sound alerts and the ambush flag), written by build_assets.py.
+"""Golden files for sound alerts and the ambush flag, written by build_assets.py.
 
     game5a_trace.txt  a scripted session on the directed alert map (level.level_alert(), map
                       level 10, build/level10.bin), in the game2_trace.txt format; it plays as

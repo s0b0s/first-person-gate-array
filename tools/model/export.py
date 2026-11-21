@@ -113,7 +113,7 @@ package render_pkg is
 	constant MAX_STEPS: natural := {r.MAX_STEPS}; -- DDA cell limit
 	constant LIGHT_SHIFT: natural := {r.LIGHT_SHIFT}; -- One light step per 2^(LIGHT_SHIFT-16) tiles
 	constant DOORS_MAX: natural := {r.DOORS_MAX};
-	-- Stage 4 heights (render.py docstring)
+	-- Floor and ceiling heights (render.py docstring)
 	constant EYE_MAX: natural := {r.EYE_MAX}; -- Eye height register range 0..EYE_MAX
 	constant RISER_TEX: natural := {r.RISER_TEX}; -- Wall texture of risers and upper walls
 	constant CLIP_MAX: natural := {r.CLIP_MAX}; -- Clip entries per column

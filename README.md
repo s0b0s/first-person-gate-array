@@ -1,6 +1,6 @@
 # First-Person Gate Array
 
-A first-person shooter built entirely out of digital logic on a small FPGA board. There is no
+A first-person shooter game built entirely out of digital logic on a small FPGA board. There is no
 processor anywhere in the design: no soft CPU in the FPGA and no microcontroller on the side.
 The 3D renderer, the monsters, the game rules, the keyboard and mouse interface and the sound
 are all state machines and memories written in VHDL.
@@ -43,7 +43,8 @@ The modules plug into a small custom carrier PCB. Inside the FPGA, the main bloc
 | SRAM and flash controllers | Shared memory access and loading game data at boot |
 
 Two frames are kept in SRAM: the game draws the next frame into one while the monitor shows
-the other. A frame takes about 3 to 6 ms to draw out of the 16.7 ms available at 60 Hz.
+the other. A frame takes about 3 to 6 ms to draw out of the 16.8 ms frame (the 25 MHz pixel
+clock gives 59.5 Hz).
 
 ## Controls
 
@@ -57,22 +58,21 @@ the other. A frame takes about 3 to 6 ms to draw out of the 16.7 ms available at
 | Run | Shift |
 | Duck | Hold C |
 | Peek left / right | Hold Q / E |
-| Weapons | 1, 2, 3, or right click to cycle |
+| Weapons | 1, 2, or right click to cycle |
 | Automap | Tab |
 | Pause | Esc |
 
-## Development stages
+## How it was built
 
-The design was built in stages, each ending in a working bitstream, and comments in the code
-refer to them:
+The design grew in steps, each ending in a bitstream that builds and meets timing:
 
-| Stage | What it added | Top level |
+| In order | What it added | Top level |
 | --- | --- | --- |
-| 0 | Bring-up: test patterns, SRAM and flash tests, raw keyboard and mouse codes, test tone, UART | `bringup_top` |
-| 1 | A textured maze to walk through, with doors and collision | `game_top` |
-| 2 and 3 | The full game: monsters, weapons, items, keys, HUD, maps, sound, three levels | `shooter_top` |
-| 4 | Floor and ceiling heights, steps, ramps, light effects, sky, animated walls | `shooter_top` |
-| 5 | Monsters woken by gunfire, and ambushing monsters | `shooter_top` |
+| Bring-up | Test patterns, SRAM and flash tests, raw keyboard and mouse codes, test tone, UART | `bringup_top` |
+| First maze | A textured maze to walk through, with doors and collision | `game_top` |
+| Full game | Monsters, weapons, items, keys, HUD, maps, sound, three levels | `shooter_top` |
+| Heights | Floor and ceiling heights, steps, ramps, light effects, sky, animated walls | `shooter_top` |
+| Alerts | Monsters woken by gunfire, and ambushing monsters | `shooter_top` |
 
 ## How it was checked
 
@@ -110,7 +110,8 @@ and game-data files into `build/`, which the testbenches and the flash image rea
 | --- | --- |
 | Generate the assets, ROM contents and test data | `python tools/model/build_assets.py` |
 | Build the flash game-data image | `python tools/flash_image/make_gamedata.py` |
-| Run every testbench (about 30 minutes; most of it is the full-boot test) | `python scripts/run_sim.py` |
+| Run every testbench (the full-system test sets the pace) | `python scripts/run_sim.py` |
+| Run only the testbenches whose inputs changed since they last passed | `python scripts/run_sim.py --changed` |
 | Run some testbenches | `python scripts/run_sim.py tb_sram tb_ray_engine` |
 | Check the code style | `python tools/style/check_vhdl_style.py` and `python tools/style/check_vhdl_structure.py` |
 | Build the bitstream and flash image | `vivado -mode batch -source scripts/build.tcl -tclargs shooter_top` |

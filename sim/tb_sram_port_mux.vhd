@@ -14,8 +14,10 @@
 --                 their own 256-byte region (client A 0..255, B 256..511),
 --                 back to back or with random idle gaps, holding each
 --                 request until its grant, without waiting for read data
---                 (several reads in flight). Each keeps a shadow of its
---                 region and queues the expected byte of every read.
+--                 (several reads in flight). The read checker watches the
+--                 grants: it keeps a shadow of both regions and queues the
+--                 expected byte of every granted read, one queue per
+--                 client (a ring buffer with head and count variables).
 --                 The master port model grants a request with GNT_PCT
 --                 probability per clock (combinationally, like
 --                 sram_arbiter) and returns read data LAT clocks after the
@@ -24,6 +26,9 @@
 --                 its own queue (right client, right order, right byte);
 --                 no rvalid with an empty queue; both clients finish all
 --                 operations (no starvation) and every read comes back.
+--                 The read checker copies its check counts and queue
+--                 lengths to signals; the finish process adds the counts
+--                 to its own.
 --                 RUN_VARIANTS: LAT=2 LAT=5
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -32,6 +37,8 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type;
+--                 read queues kept by the read checker, filled at grant
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -77,41 +84,6 @@ architecture arch of tb_sram_port_mux is
 
 	constant PERIOD: time := 10 ns;
 
-	-- Expected read bytes of one client, in issue order
-	type queue_t is protected
-		procedure push(v: natural);
-		impure function pop return integer; -- -1 when empty
-		impure function size return natural;
-	end protected queue_t;
-	type queue_t is protected body
-		type data_t is array (0 to 63) of natural;
-		variable data: data_t;
-		variable head, count: natural := 0;
-		procedure push(v: natural) is
-		begin
-			data((head + count) mod 64) := v;
-			count := count + 1;
-		end procedure;
-		impure function pop return integer is
-			variable v: natural;
-		begin
-			if (count = 0) then
-				return -1;
-			end if;
-			v := data(head);
-			head := (head + 1) mod 64;
-			count := count - 1;
-			return v;
-		end function;
-		impure function size return natural is
-		begin
-			return count;
-		end function;
-	end protected body queue_t;
-
-	shared variable chk: checker_t;
-	shared variable qa, qb: queue_t;
-
 	type mem_t is array (0 to 511) of natural range 0 to 255;
 
 	signal clk: std_logic := '0';
@@ -129,16 +101,16 @@ architecture arch of tb_sram_port_mux is
 	signal m_rdata: std_logic_vector(7 downto 0) := (others => '0');
 	signal a_done, b_done: boolean := false;
 	signal a_reads, b_reads: natural := 0; -- Reads checked
+	signal a_pending, b_pending: natural := 0; -- Reads granted but not yet returned
+	signal rd_checks, rd_errors: natural := 0; -- Read checker check counts
 
 	-- One client: OPS random operations on region BASE .. BASE + 255
 	procedure client(constant BASE: natural; constant SEED: positive;
 		signal req: out std_logic; signal we: out std_logic;
 		signal addr: out std_logic_vector(18 downto 0); signal wdata: out std_logic_vector(7 downto 0);
-		signal gnt: in std_logic; signal clk: in std_logic; variable q: inout queue_t;
-		signal done: out boolean) is
+		signal gnt: in std_logic; signal clk: in std_logic; signal done: out boolean) is
 		variable s1, s2: positive := SEED;
 		variable x: real;
-		variable shadow: mem_t := (others => 0);
 		variable a, d: natural;
 		variable w: boolean;
 	begin
@@ -165,11 +137,6 @@ architecture arch of tb_sram_port_mux is
 				wait until rising_edge(clk);
 				exit when (gnt = '1');
 			end loop;
-			if (w) then
-				shadow(a) := d;
-			else
-				q.push(shadow(a));
-			end if;
 			req <= '0';
 			we <= '0';
 		end loop;
@@ -263,23 +230,63 @@ begin
 		end if;
 	end process;
 
-	-- Read data checks, one per client
+	-- Read data checks. At each clock edge the checker sees the same
+	-- grants the clients see: a granted write updates the shadow of the
+	-- client's region, a granted read queues the byte it must return.
+	-- Each client has a 64-entry ring buffer (head, count); the read
+	-- data comes back at least 2 clocks after its grant, so returned
+	-- bytes are taken from the queues before this edge's grants are added.
 	process(clk)
+		type queue_t is array (0 to 63) of natural;
+		variable shadow: mem_t := (others => 0);
+		variable qa, qb: queue_t;
+		variable a_head, a_count, b_head, b_count: natural := 0;
 		variable want: integer;
+		variable checks, errors: natural := 0;
 	begin
 		if rising_edge(clk) then
 			if (a_rvalid = '1') then
-				want := qa.pop;
-				chk.check(want = to_integer(unsigned(m_rdata)), "client A read: got " &
-					to_hex(m_rdata) & ", want " & integer'image(want));
+				want := -1; -- Nothing expected: the check fails
+				if (a_count > 0) then
+					want := qa(a_head);
+					a_head := (a_head + 1) mod 64;
+					a_count := a_count - 1;
+				end if;
+				check(want = to_integer(unsigned(m_rdata)), "client A read: got " &
+					to_hex(m_rdata) & ", want " & integer'image(want), checks, errors);
 				a_reads <= a_reads + 1;
 			end if;
 			if (b_rvalid = '1') then
-				want := qb.pop;
-				chk.check(want = to_integer(unsigned(m_rdata)), "client B read: got " &
-					to_hex(m_rdata) & ", want " & integer'image(want));
+				want := -1;
+				if (b_count > 0) then
+					want := qb(b_head);
+					b_head := (b_head + 1) mod 64;
+					b_count := b_count - 1;
+				end if;
+				check(want = to_integer(unsigned(m_rdata)), "client B read: got " &
+					to_hex(m_rdata) & ", want " & integer'image(want), checks, errors);
 				b_reads <= b_reads + 1;
 			end if;
+			if ((a_req = '1') and (a_gnt = '1')) then
+				if (a_we = '1') then
+					shadow(to_integer(unsigned(a_addr))) := to_integer(unsigned(a_wdata));
+				else
+					qa((a_head + a_count) mod 64) := shadow(to_integer(unsigned(a_addr)));
+					a_count := a_count + 1;
+				end if;
+			end if;
+			if ((b_req = '1') and (b_gnt = '1')) then
+				if (b_we = '1') then
+					shadow(to_integer(unsigned(b_addr))) := to_integer(unsigned(b_wdata));
+				else
+					qb((b_head + b_count) mod 64) := shadow(to_integer(unsigned(b_addr)));
+					b_count := b_count + 1;
+				end if;
+			end if;
+			a_pending <= a_count;
+			b_pending <= b_count;
+			rd_checks <= checks;
+			rd_errors <= errors;
 		end if;
 	end process;
 
@@ -287,7 +294,7 @@ begin
 	begin
 		wait until (rst = '0');
 		wait until rising_edge(clk);
-		client(0, 11, a_req, a_we, a_addr, a_wdata, a_gnt, clk, qa, a_done);
+		client(0, 11, a_req, a_we, a_addr, a_wdata, a_gnt, clk, a_done);
 		wait;
 	end process;
 
@@ -295,25 +302,29 @@ begin
 	begin
 		wait until (rst = '0');
 		wait until rising_edge(clk);
-		client(256, 29, b_req, b_we, b_addr, b_wdata, b_gnt, clk, qb, b_done);
+		client(256, 29, b_req, b_we, b_addr, b_wdata, b_gnt, clk, b_done);
 		wait;
 	end process;
 
 	-- Finish: both clients done, every read returned
 	process
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		wait until (a_done and b_done) for 10 ms;
-		chk.check(a_done and b_done, "both clients finished (no starvation)");
+		check(a_done and b_done, "both clients finished (no starvation)", checks, errors);
 		for i in 1 to LAT + 4 loop
 			wait until rising_edge(clk);
 		end loop;
-		chk.check(qa.size = 0, "client A: " & integer'image(qa.size) & " reads not returned");
-		chk.check(qb.size = 0, "client B: " & integer'image(qb.size) & " reads not returned");
-		chk.check((a_reads > OPS / 3) and (b_reads > OPS / 3), "reads checked: A " &
-			integer'image(a_reads) & ", B " & integer'image(b_reads));
+		check(a_pending = 0, "client A: " & integer'image(a_pending) & " reads not returned",
+			checks, errors);
+		check(b_pending = 0, "client B: " & integer'image(b_pending) & " reads not returned",
+			checks, errors);
+		check((a_reads > OPS / 3) and (b_reads > OPS / 3), "reads checked: A " &
+			integer'image(a_reads) & ", B " & integer'image(b_reads), checks, errors);
 		finished <= true;
-		tb_finish("tb_sram_port_mux", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_sram_port_mux", checks + rd_checks, errors + rd_errors);
 		wait;
 	end process;
 end arch;

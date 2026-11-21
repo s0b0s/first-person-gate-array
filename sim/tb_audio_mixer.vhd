@@ -27,6 +27,9 @@
 --                 reads random spans of the flash with random back-pressure
 --                 and checks every byte against the flash memory.
 --                 Also checked: underflows_o stays 0, no flash model errors.
+--                 Client 1 counts its checks in its own variables and
+--                 copies them to c1_checks and c1_errors; the main process
+--                 adds those to its own counts at the end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, std.textio, tb_pkg, audio_mixer,
@@ -35,6 +38,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -162,12 +166,12 @@ architecture arch of tb_audio_mixer is
 	constant MAX_CMDS: natural := 64;
 	type char_file_t is file of character;
 	type int_array_t is array (natural range <>) of integer;
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
 	signal finished: boolean := false;
 	signal stop_c1: boolean := false;
+	signal c1_checks, c1_errors: natural := 0; -- Client 1's check counts
 	signal sample_req: std_logic := '0';
 	signal snd_valid: std_logic := '0';
 	signal snd_ready: std_logic;
@@ -327,6 +331,7 @@ begin
 		variable s1, s2: positive := 23;
 		variable r: real;
 		variable addr, len, n, gap: natural;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		while (not stop_c1) loop
@@ -359,13 +364,16 @@ begin
 				end if;
 				wait until rising_edge(clk);
 				if ((c1_data_valid = '1') and (c1_data_ready = '1')) then
-					chk.check(to_integer(unsigned(c1_data)) = flash_mem.read(addr + n),
-						"client 1 byte " & integer'image(n) & " of " & to_hex(to_unsigned(addr, 24)));
+					check(to_integer(unsigned(c1_data)) = flash_mem.read(addr + n),
+						"client 1 byte " & integer'image(n) & " of " & to_hex(to_unsigned(addr, 24)),
+						checks, errors);
 					n := n + 1;
 					if (c1_data_last = '1') then
-						chk.check(n = len, "client 1 length " & integer'image(n));
-						exit;
+						check(n = len, "client 1 length " & integer'image(n), checks, errors);
 					end if;
+					c1_checks <= checks;
+					c1_errors <= errors;
+					exit when (c1_data_last = '1');
 				end if;
 			end loop;
 			c1_data_ready <= '0';
@@ -387,6 +395,7 @@ begin
 		variable nout: natural := 0;
 		variable bad: natural := 0;
 		variable ok: boolean;
+		variable checks, errors: natural := 0;
 	begin
 		-- Flash contents
 		file_open(f, IMAGE_FILE, read_mode);
@@ -423,7 +432,7 @@ begin
 			end if;
 		end loop;
 		file_close(case_f);
-		chk.check(nout = SAMPLES, "golden outputs " & integer'image(nout));
+		check(nout = SAMPLES, "golden outputs " & integer'image(nout), checks, errors);
 		tb_print("case: track " & integer'image(track) & ", master " & integer'image(mvol) & ", " &
 			integer'image(ncmd) & " commands, " & integer'image(nout) & " outputs");
 		master <= std_logic_vector(to_unsigned(mvol, 6));
@@ -431,7 +440,7 @@ begin
 		-- Directory and heads load in about 0.6 ms
 		wait for 3 ms;
 		wait until (rising_edge(clk) and (sample_req = '1'));
-		chk.check((left = x"0000") and (right = x"0000"), "silent before the case");
+		check((left = x"0000") and (right = x"0000"), "silent before the case", checks, errors);
 		music <= std_logic_vector(to_unsigned(track, 2));
 
 		ci := 0;
@@ -464,19 +473,21 @@ begin
 				if (not ok) then
 					bad := bad + 1;
 				end if;
-				chk.check(ok, "output pair");
+				check(ok, "output pair", checks, errors);
 			end if;
 		end loop;
-		chk.check(ci = ncmd, "all commands sent");
+		check(ci = ncmd, "all commands sent", checks, errors);
 		tb_print("mismatched samples " & integer'image(bad) & ", client 1 reads " & integer'image(c1_reads) &
 			", flash commands " & integer'image(flash_reads));
-		chk.check(unsigned(underflows) = 0, "underflows " & integer'image(to_integer(unsigned(underflows))));
-		chk.check(c1_reads > 0, "client 1 was served");
-		chk.check(flash_errors = 0, "flash model errors " & integer'image(flash_errors));
+		check(unsigned(underflows) = 0, "underflows " & integer'image(to_integer(unsigned(underflows))),
+			checks, errors);
+		check(c1_reads > 0, "client 1 was served", checks, errors);
+		check(flash_errors = 0, "flash model errors " & integer'image(flash_errors), checks, errors);
 
 		stop_c1 <= true;
 		finished <= true;
-		tb_finish("tb_audio_mixer", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_audio_mixer", checks + c1_checks, errors + c1_errors);
 		wait;
 	end process;
 end arch;

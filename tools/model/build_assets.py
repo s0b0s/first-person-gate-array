@@ -14,7 +14,7 @@ Outputs:
     build/level1.bin               level 1 item for the flash image
     sim/golden/divider.txt         divider operands and results (n d q)
     sim/golden/ray4_*.txt, frame4_<k>.txt   renderer poses, spans and frames (golden4.py)
-    sim/golden/game_trace.txt      frozen stage-1 trace (game_seq.vhd), not regenerated
+    sim/golden/game_trace.txt      frozen trace of game_seq.vhd, not regenerated
     sim/golden/game2_trace.txt, game4_trace.txt, game4d_trace.txt, sprite*, overlay_cases,
     frame_cases, mixer_case, system_trace   (golden2.py, golden4.py, system_session.py)
 """
@@ -91,7 +91,7 @@ def text_strings():
     for lvl, lines in overlay.BRIEFINGS.items():
         out += [("BRIEF_%d_%d" % (lvl, k), t) for k, t in enumerate(lines)]
     out += [("TITLE_0", "FIRST-PERSON"), ("TITLE_1", "GATE ARRAY"),
-            ("TITLE_2", "A SHOOTER IN HARDWARE - NO CPU INSIDE"), ("PRESS", "PRESS SPACE OR FIRE"),
+            ("TITLE_2", "A SHOOTER GAME IN HARDWARE - NO CPU"), ("PRESS", "PRESS SPACE OR FIRE"),
             ("END_0", "YOU WIN"), ("END_1", "THE BOSS IS DEAD AND THE BASE IS QUIET."),
             ("END_2", "THANK YOU FOR PLAYING."), ("PAUSED", "PAUSED"),
             ("DIED", "YOU DIED - PRESS SPACE")]
@@ -110,7 +110,7 @@ def type_rows():
     return rows
 
 
-def stage2_goldens(assets, pal, preview, records4=()):
+def game_goldens(assets, pal, preview, records4=()):
     """Game trace, sprite, overlay and mixer golden files (tools/model/golden2.py)."""
     walls, flats, lights, blob, table = assets
     records = golden2.write_trace(GOLDEN / "game2_trace.txt", 1500, assets)
@@ -172,7 +172,7 @@ def stage2_goldens(assets, pal, preview, records4=()):
     add("score", score, {})
     add("ending", score, {"flow": game_mod.ENDING})
     golden2.write_overlay_cases(GOLDEN / "overlay_cases.txt", ocases)
-    # Frame cases: the whole stage-2 renderer. The first two playing frames
+    # Frame cases: the whole renderer. The first two playing frames
     # after the level 1 load run back to back (the seen set grows); the
     # later ones start from a cleared seen set, as after a level load.
     fcases = []
@@ -205,7 +205,7 @@ def stage2_goldens(assets, pal, preview, records4=()):
     add_frame("debug", 1, debug_rec, (177657, 33012, 2, 5))
     if fcases[1][4] != records[first]["image"]:
         raise SystemExit("frame case 'first' differs from the session frame")
-    # Stage 4: two frames of the heights session (level 3), each after a seen clear
+    # Heights: two frames of the heights session (level 3), each after a seen clear
     for name, k in (("stairs", 120), ("ramp_hall", 520)):
         if k < len(records4):
             add_frame(name, 1, records4[k])
@@ -262,7 +262,7 @@ def main():
                       4096, [i for row in lights for i in row], 12)
 
     # Renderer goldens: ray4_*.txt and frame4_*.txt (golden4.py); the first nine poses are the
-    # stage-1 level-1 poses (frame4_0.txt is the first frame tb_game_top expects).
+    # flat level-1 poses of game_top (frame4_0.txt is the first frame tb_game_top expects).
     n_poses, divs = golden4.write_ray_goldens(
         GOLDEN, walls, flats, lights,
         (lambda k, image: write_png(ROOT / "build" / "preview" / ("frame4_%d.png" % k),
@@ -287,9 +287,9 @@ def main():
     if hidden == 0:
         raise SystemExit("the clipped sprite cases hide no pixel")
     n_sprite4 += n_clip
-    # sim/golden/game_trace.txt is the frozen stage-1 trace of rtl/game/game_seq.vhd; the
-    # stage-2 game core uses game2_trace.txt, stage 4 also game4_trace.txt
-    n_frames, n_sprite, n_overlay = stage2_goldens(assets, pal, preview, records4)
+    # sim/golden/game_trace.txt is the frozen trace of rtl/game/game_seq.vhd; the
+    # game core uses game2_trace.txt, and game4_trace.txt for heights
+    n_frames, n_sprite, n_overlay = game_goldens(assets, pal, preview, records4)
     system_session.write_system_trace(GOLDEN / "system_trace.txt", assets)
     print("built assets: %d golden poses, %d divider vectors, %d game frames, %d sprite cases "
           "(+%d with heights), %d overlay cases" % (n_poses, len(vecs), n_frames, n_sprite,

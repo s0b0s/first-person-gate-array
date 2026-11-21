@@ -29,6 +29,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -147,7 +148,6 @@ architecture arch of tb_sram_tester is
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
 	constant FIRST: natural := 16#41000#;
 	constant LAST: natural := 16#411FF#;
-	shared variable chk: checker_t;
 
 	signal clk, clk_rd: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -160,7 +160,7 @@ architecture arch of tb_sram_tester is
 	signal t_addr: std_logic_vector(18 downto 0);
 	signal t_wdata: std_logic_vector(7 downto 0);
 	signal phase: std_logic_vector(2 downto 0);
-	signal passes, errors: std_logic_vector(15 downto 0);
+	signal passes, error_count: std_logic_vector(15 downto 0);
 	signal first_addr: std_logic_vector(18 downto 0);
 	signal first_data: std_logic_vector(15 downto 0);
 
@@ -207,7 +207,7 @@ begin
 			m_rdata_i => m_rdata,
 			phase_o => phase,
 			pass_count_o => passes,
-			error_count_o => errors,
+			error_count_o => error_count,
 			first_error_addr_o => first_addr,
 			first_error_data_o => first_data
 		);
@@ -325,13 +325,15 @@ begin
 	process
 		variable s: unsigned(15 downto 0);
 		variable ok: boolean;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		enable <= '1';
 
 		-- 1. Clean passes
 		wait until (unsigned(passes) = 2);
-		chk.check(unsigned(errors) = 0, "no errors on a good SRAM, got " & to_hex(errors));
+		check(unsigned(error_count) = 0, "no errors on a good SRAM, got " & to_hex(error_count),
+			checks, errors);
 		-- The range now holds the LFSR bytes of pass 2 (seed = step(ACE1) or 1)
 		s := lfsr_step(x"ACE1") or x"0001";
 		ok := true;
@@ -341,8 +343,8 @@ begin
 			end if;
 			s := lfsr_step(s);
 		end loop;
-		chk.check(ok, "SRAM holds the pass-2 LFSR pattern");
-		chk.check(sram_errors = 0, "SRAM model timing errors");
+		check(ok, "SRAM holds the pass-2 LFSR pattern", checks, errors);
+		check(sram_errors = 0, "SRAM model timing errors", checks, errors);
 
 		-- 2. DQ3 stuck at 0: the first walking-ones byte with bit 3 set is
 		-- the fourth one (FIRST + 3, data 08)
@@ -352,10 +354,11 @@ begin
 		wait until (rst = '0');
 		enable <= '1';
 		wait until (unsigned(passes) = 1);
-		chk.check(unsigned(errors) > 0, "stuck data bit detected");
-		chk.check(unsigned(first_addr) = FIRST + 3, "first error address " & to_hex(first_addr));
+		check(unsigned(error_count) > 0, "stuck data bit detected", checks, errors);
+		check(unsigned(first_addr) = FIRST + 3, "first error address " & to_hex(first_addr),
+			checks, errors);
 		-- first_data is expected (15:8) & read (7:0)
-		chk.check(first_data = x"0800", "first error data " & to_hex(first_data));
+		check(first_data = x"0800", "first error data " & to_hex(first_data), checks, errors);
 
 		-- 3. A1 shorted to A0: walking ones use FIRST..FIRST+7, so bytes
 		-- 1 and 2 collide; address-in-address catches it everywhere
@@ -366,10 +369,10 @@ begin
 		wait until (rst = '0');
 		enable <= '1';
 		wait until (unsigned(passes) = 1);
-		chk.check(unsigned(errors) > 0, "shorted address lines detected");
+		check(unsigned(error_count) > 0, "shorted address lines detected", checks, errors);
 
 		done <= true;
-		tb_finish("tb_sram_tester", chk.checks, chk.errors);
+		tb_finish("tb_sram_tester", checks, errors);
 		wait;
 	end process;
 end arch;

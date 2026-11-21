@@ -28,7 +28,7 @@ Usage (or "uv run" in place of "python"; "auto" or a port name in place of COM5)
     python tools/uart/debug_uart.py COM5 write 32 0x101    one control register
     python tools/uart/debug_uart.py COM5 dump 0 out.png    framebuffer 0 or 1 to PNG
     python tools/uart/debug_uart.py COM5 peek 0x220000 16  hex dump of SRAM bytes
-    python tools/uart/debug_uart.py COM5 capture out.png   stage-1 game: freeze, dump the
+    python tools/uart/debug_uart.py COM5 capture out.png   maze game: freeze, dump the
         front buffer and the pose, render the same frame with the Python model, compare
         pixel by pixel, then unfreeze
 """

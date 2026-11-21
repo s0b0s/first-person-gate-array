@@ -32,6 +32,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -92,7 +93,6 @@ architecture arch of tb_flash_reader is
 	constant T_TO_FLASH: time := 3 ns; -- FPGA clock-to-out plus trace to the flash
 	constant T_FROM_FLASH: time := 2 ns; -- Trace back to the FPGA input
 	constant MAX_BYTES: natural := 512;
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -225,6 +225,7 @@ begin
 	process
 		variable reqs: natural := 0;
 		variable t0: time;
+		variable checks, errors: natural := 0;
 
 		-- Issue one request, wait for all its bytes, compare with the
 		-- model's memory (or the ID bytes)
@@ -255,10 +256,10 @@ begin
 				wait until rising_edge(clk);
 			end loop;
 			wait for 20 * PERIOD; -- Nothing may follow the last byte
-			chk.check(rx_count = len, name & ": got " & integer'image(rx_count) & " of " &
-				integer'image(len) & " bytes");
-			chk.check(rx_last_at = len - 1, name & ": data_last on byte " &
-				integer'image(rx_last_at));
+			check(rx_count = len, name & ": got " & integer'image(rx_count) & " of " &
+				integer'image(len) & " bytes", checks, errors);
+			check(rx_last_at = len - 1, name & ": data_last on byte " &
+				integer'image(rx_last_at), checks, errors);
 			for i in 0 to len - 1 loop
 				if (id = '1') then
 					case i is
@@ -271,9 +272,9 @@ begin
 					want := flash_mem.read(addr + i);
 				end if;
 				if (i < rx_count) then
-					chk.check(unsigned(rx_bytes(i)) = to_unsigned(want, 8), name & ": byte " &
+					check(unsigned(rx_bytes(i)) = to_unsigned(want, 8), name & ": byte " &
 						integer'image(i) & " is " & to_hex(rx_bytes(i)) & ", want " &
-						to_hex(std_logic_vector(to_unsigned(want, 8))));
+						to_hex(std_logic_vector(to_unsigned(want, 8))), checks, errors);
 				end if;
 			end loop;
 		end procedure;
@@ -283,7 +284,7 @@ begin
 		end loop;
 		wait until (rst = '0');
 		wait until rising_edge(clk);
-		chk.check(cs_n = '1' and sck = '0', "idle pins: CS_n high, SCK low");
+		check(cs_n = '1' and sck = '0', "idle pins: CS_n high, SCK low", checks, errors);
 
 		do_read('1', 0, 3, "READ ID");
 		do_read('1', 0, 5, "READ ID, 5 bytes");
@@ -311,14 +312,14 @@ begin
 			wait until rising_edge(sck);
 		end loop;
 		-- 10 SCK periods of 40 ns: 25 MHz, a quarter of the 100 MHz clock
-		chk.check(now - t0 = 400 ns, "SCK period " & time'image((now - t0) / 10));
+		check(now - t0 = 400 ns, "SCK period " & time'image((now - t0) / 10), checks, errors);
 		wait until rising_edge(clk) and (req_ready = '1');
-		chk.check(rx_count = 64, "second request taken only after the first finished");
+		check(rx_count = 64, "second request taken only after the first finished", checks, errors);
 		req_valid <= '0';
 		reqs := reqs + 2;
 		wait until rising_edge(clk) and (busy = '0');
 		wait for 20 * PERIOD;
-		chk.check(rx_count = 68, "both held requests delivered " & integer'image(rx_count));
+		check(rx_count = 68, "both held requests delivered " & integer'image(rx_count), checks, errors);
 
 		-- Back-pressure
 		stall <= true;
@@ -326,12 +327,12 @@ begin
 		stall <= false;
 
 		wait for 100 * PERIOD;
-		chk.check(ready_while_busy = 0, "req_ready low while busy");
-		chk.check(flash_reads = reqs, "flash model saw " & integer'image(flash_reads) &
-			" commands, expected " & integer'image(reqs));
-		chk.check(flash_errors = 0, "flash model errors: " & integer'image(flash_errors));
+		check(ready_while_busy = 0, "req_ready low while busy", checks, errors);
+		check(flash_reads = reqs, "flash model saw " & integer'image(flash_reads) &
+			" commands, expected " & integer'image(reqs), checks, errors);
+		check(flash_errors = 0, "flash model errors: " & integer'image(flash_errors), checks, errors);
 		done <= true;
-		tb_finish("tb_flash_reader", chk.checks, chk.errors);
+		tb_finish("tb_flash_reader", checks, errors);
 		wait;
 	end process;
 end arch;

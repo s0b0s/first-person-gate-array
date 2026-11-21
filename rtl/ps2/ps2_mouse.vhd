@@ -50,6 +50,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - One-process state machine
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -86,8 +87,9 @@ entity ps2_mouse is
 end ps2_mouse;
 
 architecture arch of ps2_mouse is
-	type state_t is (S_OFF, S_DELAY, S_SEND_RESET, S_TX_RESET, S_ACK_RESET, S_BAT, S_ID,
-		S_SEND_ENABLE, S_TX_ENABLE, S_ACK_ENABLE, S_STREAM);
+	type mouse_state_type is (MOUSE_OFF, MOUSE_DELAY, MOUSE_SEND_RESET, MOUSE_TX_RESET,
+		MOUSE_ACK_RESET, MOUSE_BAT, MOUSE_ID, MOUSE_SEND_ENABLE, MOUSE_TX_ENABLE,
+		MOUSE_ACK_ENABLE, MOUSE_STREAM);
 	-- Larger of two naturals (maximum() is VHDL-2008)
 	function max_nat(a, b: natural) return natural is
 	begin
@@ -98,20 +100,13 @@ architecture arch of ps2_mouse is
 	end function;
 	constant TIMER_MAX: positive := max_nat(STARTUP_CYCLES, RESP_TIMEOUT_CYCLES);
 
-	signal state: state_t := S_OFF;
-	signal state_next: state_t;
+	signal mouse_state: mouse_state_type := MOUSE_OFF;
 	signal timer: natural range 0 to TIMER_MAX := 0;
-	signal timer_next: natural range 0 to TIMER_MAX;
 	signal gap: natural range 0 to PACKET_GAP_CYCLES := 0; -- Clocks since the last byte
-	signal gap_next: natural range 0 to PACKET_GAP_CYCLES;
 	signal idx: natural range 0 to 2 := 0; -- Next byte's position in a packet
-	signal idx_next: natural range 0 to 2;
 	signal b0, b1: std_logic_vector(7 downto 0) := (others => '0');
-	signal b0_next, b1_next: std_logic_vector(7 downto 0);
 	signal buttons: std_logic_vector(2 downto 0) := (others => '0');
-	signal buttons_next: std_logic_vector(2 downto 0);
 	signal retries: unsigned(7 downto 0) := (others => '0');
-	signal retries_next: unsigned(7 downto 0);
 
 	-- Packet completing this cycle
 	signal pkt_valid: std_logic;
@@ -121,9 +116,9 @@ architecture arch of ps2_mouse is
 	signal sum_x, sum_y: signed(15 downto 0);
 	signal total_x, total_y: signed(15 downto 0) := (others => '0');
 
-	function state_code(s: state_t) return std_logic_vector is
+	function state_code(s: mouse_state_type) return std_logic_vector is
 	begin
-		return std_logic_vector(to_unsigned(state_t'pos(s), 4));
+		return std_logic_vector(to_unsigned(mouse_state_type'pos(s), 4));
 	end function;
 
 	-- a + b clamped to the 16-bit signed range
@@ -139,141 +134,12 @@ architecture arch of ps2_mouse is
 		return s(15 downto 0);
 	end function;
 begin
-	process(state, timer, gap, idx, b0, b1, buttons, retries, en_i, rx_valid_i, rx_data_i,
-		tx_ready_i, tx_done_i, tx_err_i)
+	process(clk_i, rst_i)
 		variable fail: boolean;
 		variable pos: natural range 0 to 2;
 	begin
-		state_next <= state;
-		timer_next <= timer;
-		gap_next <= gap;
-		idx_next <= idx;
-		b0_next <= b0;
-		b1_next <= b1;
-		buttons_next <= buttons;
-		retries_next <= retries;
-		pkt_valid <= '0';
-		-- 9-bit deltas: sign from byte 1, low bits from byte 2 / byte 3 (arriving now)
-		pkt_dx <= signed(b0(4) & b1);
-		pkt_dy <= signed(b0(5) & rx_data_i);
-		fail := false;
-
-		if (en_i = '0') then
-			state_next <= S_OFF;
-			timer_next <= 0;
-			idx_next <= 0;
-			buttons_next <= (others => '0');
-		else
-			-- Response timer for every start-up state
-			if ((state = S_OFF) or (state = S_STREAM)) then
-				timer_next <= 0;
-			elsif (timer /= TIMER_MAX) then
-				timer_next <= timer + 1;
-			end if;
-
-			case state is
-				when S_OFF =>
-					state_next <= S_DELAY;
-				when S_DELAY =>
-					if (timer = STARTUP_CYCLES - 1) then
-						state_next <= S_SEND_RESET;
-						timer_next <= 0;
-					end if;
-				when S_SEND_RESET =>
-					if (tx_ready_i = '1') then
-						state_next <= S_TX_RESET;
-					end if;
-				when S_TX_RESET =>
-					if (tx_done_i = '1') then
-						state_next <= S_ACK_RESET;
-						timer_next <= 0;
-					elsif (tx_err_i = '1') then
-						fail := true;
-					end if;
-				when S_ACK_RESET | S_BAT | S_ID | S_ACK_ENABLE =>
-					if (rx_valid_i = '1') then
-						timer_next <= 0;
-						if ((state = S_ACK_RESET) and (rx_data_i = x"FA")) then
-							state_next <= S_BAT;
-						elsif ((state = S_BAT) and (rx_data_i = x"AA")) then
-							state_next <= S_ID;
-						elsif ((state = S_ID) and (rx_data_i = x"00")) then
-							state_next <= S_SEND_ENABLE;
-						elsif ((state = S_ACK_ENABLE) and (rx_data_i = x"FA")) then
-							state_next <= S_STREAM;
-							idx_next <= 0;
-						else
-							fail := true;
-						end if;
-					end if;
-				when S_SEND_ENABLE =>
-					if (tx_ready_i = '1') then
-						state_next <= S_TX_ENABLE;
-					end if;
-				when S_TX_ENABLE =>
-					if (tx_done_i = '1') then
-						state_next <= S_ACK_ENABLE;
-						timer_next <= 0;
-					elsif (tx_err_i = '1') then
-						fail := true;
-					end if;
-				when S_STREAM =>
-					if (rx_valid_i = '1') then
-						gap_next <= 0;
-						-- A long silence ends any partial packet
-						if (gap = PACKET_GAP_CYCLES) then
-							pos := 0;
-						else
-							pos := idx;
-						end if;
-						case pos is
-							when 0 =>
-								if (rx_data_i(3) = '1') then
-									b0_next <= rx_data_i;
-									idx_next <= 1;
-								else
-									idx_next <= 0; -- Slipped framing: drop it
-								end if;
-							when 1 =>
-								if ((b0 = x"AA") and (rx_data_i = x"00")) then
-									state_next <= S_SEND_RESET; -- Mouse replugged
-									idx_next <= 0;
-								else
-									b1_next <= rx_data_i;
-									idx_next <= 2;
-								end if;
-							when others =>
-								idx_next <= 0;
-								if (b0(7 downto 6) = "00") then -- No X or Y overflow
-									pkt_valid <= '1';
-									buttons_next <= b0(2 downto 0);
-								end if;
-						end case;
-					elsif (gap /= PACKET_GAP_CYCLES) then
-						gap_next <= gap + 1;
-					end if;
-				when others =>
-					state_next <= S_OFF;
-			end case;
-
-			if ((state /= S_OFF) and (state /= S_DELAY) and (state /= S_STREAM) and
-				(timer = RESP_TIMEOUT_CYCLES)) then
-				fail := true;
-			end if;
-			if (fail) then
-				state_next <= S_DELAY;
-				timer_next <= 0;
-				if (retries /= x"FF") then
-					retries_next <= retries + 1;
-				end if;
-			end if;
-		end if;
-	end process;
-
-	process(clk_i, rst_i)
-	begin
 		if (rst_i = '1') then
-			state <= S_OFF;
+			mouse_state <= MOUSE_OFF;
 			timer <= 0;
 			gap <= 0;
 			idx <= 0;
@@ -282,16 +148,132 @@ begin
 			buttons <= (others => '0');
 			retries <= (others => '0');
 		elsif rising_edge(clk_i) then
-			state <= state_next;
-			timer <= timer_next;
-			gap <= gap_next;
-			idx <= idx_next;
-			b0 <= b0_next;
-			b1 <= b1_next;
-			buttons <= buttons_next;
-			retries <= retries_next;
+			fail := false;
+			if (en_i = '0') then
+				mouse_state <= MOUSE_OFF;
+				timer <= 0;
+				idx <= 0;
+				buttons <= (others => '0');
+			else
+				-- Response timer for every start-up state (an assignment
+				-- further down this branch overrides it)
+				if ((mouse_state = MOUSE_OFF) or (mouse_state = MOUSE_STREAM)) then
+					timer <= 0;
+				elsif (timer /= TIMER_MAX) then
+					timer <= timer + 1;
+				end if;
+
+				case mouse_state is
+					when MOUSE_OFF =>
+						mouse_state <= MOUSE_DELAY;
+					when MOUSE_DELAY =>
+						if (timer = STARTUP_CYCLES - 1) then
+							mouse_state <= MOUSE_SEND_RESET;
+							timer <= 0;
+						end if;
+					when MOUSE_SEND_RESET =>
+						if (tx_ready_i = '1') then
+							mouse_state <= MOUSE_TX_RESET;
+						end if;
+					when MOUSE_TX_RESET =>
+						if (tx_done_i = '1') then
+							mouse_state <= MOUSE_ACK_RESET;
+							timer <= 0;
+						elsif (tx_err_i = '1') then
+							fail := true;
+						end if;
+					when MOUSE_ACK_RESET | MOUSE_BAT | MOUSE_ID | MOUSE_ACK_ENABLE =>
+						if (rx_valid_i = '1') then
+							timer <= 0;
+							if ((mouse_state = MOUSE_ACK_RESET) and (rx_data_i = x"FA")) then
+								mouse_state <= MOUSE_BAT;
+							elsif ((mouse_state = MOUSE_BAT) and (rx_data_i = x"AA")) then
+								mouse_state <= MOUSE_ID;
+							elsif ((mouse_state = MOUSE_ID) and (rx_data_i = x"00")) then
+								mouse_state <= MOUSE_SEND_ENABLE;
+							elsif ((mouse_state = MOUSE_ACK_ENABLE) and (rx_data_i = x"FA")) then
+								mouse_state <= MOUSE_STREAM;
+								idx <= 0;
+							else
+								fail := true;
+							end if;
+						end if;
+					when MOUSE_SEND_ENABLE =>
+						if (tx_ready_i = '1') then
+							mouse_state <= MOUSE_TX_ENABLE;
+						end if;
+					when MOUSE_TX_ENABLE =>
+						if (tx_done_i = '1') then
+							mouse_state <= MOUSE_ACK_ENABLE;
+							timer <= 0;
+						elsif (tx_err_i = '1') then
+							fail := true;
+						end if;
+					when MOUSE_STREAM =>
+						if (rx_valid_i = '1') then
+							gap <= 0;
+							-- A long silence ends any partial packet
+							if (gap = PACKET_GAP_CYCLES) then
+								pos := 0;
+							else
+								pos := idx;
+							end if;
+							case pos is
+								when 0 =>
+									if (rx_data_i(3) = '1') then
+										b0 <= rx_data_i;
+										idx <= 1;
+									else
+										idx <= 0; -- Slipped framing: drop it
+									end if;
+								when 1 =>
+									if ((b0 = x"AA") and (rx_data_i = x"00")) then
+										mouse_state <= MOUSE_SEND_RESET; -- Mouse replugged
+										idx <= 0;
+									else
+										b1 <= rx_data_i;
+										idx <= 2;
+									end if;
+								when others =>
+									-- Third byte: pkt_valid (below) is '1' in this
+									-- cycle unless an overflow bit is set
+									idx <= 0;
+									if (b0(7 downto 6) = "00") then -- No X or Y overflow
+										buttons <= b0(2 downto 0);
+									end if;
+							end case;
+						elsif (gap /= PACKET_GAP_CYCLES) then
+							gap <= gap + 1;
+						end if;
+					when others =>
+						mouse_state <= MOUSE_OFF;
+				end case;
+
+				if ((mouse_state /= MOUSE_OFF) and (mouse_state /= MOUSE_DELAY) and
+					(mouse_state /= MOUSE_STREAM) and (timer = RESP_TIMEOUT_CYCLES)) then
+					fail := true;
+				end if;
+				-- A failure overrides whatever the case chose
+				if (fail) then
+					mouse_state <= MOUSE_DELAY;
+					timer <= 0;
+					if (retries /= x"FF") then
+						retries <= retries + 1;
+					end if;
+				end if;
+			end if;
 		end if;
 	end process;
+
+	-- Packet completing this cycle, combinational so that the motion sums
+	-- see it in the same cycle: the third byte of a packet in MOUSE_STREAM
+	-- (no long gap before it) without an overflow bit
+	pkt_valid <= '1' when ((en_i = '1') and (mouse_state = MOUSE_STREAM) and
+		(rx_valid_i = '1') and (gap /= PACKET_GAP_CYCLES) and (idx = 2) and
+		(b0(7 downto 6) = "00")) else '0';
+	-- 9-bit deltas: sign from byte 1, low bits from byte 2 / byte 3 (arriving now)
+	pkt_dx <= signed(b0(4) & b1);
+	pkt_dy <= signed(b0(5) & rx_data_i);
 
 	-- Motion sums: what take_i reads includes a packet landing this cycle
 	sum_x <= sat_add(acc_x, pkt_dx) when (pkt_valid = '1') else acc_x;
@@ -319,13 +301,16 @@ begin
 		end if;
 	end process;
 
-	tx_data_o <= x"F4" when ((state = S_SEND_ENABLE) or (state = S_TX_ENABLE)) else x"FF";
-	tx_valid_o <= '1' when ((state = S_SEND_RESET) or (state = S_SEND_ENABLE)) else '0';
+	-- Command byte and request follow the state directly
+	tx_data_o <= x"F4" when ((mouse_state = MOUSE_SEND_ENABLE) or
+		(mouse_state = MOUSE_TX_ENABLE)) else x"FF";
+	tx_valid_o <= '1' when ((mouse_state = MOUSE_SEND_RESET) or
+		(mouse_state = MOUSE_SEND_ENABLE)) else '0';
 	dx_o <= std_logic_vector(sum_x);
 	dy_o <= std_logic_vector(sum_y);
 	buttons_o <= buttons;
 	x_total_o <= std_logic_vector(total_x);
 	y_total_o <= std_logic_vector(total_y);
-	state_o <= state_code(state);
+	state_o <= state_code(mouse_state);
 	retries_o <= std_logic_vector(retries);
 end arch;

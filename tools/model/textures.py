@@ -3,14 +3,14 @@
 Every texture is 64 x 64 palette indices, generated from integer hashes so the output is the
 same on every machine and Python version.
 
-Wall textures (tile wall_tex 1..8; stage 1 uses 8 of the planned 12):
+Wall textures (tile wall_tex 1..8):
     1 brick    2 stone blocks    3 wood planks    4 metal panels
     5 tech panel with lights     6 green slime stone    7 blue tiles    8 door
-    ROM slots 8..10 (stage 4): slime frames 1..3; texture 6 cycles through slots
+    ROM slots 8..10: slime frames 1..3; texture 6 cycles through slots
     5, 8, 9, 10 (render.wall_texture_index), the drips sliding down 4 rows per frame
 Flats (floor_tex / ceil_tex 0..3):
     0 floor tiles    1 dirt and gravel    2 ceiling panels with lamps    3 wood ceiling
-Sky (stage 4): 256 x 64, column-major (u * 64 + v), drawn without light over tiles marked
+Sky: 256 x 64, column-major (u * 64 + v), drawn without light over tiles marked
 as sky; u follows the view angle (two repeats per turn), v the screen row.
 
 Storage (what the RTL ROMs expect):
@@ -115,7 +115,7 @@ def tech():
 
 def slime(phase=0):
     """Stone with green slime dripping down; phase 1..3 slides the drips down 4 rows each
-    (phase 0 is the stage-1 texture)."""
+    (phase 0 is the still texture)."""
     t = stone()
     for v in range(SIZE):
         for u in range(SIZE):

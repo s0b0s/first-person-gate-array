@@ -19,6 +19,9 @@
 --                 Checks: front changes only on vblank cycles and only
 --                 after a finished frame, back is always the other buffer,
 --                 one frame_start per frame, frame and late counters.
+--                 The monitor process copies its check counts to
+--                 mon_checks and mon_errors; the renderer process adds
+--                 them to its own at the end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 buffer_manager
@@ -26,6 +29,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -71,7 +75,6 @@ architecture arch of tb_buffer_manager is
 	-- Expected late refreshes for each frame
 	constant LATES: delays_t := (0, 0, 0, 1, 3, 0, 0);
 
-	shared variable chk: checker_t;
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
 	signal done: boolean := false;
@@ -84,6 +87,7 @@ architecture arch of tb_buffer_manager is
 	signal frame_count, late_count: std_logic_vector(15 downto 0);
 	signal starts: natural := 0;
 	signal refreshes: natural := 0;
+	signal mon_checks, mon_errors: natural := 0; -- Monitor process check counts
 begin
 	dut: buffer_manager
 		port map (
@@ -153,17 +157,20 @@ begin
 	process(clk)
 		variable vblank_old: std_logic := '0';
 		variable front_old: std_logic := '0';
+		variable checks, errors: natural := 0;
 	begin
 		if rising_edge(clk) then
 			if ((front /= front_old) and (vblank_old = '0')) then
-				chk.check(false, "front changed outside vblank at " & time'image(now));
+				check(false, "front changed outside vblank at " & time'image(now), checks, errors);
 			end if;
-			chk.check(back = not front, "back is not the other buffer");
+			check(back = not front, "back is not the other buffer", checks, errors);
 			vblank_old := vblank;
 			front_old := front;
 			if (frame_start = '1') then
 				starts <= starts + 1;
 			end if;
+			mon_checks <= checks;
+			mon_errors <= errors;
 		end if;
 	end process;
 
@@ -172,6 +179,7 @@ begin
 		variable front_before: std_logic;
 		variable late_before: natural;
 		variable frames_before: natural;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		-- A stray frame_done while waiting for the start must be ignored
@@ -181,7 +189,7 @@ begin
 		frame_done <= '0';
 		for f in DELAYS'range loop
 			wait until rising_edge(clk) and (frame_start = '1');
-			chk.check(rendering = '1', "rendering after frame_start");
+			check(rendering = '1', "rendering after frame_start", checks, errors);
 			front_before := front;
 			late_before := to_integer(unsigned(late_count));
 			frames_before := to_integer(unsigned(frame_count));
@@ -195,16 +203,17 @@ begin
 			while (to_integer(unsigned(frame_count)) = frames_before) loop
 				wait until rising_edge(clk);
 			end loop;
-			chk.check(front = not front_before, "frame " & integer'image(f) & " swapped");
-			chk.check(to_integer(unsigned(late_count)) - late_before = LATES(f), "frame " &
+			check(front = not front_before, "frame " & integer'image(f) & " swapped", checks, errors);
+			check(to_integer(unsigned(late_count)) - late_before = LATES(f), "frame " &
 				integer'image(f) & " late refreshes " &
-				integer'image(to_integer(unsigned(late_count)) - late_before));
+				integer'image(to_integer(unsigned(late_count)) - late_before), checks, errors);
 		end loop;
 		-- One start per frame, none while a late frame was running
-		chk.check(starts = DELAYS'length, "frame starts " & integer'image(starts));
-		chk.check(to_integer(unsigned(frame_count)) = DELAYS'length, "frame count");
+		check(starts = DELAYS'length, "frame starts " & integer'image(starts), checks, errors);
+		check(to_integer(unsigned(frame_count)) = DELAYS'length, "frame count", checks, errors);
 		done <= true;
-		tb_finish("tb_buffer_manager", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_buffer_manager", checks + mon_checks, errors + mon_errors);
 		wait;
 	end process;
 end arch;

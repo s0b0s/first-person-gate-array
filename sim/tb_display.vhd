@@ -28,6 +28,9 @@
 --                 writes are refused outside vblank, and that no line
 --                 fetch overruns. Frame 2 is saved as
 --                 build/sim/tb_display_frame2.ppm for a visual check.
+--                 The pixel checker copies its check counts to pix_checks
+--                 and pix_errors; the stimulus process adds them at the
+--                 end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, tb_pkg, sram_model, vga_monitor,
@@ -37,6 +40,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -215,7 +219,6 @@ architecture arch of tb_display is
 		8 => (1, PATTERN_FRAMEBUFFER, TINT_NONE, true, true)
 	);
 
-	shared variable chk: checker_t;
 
 	signal clk_sys: std_logic := '0';
 	signal clk_rd: std_logic := '0';
@@ -236,6 +239,7 @@ architecture arch of tb_display is
 	signal vblank, line_start, overrun: std_logic;
 	signal line: std_logic_vector(7 downto 0);
 	signal overruns: natural := 0;
+	signal pix_checks, pix_errors: natural := 0; -- Pixel checker check counts
 
 	-- VGA pins
 	signal vga_r, vga_g, vga_b: std_logic_vector(3 downto 0);
@@ -545,12 +549,15 @@ begin
 		variable bad: natural := 0;
 		variable frame_bad: natural := 0;
 		variable last_frame: natural := 0;
+		variable checks, errors: natural := 0;
 	begin
 		if (mon_frames /= last_frame) then
 			if ((last_frame >= 1) and (last_frame <= LAST_FRAME)) then
-				chk.check(frame_bad = 0, "frame " & integer'image(last_frame) & ": " &
-					integer'image(frame_bad) & " wrong pixels");
+				check(frame_bad = 0, "frame " & integer'image(last_frame) & ": " &
+					integer'image(frame_bad) & " wrong pixels", checks, errors);
 			end if;
+			pix_checks <= checks;
+			pix_errors <= errors;
 			frame_bad := 0;
 			last_frame := mon_frames;
 		end if;
@@ -583,6 +590,7 @@ begin
 	-- Stimulus: preload, output enable, per-frame settings
 	------------------------------------------------------------------
 	process
+		variable checks, errors: natural := 0;
 	begin
 		for y in 0 to 239 loop
 			for x in 0 to 319 loop
@@ -595,10 +603,10 @@ begin
 
 		-- PWR_SENSE gate: pins released until pcb_on, driven after
 		wait for 2 us;
-		chk.check(vga_t = "11111111111111", "VGA pins high-Z while pcb_on = 0");
+		check(vga_t = "11111111111111", "VGA pins high-Z while pcb_on = 0", checks, errors);
 		pcb_on <= '1';
 		wait for 10 * PERIOD_PIX;
-		chk.check(vga_t = "00000000000000", "VGA pins driven after pcb_on");
+		check(vga_t = "00000000000000", "VGA pins driven after pcb_on", checks, errors);
 
 		-- Settings for frame k + 1 are set during frame k (they are taken
 		-- at the next vblank; the front buffer at the next line-0 fetch)
@@ -611,7 +619,7 @@ begin
 			if (k = 1) then
 				-- Palette write: refused now (visible area), taken in vblank
 				wait until rising_edge(clk_sys);
-				chk.check(pal_ready = '0', "palette write refused during the frame");
+				check(pal_ready = '0', "palette write refused during the frame", checks, errors);
 				pal_addr <= std_logic_vector(to_unsigned(PAL_TEST_INDEX, 8));
 				pal_data <= PAL_TEST_COLOR;
 				pal_valid <= '1';
@@ -621,17 +629,18 @@ begin
 				end loop;
 				-- The pins run 3 pixels behind the internal raster, so the
 				-- monitor is at the end of line 479 when vblank starts
-				chk.check(not mon_visible, "palette write accepted in vblank");
+				check(not mon_visible, "palette write accepted in vblank", checks, errors);
 				pal_valid <= '0';
 			end if;
 		end loop;
 		wait until (mon_frames = LAST_FRAME + 1);
 
-		chk.check(mon_errors = 0, "VGA timing errors: " & integer'image(mon_errors));
-		chk.check(sram_errors = 0, "SRAM timing errors: " & integer'image(sram_errors));
-		chk.check(overruns = 0, "line fetch overruns: " & integer'image(overruns));
+		check(mon_errors = 0, "VGA timing errors: " & integer'image(mon_errors), checks, errors);
+		check(sram_errors = 0, "SRAM timing errors: " & integer'image(sram_errors), checks, errors);
+		check(overruns = 0, "line fetch overruns: " & integer'image(overruns), checks, errors);
 		done <= true;
-		tb_finish("tb_display", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_display", checks + pix_checks, errors + pix_errors);
 		wait;
 	end process;
 end arch;

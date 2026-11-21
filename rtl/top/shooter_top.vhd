@@ -9,11 +9,11 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    The full game (stages 2 and 3): title, briefing, three
+-- Description:    The full game: title, briefing, three
 --                 levels with monsters, items, weapons, keys and doors,
 --                 score screens, ending; HUD, minimap and automap; sound
 --                 effects and music; deterministic replay. game_top stays
---                 as the saved stage-1 design.
+--                 as the maze-only design.
 --                 Boot: the asset loader copies the sprite art from flash
 --                 into SRAM (about 64 ms, screen black), then the game
 --                 runs. Levels load when the game core asks (briefing,
@@ -51,13 +51,13 @@
 --                 crossed only inside display_controller.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, every
---                 stage-0 block, frame_renderer (and the render blocks),
+--                 bring-up block, frame_renderer (and the render blocks),
 --                 game_core, asset_loader, flash_arbiter, audio_mixer,
 --                 replay_unit, sram_port_mux
 --
 -- Revision:
 -- Revision 0.01 - File Created
--- Revision 1.00 - Stages 2 and 3
+-- Revision 1.00 - First working version
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -70,7 +70,7 @@ use work.render_types_pkg.all;
 
 entity shooter_top is
 	generic(
-		BUILD_ID: std_logic_vector(31 downto 0) := x"53470301"; -- Stage 2/3 build
+		BUILD_ID: std_logic_vector(31 downto 0) := x"53470301"; -- Full game build
 		POWER_HOLD: positive := 1_000_000; -- PWR_SENSE hold time in clocks (10 ms)
 		REPLAY_INIT: natural range 0 to 2 := 0; -- Replay mode at reset (2: the system testbench plays a session)
 		BOOT_ART: boolean := true -- false: no art copy at boot (simulation preloads the SRAM)
@@ -1582,7 +1582,7 @@ begin
 			tx_count_o => tx_count
 		);
 
-	-- Status words (UART register n = word n); 0..24 keep their stage-1
+	-- Status words (UART register n = word n); 0..24 keep their game_top
 	-- meaning, with the camera in words 1..3 (the frame capture renders
 	-- from it)
 	values(0 * 32 + 31 downto 0 * 32) <= BUILD_ID;

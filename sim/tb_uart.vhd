@@ -22,6 +22,9 @@
 --                    frame_err and no byte; the line held low (break)
 --                    does not produce bytes; after it returns high the
 --                    next byte is received normally.
+--                 The path 1 sender and the path 2 stimulus copy their
+--                 check counts to their own signals; the path 3 process
+--                 adds them to its own at the end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 uart_tx, uart_rx
@@ -29,6 +32,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -72,11 +76,12 @@ architecture arch of tb_uart is
 
 	constant PERIOD: time := 10 ns;
 	constant LOOP_BYTES: natural := 256;
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
 	signal done: boolean := false;
+	signal tx1_checks, tx1_errors: natural := 0; -- Path 1 sender check counts
+	signal p2_checks, p2_errors: natural := 0; -- Path 2 stimulus check counts
 
 	-- Path 1: 1 Mbaud loopback
 	signal tx1_data: std_logic_vector(7 downto 0) := (others => '0');
@@ -227,6 +232,7 @@ begin
 	-- Path 1 sender: back to back through valid/ready
 	process
 		variable t_first, t_last: time;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		wait until rising_edge(clk);
@@ -245,14 +251,17 @@ begin
 		tx1_valid <= '0';
 		-- 255 frames between the first and the last handshake: exactly
 		-- 10 bit times each when there is no gap
-		chk.check(t_last - t_first = 255 * 10 * 1000 ns, "no gap between frames, took " &
-			time'image(t_last - t_first));
+		check(t_last - t_first = 255 * 10 * 1000 ns, "no gap between frames, took " &
+			time'image(t_last - t_first), checks, errors);
+		tx1_checks <= checks;
+		tx1_errors <= errors;
 		wait;
 	end process;
 
 	-- Stimulus for paths 2 and 3 and the bit timing check
 	process
 		variable t0, t1: time;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 
@@ -262,15 +271,18 @@ begin
 		t0 := now;
 		wait until rising_edge(line1);
 		t1 := now;
-		chk.check(t1 - t0 = 9000 ns, "start + 8 zero bits last 9000 ns, got " &
-			time'image(t1 - t0));
+		check(t1 - t0 = 9000 ns, "start + 8 zero bits last 9000 ns, got " &
+			time'image(t1 - t0), checks, errors);
 		-- Second frame is 37 = 0x25 = 10100100 LSB first: 1,0,1,0,0,1,0,0.
 		-- The line falls at its start bit right after the stop bit.
 		wait until falling_edge(line1);
-		chk.check(now - t1 = 1000 ns, "stop bit lasts 1000 ns, got " & time'image(now - t1));
+		check(now - t1 = 1000 ns, "stop bit lasts 1000 ns, got " & time'image(now - t1),
+			checks, errors);
 		t0 := now;
 		wait until rising_edge(line1);
-		chk.check(now - t0 = 1000 ns, "start bit lasts 1000 ns");
+		check(now - t0 = 1000 ns, "start bit lasts 1000 ns", checks, errors);
+		p2_checks <= checks;
+		p2_errors <= errors;
 
 		-- 3. 115,200 baud loopback
 		for i in 0 to 7 loop
@@ -285,11 +297,12 @@ begin
 				wait until rising_edge(clk);
 				exit when ((rx2_valid = '1') or (rx2_err = '1'));
 			end loop;
-			chk.check((rx2_valid = '1') and
+			check((rx2_valid = '1') and
 				(unsigned(rx2_data) = to_unsigned((16#A5# + 17 * i) mod 256, 8)),
-				"115200 byte " & integer'image(i) & " got " & to_hex(rx2_data));
+				"115200 byte " & integer'image(i) & " got " & to_hex(rx2_data), checks, errors);
+			p2_checks <= checks;
+			p2_errors <= errors;
 		end loop;
-
 		wait;
 	end process;
 
@@ -310,6 +323,7 @@ begin
 	-- Path 3 (the only driver of line3): 4. baud error, checks, then
 	-- 5. framing error and recovery
 	process
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		wait for 1 us;
@@ -323,35 +337,37 @@ begin
 		end loop;
 		wait until (rx1_count = LOOP_BYTES);
 		wait for 400 us; -- Path 2 finishes well before this
-		chk.check(rx3_bytes = 32, "baud error test received " & integer'image(rx3_bytes) &
-			" of 32 bytes");
-		chk.check(rx3_ferrs = 0, "no framing errors at +/-3% baud error");
+		check(rx3_bytes = 32, "baud error test received " & integer'image(rx3_bytes) &
+			" of 32 bytes", checks, errors);
+		check(rx3_ferrs = 0, "no framing errors at +/-3% baud error", checks, errors);
 		for i in 0 to 15 loop
-			chk.check(unsigned(rx3_log(i)) = to_unsigned(i * 16 + 15 - i, 8),
-				"3% slow byte " & integer'image(i) & " got " & to_hex(rx3_log(i)));
-			chk.check(unsigned(rx3_log(16 + i)) = to_unsigned(255 - i * 13, 8),
-				"3% fast byte " & integer'image(i) & " got " & to_hex(rx3_log(16 + i)));
+			check(unsigned(rx3_log(i)) = to_unsigned(i * 16 + 15 - i, 8),
+				"3% slow byte " & integer'image(i) & " got " & to_hex(rx3_log(i)), checks, errors);
+			check(unsigned(rx3_log(16 + i)) = to_unsigned(255 - i * 13, 8),
+				"3% fast byte " & integer'image(i) & " got " & to_hex(rx3_log(16 + i)), checks, errors);
 		end loop;
 
 		-- A frame with a low stop bit, then the line held low (break)
 		send_serial(line3, x"3C", 1000 ns, '0');
 		line3 <= '0';
 		wait for 30 us;
-		chk.check(rx3_ferrs = 1, "exactly one framing error, got " & integer'image(rx3_ferrs));
-		chk.check(rx3_bytes = 32, "no byte from a bad frame or a break");
+		check(rx3_ferrs = 1, "exactly one framing error, got " & integer'image(rx3_ferrs),
+			checks, errors);
+		check(rx3_bytes = 32, "no byte from a bad frame or a break", checks, errors);
 		line3 <= '1';
 		wait for 3 us;
 		send_serial(line3, x"C3", 1000 ns, '1');
 		wait for 2 us;
-		chk.check(rx3_bytes = 33, "byte received after the break");
-		chk.check(rx3_log(32) = x"C3", "byte after the break is " & to_hex(rx3_log(32)));
+		check(rx3_bytes = 33, "byte received after the break", checks, errors);
+		check(rx3_log(32) = x"C3", "byte after the break is " & to_hex(rx3_log(32)), checks, errors);
 
-		chk.check(rx1_count = LOOP_BYTES, "loopback received " & integer'image(rx1_count) &
-			" bytes");
-		chk.check(rx1_bad = 0, "loopback wrong bytes: " & integer'image(rx1_bad));
-		chk.check(rx1_errs = 0, "loopback framing errors: " & integer'image(rx1_errs));
+		check(rx1_count = LOOP_BYTES, "loopback received " & integer'image(rx1_count) &
+			" bytes", checks, errors);
+		check(rx1_bad = 0, "loopback wrong bytes: " & integer'image(rx1_bad), checks, errors);
+		check(rx1_errs = 0, "loopback framing errors: " & integer'image(rx1_errs), checks, errors);
 		done <= true;
-		tb_finish("tb_uart", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_uart", checks + tx1_checks + p2_checks, errors + tx1_errors + p2_errors);
 		wait;
 	end process;
 end arch;

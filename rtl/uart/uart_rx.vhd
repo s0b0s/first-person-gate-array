@@ -19,7 +19,7 @@
 --                 the stop bit are sampled one bit period apart, in the
 --                 middle of each bit. Counting system clocks per bit is
 --                 CLK_HZ / BAUD times oversampling (100 at 1 Mbaud), well
---                 above the 10x the course asks for, and keeps the sample
+--                 above the usual 10x minimum, and keeps the sample
 --                 point within half a clock of the bit center.
 --                 A low stop bit gives frame_err_o (no valid_o); the
 --                 receiver then waits for the line to return high before
@@ -33,6 +33,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - One-process state machine
 -- Additional Comments:
 --                 CLK_HZ / BAUD should be at least 16. The bit period is
 --                 rounded to whole clocks; the error this adds (0.5% at
@@ -75,19 +76,13 @@ architecture arch of uart_rx is
 	constant BIT_CYCLES: natural := (CLK_HZ + BAUD / 2) / BAUD;
 	constant HALF_CYCLES: natural := BIT_CYCLES / 2;
 
-	type state_t is (S_IDLE, S_START, S_DATA, S_STOP, S_WAIT_IDLE);
-	signal state: state_t := S_IDLE;
-	signal state_next: state_t;
+	type rx_state_type is (RX_IDLE, RX_START, RX_DATA, RX_STOP, RX_WAIT);
+	signal rx_state: rx_state_type := RX_IDLE;
 	signal count: natural range 0 to BIT_CYCLES - 1 := 0;
-	signal count_next: natural range 0 to BIT_CYCLES - 1;
 	signal bitn: natural range 0 to 7 := 0;
-	signal bitn_next: natural range 0 to 7;
 	signal shreg: std_logic_vector(7 downto 0) := (others => '0');
-	signal shreg_next: std_logic_vector(7 downto 0);
 	signal valid: std_logic := '0';
-	signal valid_next: std_logic;
 	signal frame_err: std_logic := '0';
-	signal frame_err_next: std_logic;
 	signal rx: std_logic;
 begin
 	sync_rx: synchronizer
@@ -102,85 +97,71 @@ begin
 			sync_o => rx
 		);
 
-	-- Next-state logic
-	process(state, count, bitn, shreg, rx)
-	begin
-		state_next <= state;
-		count_next <= count;
-		bitn_next <= bitn;
-		shreg_next <= shreg;
-		valid_next <= '0';
-		frame_err_next <= '0';
-		case state is
-			when S_IDLE =>
-				-- Line high until now; a '0' is the leading edge of a start bit
-				if (rx = '0') then
-					state_next <= S_START;
-					count_next <= HALF_CYCLES - 1;
-				end if;
-			when S_START =>
-				if (count = 0) then
-					if (rx = '0') then
-						-- Middle of the start bit: from here on, whole bit periods
-						state_next <= S_DATA;
-						count_next <= BIT_CYCLES - 1;
-						bitn_next <= 0;
-					else
-						state_next <= S_IDLE; -- Glitch, not a start bit
-					end if;
-				else
-					count_next <= count - 1;
-				end if;
-			when S_DATA =>
-				if (count = 0) then
-					-- LSB first: shift in from the top
-					shreg_next <= rx & shreg(7 downto 1);
-					count_next <= BIT_CYCLES - 1;
-					if (bitn = 7) then
-						state_next <= S_STOP;
-					else
-						bitn_next <= bitn + 1;
-					end if;
-				else
-					count_next <= count - 1;
-				end if;
-			when S_STOP =>
-				if (count = 0) then
-					if (rx = '1') then
-						valid_next <= '1';
-						state_next <= S_IDLE;
-					else
-						frame_err_next <= '1';
-						state_next <= S_WAIT_IDLE;
-					end if;
-				else
-					count_next <= count - 1;
-				end if;
-			when S_WAIT_IDLE =>
-				if (rx = '1') then
-					state_next <= S_IDLE;
-				end if;
-			when others =>
-				state_next <= S_IDLE;
-		end case;
-	end process;
-
 	process(clk_i, rst_i)
 	begin
 		if (rst_i = '1') then
-			state <= S_IDLE;
+			rx_state <= RX_IDLE;
 			count <= 0;
 			bitn <= 0;
 			shreg <= (others => '0');
 			valid <= '0';
 			frame_err <= '0';
 		elsif rising_edge(clk_i) then
-			state <= state_next;
-			count <= count_next;
-			bitn <= bitn_next;
-			shreg <= shreg_next;
-			valid <= valid_next;
-			frame_err <= frame_err_next;
+			-- valid and frame_err are one-cycle pulses
+			valid <= '0';
+			frame_err <= '0';
+			case rx_state is
+				when RX_IDLE =>
+					-- Line high until now; a '0' is the leading edge of a start bit
+					if (rx = '0') then
+						count <= HALF_CYCLES - 1;
+						rx_state <= RX_START;
+					end if;
+				when RX_START =>
+					if (count = 0) then
+						if (rx = '0') then
+							-- Middle of the start bit: from here on, whole bit periods
+							count <= BIT_CYCLES - 1;
+							bitn <= 0;
+							rx_state <= RX_DATA;
+						else
+							rx_state <= RX_IDLE; -- Glitch, not a start bit
+						end if;
+					else
+						count <= count - 1;
+					end if;
+				when RX_DATA =>
+					if (count = 0) then
+						-- LSB first: shift in from the top
+						shreg <= rx & shreg(7 downto 1);
+						count <= BIT_CYCLES - 1;
+						if (bitn = 7) then
+							rx_state <= RX_STOP;
+						else
+							bitn <= bitn + 1;
+						end if;
+					else
+						count <= count - 1;
+					end if;
+				when RX_STOP =>
+					if (count = 0) then
+						if (rx = '1') then
+							valid <= '1';
+							rx_state <= RX_IDLE;
+						else
+							frame_err <= '1';
+							rx_state <= RX_WAIT; -- Wait for the line to go high again
+						end if;
+					else
+						count <= count - 1;
+					end if;
+				when RX_WAIT =>
+					if (rx = '1') then
+						rx_state <= RX_IDLE;
+					end if;
+				when others =>
+					rx_state <= RX_IDLE;
+			end case;
 		end if;
 	end process;
 

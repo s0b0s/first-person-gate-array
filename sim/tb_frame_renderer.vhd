@@ -15,15 +15,16 @@
 --                 sim/golden/frame_cases.txt): a briefing screen, the first
 --                 two playing frames after the level 1 load (back to back,
 --                 so the minimap's seen set grows), a frame with sprites
---                 and an opening door, a debug-overlay frame, and (stage 4)
+--                 and an opening door, a debug-overlay frame, and
 --                 two frames of the level-3 heights session (stairs, the
 --                 ramp hall), where sprites stand on raised floors and the
 --                 sprite engine clips against render_top's clip lists.
 --                 Per case it loads the tile map and sprite table into
 --                 behavioral RAMs (1-clock reads), packs the camera, door
 --                 table, HUD word, key positions and debug counters, and
---                 fills the framebuffer with (expected xor 5A), so every
---                 pixel the renderer fails to write shows as a mismatch.
+--                 treats the framebuffer as filled with (expected xor 5A),
+--                 so every pixel the renderer fails to write shows as a
+--                 mismatch.
 --                 Cases with clear = 1 pulse seen_clear_i first (as after a
 --                 level load); start_i comes on the same clock (even cases)
 --                 or 100 clocks later, during the clear (odd cases), to
@@ -37,6 +38,11 @@
 --                 the hitscan span list equal to the model's.
 --                 Prints the busy clocks (seen clear included) and
 --                 cycles_o (render time only) per case.
+--                 The write process keeps the pixels written in the current
+--                 case in the signal img (-1 = not written, cleared through
+--                 clear_store before each case); the expected image is a
+--                 variable of the stimulus process, and a pixel not written
+--                 reads as its (expected xor 5A) fill value.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, std.textio, tb_pkg, frame_renderer and
@@ -46,6 +52,9 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type;
+--                 expected image in a variable of the stimulus process,
+--                 written pixels in a signal of the write process
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -120,27 +129,9 @@ architecture arch of tb_frame_renderer is
 	constant ART_MAX: natural := 262144; -- Art window of the SRAM model, bytes
 	constant SRAM_LATENCY: natural := 4; -- Clocks from grant to rvalid
 
-	-- Framebuffer and expected image
-	type image_store_t is protected
-		procedure put(addr: natural; value: natural);
-		impure function get(addr: natural) return natural;
-	end protected image_store_t;
-	type image_store_t is protected body
-		type image_t is array (0 to PIXELS - 1) of natural range 0 to 255;
-		variable img: image_t := (others => 0);
-		procedure put(addr: natural; value: natural) is
-		begin
-			img(addr) := value;
-		end procedure;
-		impure function get(addr: natural) return natural is
-		begin
-			return img(addr);
-		end function;
-	end protected body image_store_t;
-
-	shared variable chk: checker_t;
-	shared variable fb: image_store_t;
-	shared variable exp: image_store_t;
+	-- Expected image (stimulus process) and pixels written (write process)
+	type image_t is array (0 to PIXELS - 1) of natural range 0 to 255;
+	type written_t is array (0 to PIXELS - 1) of integer range -1 to 255;
 
 	type tiles_t is array (0 to 4095) of std_logic_vector(23 downto 0);
 	type spr_ram_t is array (0 to 31) of std_logic_vector(SPR_BITS - 1 downto 0);
@@ -182,6 +173,10 @@ architecture arch of tb_frame_renderer is
 	signal cycles: std_logic_vector(23 downto 0);
 	signal dones: natural := 0;
 	signal bad_buf: natural := 0;
+	-- Pixels written in the current case (-1 = not written); driven by the
+	-- write process, cleared when clear_store is true on a clock edge
+	signal img: written_t := (others => -1);
+	signal clear_store: boolean := false;
 	signal bad_addr: natural := 0;
 
 	function hexval(c: character) return natural is
@@ -344,9 +339,12 @@ begin
 	process(clk)
 	begin
 		if rising_edge(clk) then
+			if (clear_store) then
+				img <= (others => -1);
+			end if;
 			if ((pix_valid = '1') and (pix_ready = '1')) then
-				fb.put(to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO))),
-					to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO))));
+				img(to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)))) <=
+					to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO)));
 				if (pix_data(PIXW_BUF) /= buf) then
 					bad_buf <= bad_buf + 1;
 				end if;
@@ -380,6 +378,8 @@ begin
 		variable mism, want, got: natural;
 		variable dones0: natural;
 		variable sp: integer_vector(0 to 3);
+		variable exp: image_t := (others => 0);
+		variable checks, errors: natural := 0;
 	begin
 		file_open(gf, GOLDEN_FILE, read_mode);
 		wait until (rst = '0');
@@ -441,7 +441,7 @@ begin
 			end loop;
 			doors <= dw;
 			-- P sprite table: n, then index x y frame light flags (bit 0 bright, bit 1 target)
-			-- floor (stage 4: floor height under the sprite)
+			-- floor (floor height under the sprite)
 			readline(gf, l);
 			read(l, c);
 			read(l, n);
@@ -544,14 +544,14 @@ begin
 			end loop;
 			tiles <= t;
 			-- E expected image; the framebuffer starts as its complement pattern
+			-- (applied when comparing: a pixel not written reads as it)
 			readline(gf, l);
 			for y in 0 to 239 loop
 				readline(gf, l);
 				read(l, s640);
 				for x in 0 to 319 loop
 					want := hexval(s640(2 * x + 1)) * 16 + hexval(s640(2 * x + 2));
-					exp.put(y * 320 + x, want);
-					fb.put(y * 320 + x, to_integer(unsigned(u(want, 8) xor x"5A")));
+					exp(y * 320 + x) := want;
 				end loop;
 			end loop;
 			if ((k mod 2) = 1) then
@@ -559,7 +559,9 @@ begin
 			else
 				buf <= '0';
 			end if;
+			clear_store <= true;
 			wait until rising_edge(clk);
+			clear_store <= false;
 			wait until rising_edge(clk);
 
 			-- Start the frame (after a seen clear when the case asks for one)
@@ -596,16 +598,20 @@ begin
 			for i in 1 to 4 loop
 				wait until rising_edge(clk);
 			end loop;
-			chk.check(busy = '0', "case " & integer'image(k) & ": busy after done");
-			chk.check(dones = dones0 + 1, "case " & integer'image(k) & ": one done pulse");
+			check(busy = '0', "case " & integer'image(k) & ": busy after done", checks, errors);
+			check(dones = dones0 + 1, "case " & integer'image(k) & ": one done pulse", checks, errors);
 			tb_print("case " & integer'image(k) & " " & name & ": " & integer'image(clocks) &
 				" busy clocks, cycles_o " & integer'image(to_integer(unsigned(cycles))));
 
 			-- Whole image
 			mism := 0;
 			for i in 0 to PIXELS - 1 loop
-				want := exp.get(i);
-				got := fb.get(i);
+				want := exp(i);
+				if (img(i) = -1) then
+					got := to_integer(unsigned(u(want, 8) xor x"5A"));
+				else
+					got := img(i);
+				end if;
 				if (want /= got) then
 					if (mism < 8) then
 						tb_print("case " & integer'image(k) & " pixel (" & integer'image(i mod 320) &
@@ -615,17 +621,17 @@ begin
 					mism := mism + 1;
 				end if;
 			end loop;
-			chk.check(mism = 0, "case " & integer'image(k) & ": " & integer'image(mism) &
-				" pixels differ");
+			check(mism = 0, "case " & integer'image(k) & ": " & integer'image(mism) &
+				" pixels differ", checks, errors);
 
 			-- Q hitscan spans (3D frames only: text screens leave the last list)
 			readline(gf, l);
 			read(l, c);
 			read(l, n);
 			if ((flow /= 0) and (flow /= 1) and (flow /= 5) and (flow /= 6)) then
-				chk.check(to_integer(unsigned(span_count)) = n, "case " & integer'image(k) &
+				check(to_integer(unsigned(span_count)) = n, "case " & integer'image(k) &
 					": span count " & integer'image(to_integer(unsigned(span_count))) & " want " &
-					integer'image(n));
+					integer'image(n), checks, errors);
 				for j in 0 to n - 1 loop
 					for f in 0 to 3 loop
 						read(l, sp(f));
@@ -633,20 +639,20 @@ begin
 					span_raddr <= u(j, 5);
 					wait until rising_edge(clk);
 					wait until rising_edge(clk);
-					chk.check((to_integer(unsigned(span_rdata(SPAN_IDX_HI downto SPAN_IDX_LO))) = sp(0)) and
+					check((to_integer(unsigned(span_rdata(SPAN_IDX_HI downto SPAN_IDX_LO))) = sp(0)) and
 						(to_integer(unsigned(span_rdata(SPAN_X0_HI downto SPAN_X0_LO))) = sp(1)) and
 						(to_integer(unsigned(span_rdata(SPAN_X1_HI downto SPAN_X1_LO))) = sp(2)) and
 						(to_integer(unsigned(span_rdata(SPAN_Z_HI downto SPAN_Z_LO))) = sp(3)),
 						"case " & integer'image(k) & " span " & integer'image(j) & " = " &
-						to_hex(span_rdata));
+						to_hex(span_rdata), checks, errors);
 				end loop;
 			end if;
 		end loop;
 		file_close(gf);
-		chk.check(bad_buf = 0, "buffer bit of pixel writes");
-		chk.check(bad_addr = 0, "SRAM reads outside the art");
+		check(bad_buf = 0, "buffer bit of pixel writes", checks, errors);
+		check(bad_addr = 0, "SRAM reads outside the art", checks, errors);
 		finished <= true;
-		tb_finish("tb_frame_renderer", chk.checks, chk.errors);
+		tb_finish("tb_frame_renderer", checks, errors);
 		wait;
 	end process;
 end arch;

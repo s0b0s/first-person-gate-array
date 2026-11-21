@@ -20,10 +20,13 @@
 --                 field cell into a hex digit of its value word, fetch the
 --                 font row (y mod 8), emit 8 pixels left to right.
 --                 States per cell:
---                   S_CELL  page ROM address on the bus (from counters)
---                   S_CHAR  page cell valid; character -> font address
---                   S_LOAD  font row valid; copy it and the color
---                   S_EMIT  8 pixels, each waiting for pix_ready_i
+--                   PAINT_CELL  page ROM address on the bus (from
+--                               counters)
+--                   PAINT_CHAR  page cell valid; character -> font
+--                               address
+--                   PAINT_LOAD  font row valid; copy it and the color
+--                   PAINT_EMIT  8 pixels, each waiting for
+--                               pix_ready_i
 --                 Colors (palette_pkg): row 0 yellow, value digits light
 --                 green, other text white, background black.
 --                 done_o pulses when the last pixel has been taken by the
@@ -37,6 +40,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - State type and state names renamed (<name>_state_type, prefixed states)
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -78,8 +82,8 @@ architecture arch of text_painter is
 		);
 	end component;
 
-	type state_t is (S_IDLE, S_CELL, S_CHAR, S_LOAD, S_EMIT);
-	signal state: state_t := S_IDLE;
+	type paint_state_type is (PAINT_IDLE, PAINT_CELL, PAINT_CHAR, PAINT_LOAD, PAINT_EMIT);
+	signal paint_state: paint_state_type := PAINT_IDLE;
 	signal buf: std_logic := '0';
 	signal y: unsigned(7 downto 0) := (others => '0'); -- Pixel row 0..239
 	signal col: unsigned(5 downto 0) := (others => '0'); -- Cell column 0..39
@@ -142,7 +146,7 @@ begin
 	process(clk_i, rst_i)
 	begin
 		if (rst_i = '1') then
-			state <= S_IDLE;
+			paint_state <= PAINT_IDLE;
 			buf <= '0';
 			y <= (others => '0');
 			col <= (others => '0');
@@ -154,21 +158,21 @@ begin
 			done <= '0';
 		elsif rising_edge(clk_i) then
 			done <= '0';
-			case state is
-				when S_IDLE =>
+			case paint_state is
+				when PAINT_IDLE =>
 					if (start_i = '1') then
 						buf <= buf_i;
 						y <= (others => '0');
 						col <= (others => '0');
 						row_base <= (others => '0');
 						page_addr <= (others => '0');
-						state <= S_CELL;
+						paint_state <= PAINT_CELL;
 					end if;
-				when S_CELL =>
-					state <= S_CHAR;
-				when S_CHAR =>
-					state <= S_LOAD;
-				when S_LOAD =>
+				when PAINT_CELL =>
+					paint_state <= PAINT_CHAR;
+				when PAINT_CHAR =>
+					paint_state <= PAINT_LOAD;
+				when PAINT_LOAD =>
 					bits <= font_bits;
 					if (y < 8) then
 						fg <= std_logic_vector(to_unsigned(COLOR_YELLOW, 8));
@@ -178,15 +182,15 @@ begin
 						fg <= std_logic_vector(to_unsigned(COLOR_WHITE, 8));
 					end if;
 					bit_index <= (others => '0');
-					state <= S_EMIT;
-				when S_EMIT =>
+					paint_state <= PAINT_EMIT;
+				when PAINT_EMIT =>
 					if (pix_ready_i = '1') then
 						bits <= bits(6 downto 0) & '0';
 						bit_index <= bit_index + 1;
 						if (bit_index = 7) then
 							if (emit_last) then
 								done <= '1';
-								state <= S_IDLE;
+								paint_state <= PAINT_IDLE;
 							elsif (col = 39) then
 								-- Next pixel row; a new cell row every 8 rows
 								col <= (others => '0');
@@ -195,10 +199,10 @@ begin
 								if (y(2 downto 0) = 7) then
 									page_addr <= page_addr + 40;
 								end if;
-								state <= S_CELL;
+								paint_state <= PAINT_CELL;
 							else
 								col <= col + 1;
-								state <= S_CELL;
+								paint_state <= PAINT_CELL;
 							end if;
 						end if;
 					end if;
@@ -206,9 +210,9 @@ begin
 		end if;
 	end process;
 
-	pix_valid_o <= '1' when (state = S_EMIT) else '0';
+	pix_valid_o <= '1' when (paint_state = PAINT_EMIT) else '0';
 	pix_index <= fg when (bits(7) = '1') else std_logic_vector(to_unsigned(COLOR_BLACK, 8));
 	pix_data_o <= buf & std_logic_vector(row_base + x) & pix_index; -- Buffer, y * 320 + x, color
-	busy_o <= '0' when (state = S_IDLE) else '1';
+	busy_o <= '0' when (paint_state = PAINT_IDLE) else '1';
 	done_o <= done;
 end arch;

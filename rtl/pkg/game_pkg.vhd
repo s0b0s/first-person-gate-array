@@ -23,7 +23,7 @@
 --
 -- Revision:
 -- Revision 0.01 - File Created
--- Revision 1.00 - Stage 0 interfaces
+-- Revision 1.00 - First interfaces
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -160,7 +160,7 @@ package game_pkg is
 	constant ACTOR_HEALTH_HI: natural := 56;
 	constant ACTOR_TYPE_LO: natural := 57;
 	constant ACTOR_TYPE_HI: natural := 59;
-	constant ACTOR_FLAGS_LO: natural := 60; -- 60 active, 61 solid, 62 awake; 63 spare
+	constant ACTOR_FLAGS_LO: natural := 60; -- 60 active, 61 solid, 62 awake; 63 ambush (read as bit 63 in game_core)
 	constant ACTOR_FLAGS_HI: natural := 62;
 
 	constant STATE_BITS: natural := 22;

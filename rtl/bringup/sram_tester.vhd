@@ -9,7 +9,7 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Stage-0 SRAM self-test, run as an SRAM arbiter master
+-- Description:    SRAM self-test, run as an SRAM arbiter master
 --                 over the byte range FIRST..LAST, repeating forever:
 --                   WALK  walking ones on the data bus: bytes FIRST..
 --                         FIRST+7 get 01, 02, 04 .. 80

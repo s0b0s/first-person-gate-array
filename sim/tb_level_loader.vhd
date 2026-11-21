@@ -20,6 +20,9 @@
 --                 2. Load a missing id (7): error_o, no done, no writes.
 --                 3. Bad magic (first byte changed): error_o.
 --                 4. Load id 1 again after the errors: works.
+--                 The done monitor copies its check counts to done_checks
+--                 and done_errors; the stimulus process adds them at the
+--                 end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 level_loader, flash_reader, spi_flash_model, hw_pkg,
@@ -28,6 +31,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -117,7 +121,6 @@ architecture arch of tb_level_loader is
 
 	constant PERIOD: time := 10 ns;
 	type char_file_t is file of character;
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -138,6 +141,7 @@ architecture arch of tb_level_loader is
 	signal flash_reads, flash_errors: natural;
 	-- Map write monitor
 	signal writes: natural := 0;
+	signal done_checks, done_errors: natural := 0; -- Done monitor check counts
 	signal wrong: natural := 0;
 	signal dupes: natural := 0;
 	signal clear_monitor: boolean := false;
@@ -249,6 +253,7 @@ begin
 		file f: char_file_t;
 		variable c: character;
 		variable n: natural := 0;
+		variable checks, errors: natural := 0;
 
 		procedure load(id: natural; expect_ok: boolean; name: string) is
 			variable cycles: natural := 0;
@@ -261,7 +266,7 @@ begin
 			wait until rising_edge(clk);
 			start <= '0';
 			wait until rising_edge(clk);
-			chk.check(busy = '1', name & ": busy after start");
+			check(busy = '1', name & ": busy after start", checks, errors);
 			loop
 				wait until rising_edge(clk);
 				cycles := cycles + 1;
@@ -271,17 +276,18 @@ begin
 			-- monitors count it
 			wait until rising_edge(clk);
 			if (expect_ok) then
-				chk.check(error = '0', name & ": no error");
-				chk.check(writes = 4096, name & ": map writes " & integer'image(writes));
-				chk.check(wrong = 0, name & ": wrong tile words " & integer'image(wrong));
-				chk.check(dupes = 0, name & ": addresses written twice " & integer'image(dupes));
+				check(error = '0', name & ": no error", checks, errors);
+				check(writes = 4096, name & ": map writes " & integer'image(writes), checks, errors);
+				check(wrong = 0, name & ": wrong tile words " & integer'image(wrong), checks, errors);
+				check(dupes = 0, name & ": addresses written twice " & integer'image(dupes),
+					checks, errors);
 				-- Level 1 starts at x = 9.5, y = 8.5 tiles (Q6.16)
-				chk.check(to_integer(unsigned(start_x)) = 622592, name & ": start x");
-				chk.check(to_integer(unsigned(start_y)) = 557056, name & ": start y");
-				chk.check(to_integer(unsigned(start_angle)) = 0, name & ": start angle");
+				check(to_integer(unsigned(start_x)) = 622592, name & ": start x", checks, errors);
+				check(to_integer(unsigned(start_y)) = 557056, name & ": start y", checks, errors);
+				check(to_integer(unsigned(start_angle)) = 0, name & ": start angle", checks, errors);
 			else
-				chk.check(error = '1', name & ": error reported");
-				chk.check(writes = 0, name & ": no map writes");
+				check(error = '1', name & ": error reported", checks, errors);
+				check(writes = 0, name & ": no map writes", checks, errors);
 			end if;
 		end procedure;
 	begin
@@ -293,32 +299,36 @@ begin
 			n := n + 1;
 		end loop;
 		file_close(f);
-		chk.check(n > 12298, "game data image read: " & integer'image(n) & " bytes");
+		check(n > 12298, "game data image read: " & integer'image(n) & " bytes", checks, errors);
 		wait until (rst = '0');
 		wait until rising_edge(clk);
 
 		load(1, true, "level 1");
 		load(7, false, "missing id");
-		flash_mem.write(FLASH_DATA_BASE, 16#00#); -- Break the 'S' (53) of the magic
+		flash_mem.write(FLASH_DATA_BASE, 16#00#); -- Break the 'F' (46) of the magic
 		load(1, false, "bad magic");
-		flash_mem.write(FLASH_DATA_BASE, 16#53#);
+		flash_mem.write(FLASH_DATA_BASE, 16#46#); -- Restore the 'F'
 		load(1, true, "level 1 again");
 
-		chk.check(flash_errors = 0, "flash model errors " & integer'image(flash_errors));
-		chk.check(dones = 2, "done pulses: " & integer'image(dones));
+		check(flash_errors = 0, "flash model errors " & integer'image(flash_errors), checks, errors);
+		check(dones = 2, "done pulses: " & integer'image(dones), checks, errors);
 		finished <= true;
-		tb_finish("tb_level_loader", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_level_loader", checks + done_checks, errors + done_errors);
 		wait;
 	end process;
 
 	-- done_o pulses exactly once per good load and never on an error
 	process(clk)
+		variable checks, errors: natural := 0;
 	begin
 		if rising_edge(clk) then
 			if (done = '1') then
 				dones <= dones + 1;
-				chk.check(error = '0', "done with error set");
-				chk.check(writes = 4096, "done after all map writes");
+				check(error = '0', "done with error set", checks, errors);
+				check(writes = 4096, "done after all map writes", checks, errors);
+				done_checks <= checks;
+				done_errors <= errors;
 			end if;
 		end if;
 	end process;

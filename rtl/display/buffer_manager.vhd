@@ -12,11 +12,14 @@
 -- Description:    Double buffering with a late frame start. The display
 --                 shows front_o while the renderer draws back_o.
 --                 States:
---                   WAIT_START  waiting for the display to reach
---                               start_line_i; then pulse frame_start_o
---                   RENDERING   renderer busy; frame_done_i -> DONE
---                   DONE        finished; the next vblank swaps the
---                               buffers and goes back to WAIT_START
+--                   BUF_WAIT_START  waiting for the display to reach
+--                                   start_line_i; then pulse
+--                                   frame_start_o
+--                   BUF_RENDERING   renderer busy; frame_done_i ->
+--                                   BUF_DONE
+--                   BUF_DONE        finished; the next vblank swaps the
+--                                   buffers and goes back to
+--                                   BUF_WAIT_START
 --                 A frame that is not done by vblank keeps the old front
 --                 buffer for one more refresh (no tearing) and counts a
 --                 late frame; it swaps at the first vblank after it
@@ -34,6 +37,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - One-process state machine
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -60,77 +64,57 @@ entity buffer_manager is
 end buffer_manager;
 
 architecture arch of buffer_manager is
-	type state_t is (WAIT_START, RENDERING, DONE);
-	signal state: state_t := WAIT_START;
-	signal state_next: state_t;
+	type buf_state_type is (BUF_WAIT_START, BUF_RENDERING, BUF_DONE);
+	signal buf_state: buf_state_type := BUF_WAIT_START;
 	signal front: std_logic := '0';
-	signal front_next: std_logic;
-	signal start: std_logic;
-	signal late: std_logic;
-	signal swap: std_logic;
 	signal frame_count: unsigned(15 downto 0) := (others => '0');
 	signal late_count: unsigned(15 downto 0) := (others => '0');
 	signal frame_start: std_logic := '0';
 begin
-	process(state, front, vblank_i, line_start_i, line_i, start_line_i, frame_done_i)
-	begin
-		state_next <= state;
-		front_next <= front;
-		start <= '0';
-		late <= '0';
-		swap <= '0';
-		case state is
-			when WAIT_START =>
-				if ((line_start_i = '1') and (line_i = start_line_i)) then
-					start <= '1';
-					state_next <= RENDERING;
-				end if;
-			when RENDERING =>
-				if (vblank_i = '1') then
-					if (frame_done_i = '1') then
-						swap <= '1';
-						front_next <= not front;
-						state_next <= WAIT_START;
-					else
-						late <= '1';
-					end if;
-				elsif (frame_done_i = '1') then
-					state_next <= DONE;
-				end if;
-			when DONE =>
-				if (vblank_i = '1') then
-					swap <= '1';
-					front_next <= not front;
-					state_next <= WAIT_START;
-				end if;
-		end case;
-	end process;
-
 	process(clk_i, rst_i)
 	begin
 		if (rst_i = '1') then
-			state <= WAIT_START;
+			buf_state <= BUF_WAIT_START;
 			front <= '0';
 			frame_start <= '0';
 			frame_count <= (others => '0');
 			late_count <= (others => '0');
 		elsif rising_edge(clk_i) then
-			state <= state_next;
-			front <= front_next;
-			frame_start <= start;
-			if (swap = '1') then
-				frame_count <= frame_count + 1;
-			end if;
-			if ((late = '1') and (late_count /= x"FFFF")) then
-				late_count <= late_count + 1;
-			end if;
+			frame_start <= '0'; -- One-cycle pulse
+			case buf_state is
+				when BUF_WAIT_START =>
+					if ((line_start_i = '1') and (line_i = start_line_i)) then
+						frame_start <= '1';
+						buf_state <= BUF_RENDERING;
+					end if;
+				when BUF_RENDERING =>
+					if (vblank_i = '1') then
+						if (frame_done_i = '1') then
+							-- Done in the same cycle as vblank: still in time
+							front <= not front;
+							frame_count <= frame_count + 1;
+							buf_state <= BUF_WAIT_START;
+						elsif (late_count /= x"FFFF") then
+							-- Not done: keep the old front buffer, count a late frame
+							late_count <= late_count + 1;
+						end if;
+					elsif (frame_done_i = '1') then
+						buf_state <= BUF_DONE;
+					end if;
+				when BUF_DONE =>
+					if (vblank_i = '1') then
+						front <= not front;
+						frame_count <= frame_count + 1;
+						buf_state <= BUF_WAIT_START;
+					end if;
+			end case;
 		end if;
 	end process;
 
 	frame_start_o <= frame_start;
 	front_o <= front;
 	back_o <= not front;
-	rendering_o <= '1' when (state = RENDERING) else '0';
+	rendering_o <= '1' when (buf_state = BUF_RENDERING) else '0';
 	frame_count_o <= std_logic_vector(frame_count);
 	late_count_o <= std_logic_vector(late_count);
 end arch;

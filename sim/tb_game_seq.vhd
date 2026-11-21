@@ -4,7 +4,7 @@
 -- Engineer:       Matthew Gordon
 --
 -- Create Date:    10/21/2026
--- Design Name:    Stage-1 Game Sequencer Testbench
+-- Design Name:    Maze Game Sequencer Testbench
 -- Module Name:    tb_game_seq
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
@@ -29,6 +29,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -74,7 +75,6 @@ architecture arch of tb_game_seq is
 	end component;
 
 	constant PERIOD: time := 10 ns;
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -153,6 +153,7 @@ begin
 		variable frames, bad, cycles: natural := 0;
 		variable ok: boolean;
 		variable base: natural;
+		variable checks, errors: natural := 0;
 	begin
 		readline(f, l); -- Header
 		wait until (rst = '0');
@@ -220,16 +221,17 @@ begin
 						" a=" & integer'image(want_a) severity error;
 				end if;
 			end if;
-			chk.check(busy = '0', "idle after render_start");
+			check(busy = '0', "idle after render_start", checks, errors);
 			-- Gap between frames
 			for k in 1 to 5 loop
 				wait until rising_edge(clk);
 			end loop;
 		end loop;
-		chk.check(bad = 0, integer'image(bad) & " of " & integer'image(frames) & " frames differ");
-		chk.check(frames = 897, "frames in the trace: " & integer'image(frames));
+		check(bad = 0, integer'image(bad) & " of " & integer'image(frames) & " frames differ",
+			checks, errors);
+		check(frames = 897, "frames in the trace: " & integer'image(frames), checks, errors);
 		finished <= true;
-		tb_finish("tb_game_seq", chk.checks, chk.errors);
+		tb_finish("tb_game_seq", checks, errors);
 		wait;
 	end process;
 end arch;

@@ -25,6 +25,8 @@
 --                 4. Play started on the same clock as a tick: frame 0 is
 --                    late (prefetch still running) but arrives within 60
 --                    clocks and the rest follow in order.
+--                 The SRAM contents are the signal sram_mem, written only
+--                 by the port model and read by the checks.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, tb_pkg, replay_unit, hw_pkg, game_pkg
@@ -32,6 +34,8 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type;
+--                 SRAM contents in a signal driven by the port model
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -78,25 +82,7 @@ architecture arch of tb_replay_unit is
 	type mem_t is array (0 to 2 ** 19 - 1) of integer range -1 to 255;
 	type snaps_t is array (0 to N_FRAMES - 1) of std_logic_vector(SNAP_BITS - 1 downto 0);
 	type crcs_t is array (0 to N_FRAMES - 1) of std_logic_vector(31 downto 0);
-	shared variable chk: checker_t;
 
-	-- SRAM contents, written by the port model, read by the checks
-	type sram_t is protected
-		procedure write(a: natural; d: natural);
-		impure function read(a: natural) return integer;
-	end protected sram_t;
-	type sram_t is protected body
-		variable mem: mem_t := (others => -1);
-		procedure write(a: natural; d: natural) is
-		begin
-			mem(a) := d;
-		end procedure;
-		impure function read(a: natural) return integer is
-		begin
-			return mem(a);
-		end function;
-	end protected body sram_t;
-	shared variable sram: sram_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -112,6 +98,8 @@ architecture arch of tb_replay_unit is
 	signal m_req, m_we, m_gnt, m_rvalid: std_logic := '0';
 	signal m_addr: std_logic_vector(18 downto 0);
 	signal m_wdata, m_rdata: std_logic_vector(7 downto 0) := (others => '0');
+	-- SRAM contents (-1 = never written), written by the port model, read by the checks
+	signal sram_mem: mem_t := (others => -1);
 begin
 	dut: replay_unit
 		port map (
@@ -174,9 +162,9 @@ begin
 			pipe(0) := -1;
 			if ((m_gnt = '1') and (m_req = '1')) then
 				if (m_we = '1') then
-					sram.write(to_integer(unsigned(m_addr)), to_integer(unsigned(m_wdata)));
+					sram_mem(to_integer(unsigned(m_addr))) <= to_integer(unsigned(m_wdata));
 				else
-					d := sram.read(to_integer(unsigned(m_addr)));
+					d := sram_mem(to_integer(unsigned(m_addr)));
 					if (d < 0) then
 						d := 0;
 					end if;
@@ -207,6 +195,7 @@ begin
 		variable v: std_logic_vector(SNAP_BITS - 1 downto 0);
 		variable w: std_logic_vector(31 downto 0);
 		variable n, late: natural;
+		variable checks, errors: natural := 0;
 
 		impure function random_vec(bits: natural) return std_logic_vector is
 			variable x: std_logic_vector(bits - 1 downto 0);
@@ -240,7 +229,7 @@ begin
 					got := snap_out;
 					delay := i;
 				elsif (snap_out_valid = '1') then
-					chk.check(false, "two snapshots in one frame");
+					check(false, "two snapshots in one frame", checks, errors);
 				end if;
 				if (i = 150) then
 					crc <= c;
@@ -249,7 +238,7 @@ begin
 					crc_valid <= '0';
 				end if;
 			end loop;
-			chk.check(seen, "a snapshot every frame");
+			check(seen, "a snapshot every frame", checks, errors);
 		end procedure;
 	begin
 		for k in 0 to N_FRAMES - 1 loop
@@ -262,28 +251,31 @@ begin
 		-- 1. Pass-through
 		for k in 0 to 9 loop
 			frame(random_vec(SNAP_BITS), random_vec(32), v, n);
-			chk.check(v = snap_in, "pass-through snapshot " & integer'image(k));
-			chk.check(n = 1, "pass-through delay " & integer'image(n));
+			check(v = snap_in, "pass-through snapshot " & integer'image(k), checks, errors);
+			check(n = 1, "pass-through delay " & integer'image(n), checks, errors);
 		end loop;
-		chk.check(sram.read(REPLAY_BASE) = -1, "pass-through writes nothing");
+		check(sram_mem(REPLAY_BASE) = -1, "pass-through writes nothing", checks, errors);
 
 		-- 2. Record
 		mode <= "01";
 		wait until rising_edge(clk);
 		for k in 0 to N_FRAMES - 1 loop
 			frame(snaps(k), crcs(k), v, n);
-			chk.check(v = snaps(k), "record passes snapshot " & integer'image(k) & " through");
+			check(v = snaps(k), "record passes snapshot " & integer'image(k) & " through",
+				checks, errors);
 		end loop;
-		chk.check(unsigned(frames) = N_FRAMES, "frames recorded " & integer'image(to_integer(unsigned(frames))));
+		check(unsigned(frames) = N_FRAMES, "frames recorded " & integer'image(to_integer(unsigned(frames))),
+			checks, errors);
 		-- 5 bytes per snapshot and 4 per CRC, least significant byte first
 		for k in 0 to N_FRAMES - 1 loop
 			for b in 0 to 4 loop
-				chk.check(sram.read(REPLAY_BASE + 5 * k + b) = to_integer(unsigned(snaps(k)(8 * b + 7 downto 8 * b))),
-					"recorded snapshot " & integer'image(k) & " byte " & integer'image(b));
+				check(sram_mem(REPLAY_BASE + 5 * k + b) = to_integer(unsigned(snaps(k)(8 * b + 7 downto 8 * b))),
+					"recorded snapshot " & integer'image(k) & " byte " & integer'image(b),
+					checks, errors);
 			end loop;
 			for b in 0 to 3 loop
-				chk.check(sram.read(CRC_BASE + 4 * k + b) = to_integer(unsigned(crcs(k)(8 * b + 7 downto 8 * b))),
-					"recorded CRC " & integer'image(k) & " byte " & integer'image(b));
+				check(sram_mem(CRC_BASE + 4 * k + b) = to_integer(unsigned(crcs(k)(8 * b + 7 downto 8 * b))),
+					"recorded CRC " & integer'image(k) & " byte " & integer'image(b), checks, errors);
 			end loop;
 		end loop;
 
@@ -295,12 +287,13 @@ begin
 		for k in 0 to N_FRAMES - 1 loop
 			w := not crcs(k);
 			frame(random_vec(SNAP_BITS), w, v, n);
-			chk.check(v = snaps(k), "played snapshot " & integer'image(k));
-			chk.check(n = 1, "played on time, frame " & integer'image(k) & " delay " & integer'image(n));
+			check(v = snaps(k), "played snapshot " & integer'image(k), checks, errors);
+			check(n = 1, "played on time, frame " & integer'image(k) & " delay " & integer'image(n),
+				checks, errors);
 		end loop;
-		chk.check(unsigned(frames) = N_FRAMES, "frames played");
-		chk.check(sram.read(CRC_BASE + 4) = to_integer(unsigned(not crcs(1)(7 downto 0))),
-			"play writes the CRCs again");
+		check(unsigned(frames) = N_FRAMES, "frames played", checks, errors);
+		check(sram_mem(CRC_BASE + 4) = to_integer(unsigned(not crcs(1)(7 downto 0))),
+			"play writes the CRCs again", checks, errors);
 
 		-- 4. Play again, mode change on the same clock as the tick
 		mode <= "00";
@@ -312,12 +305,13 @@ begin
 			if (k = 0) then
 				late := n;
 			end if;
-			chk.check(v = snaps(k), "late-start played snapshot " & integer'image(k));
+			check(v = snaps(k), "late-start played snapshot " & integer'image(k), checks, errors);
 		end loop;
-		chk.check((late > 1) and (late < 60), "late first snapshot after " & integer'image(late) & " clocks");
+		check((late > 1) and (late < 60), "late first snapshot after " & integer'image(late) & " clocks",
+			checks, errors);
 
 		finished <= true;
-		tb_finish("tb_replay_unit", chk.checks, chk.errors);
+		tb_finish("tb_replay_unit", checks, errors);
 		wait;
 	end process;
 end arch;

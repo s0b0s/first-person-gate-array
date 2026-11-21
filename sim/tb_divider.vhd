@@ -24,6 +24,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -59,7 +60,6 @@ architecture arch of tb_divider is
 	end component;
 
 	constant PERIOD: time := 10 ns;
-	shared variable chk: checker_t;
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
 	signal finished: boolean := false;
@@ -137,6 +137,7 @@ begin
 		variable want: unsigned(23 downto 0);
 		variable cycles: natural;
 		variable vectors, bad: natural := 0;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		wait until rising_edge(clk);
@@ -166,10 +167,11 @@ begin
 				end if;
 			end if;
 		end loop;
-		chk.check(bad = 0, integer'image(bad) & " of " & integer'image(vectors) & " vectors wrong");
-		chk.check(vectors > 1000, "vector file read: " & integer'image(vectors));
+		check(bad = 0, integer'image(bad) & " of " & integer'image(vectors) & " vectors wrong",
+			checks, errors);
+		check(vectors > 1000, "vector file read: " & integer'image(vectors), checks, errors);
 		finished <= true;
-		tb_finish("tb_divider", chk.checks + vectors, chk.errors);
+		tb_finish("tb_divider", checks + vectors, errors);
 		wait;
 	end process;
 end arch;

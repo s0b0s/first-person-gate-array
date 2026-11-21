@@ -9,7 +9,7 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    The stage-2 renderer: one frame into the back buffer, in
+-- Description:    The renderer: one frame into the back buffer, in
 --                 the order of tools/model/frame.py:
 --                   1. walls, floors, ceilings (render_top: ray engine +
 --                      column rasterizer); the z-buffer and the minimap
@@ -29,7 +29,7 @@
 --                 Seen bits: 4096 x 1 RAM written by the ray engine, read
 --                 by the overlay, cleared on seen_clear_i (4,096 clocks;
 --                 start_i waits for the clear to finish).
---                 Stage 4: render_top keeps each column's clip list (the
+--                 Heights: render_top keeps each column's clip list (the
 --                 open row window after every height edge); the sprite
 --                 engine is its only reader (sprite phase), so its clip
 --                 ports connect straight through.
@@ -44,7 +44,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
--- Revision 1.20 - Stage 4: clip lists to the sprite engine; effects register
+-- Revision 1.20 - Heights: clip lists to the sprite engine; effects register
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------

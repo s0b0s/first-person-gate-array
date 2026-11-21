@@ -11,10 +11,10 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for game_core against the golden
 --                 traces of tools/model/game.py, 1,500 frames each:
---                 TRACE = 2: sim/golden/game2_trace.txt, the stage-2/3
+--                 TRACE = 2: sim/golden/game2_trace.txt, the
 --                 autopilot session (title, briefing, level 1 with fights,
 --                 pickups, doors, a death and restart);
---                 TRACE = 4: sim/golden/game4_trace.txt, the stage-4
+--                 TRACE = 4: sim/golden/game4_trace.txt, the
 --                 heights session on level 3 (stairs, a ramp, a raised hall
 --                 with a lower ceiling, a step up, falls, fights, a death
 --                 and restart). In it level 3 plays as level 1, so the
@@ -61,6 +61,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -178,7 +179,6 @@ architecture arch of tb_game_core is
 	type spans_t is array (0 to 31) of std_logic_vector(SPAN_BITS - 1 downto 0);
 	type zcols_t is array (0 to 6) of std_logic_vector(15 downto 0);
 	type snd_log_t is array (0 to 8191) of std_logic_vector(SND_BITS - 1 downto 0);
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -487,6 +487,7 @@ begin
 			HUD_KILLS_HI, HUD_TKILLS_HI, HUD_ITEMS_HI, HUD_TITEMS_HI, HUD_SECRETS_HI,
 			HUD_TSECRETS_HI, HUD_TMIN_HI, HUD_TSEC_HI, HUD_AUTOMAP, HUD_DEBUG);
 		variable flow, lvl: integer;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		-- The core loads level 1 after reset (Game.__init__)
@@ -524,7 +525,8 @@ begin
 				cycles := cycles + 1;
 				exit when (render_start = '1') or (cycles > 2000000);
 			end loop;
-			chk.check(render_start = '1', "frame " & integer'image(fnum) & ": no render_start");
+			check(render_start = '1', "frame " & integer'image(fnum) & ": no render_start",
+				checks, errors);
 			total := total + cycles;
 			if (cycles > worst) then
 				worst := cycles;
@@ -709,7 +711,7 @@ begin
 				tb_print("frame " & integer'image(fnum) & ": renderer registers differ from the state words");
 				frame_ok := false;
 			end if;
-			chk.check(busy = '0', "idle after render_start");
+			check(busy = '0', "idle after render_start", checks, errors);
 
 			-- I: this frame's render output = next frame's hitscan input
 			read_tag(li, 'I', tag_ok);
@@ -730,7 +732,7 @@ begin
 				zcols(k) <= std_logic_vector(to_unsigned(v1, 16));
 			end loop;
 
-			chk.check(frame_ok, "frame " & integer'image(fnum) & " matches the model");
+			check(frame_ok, "frame " & integer'image(fnum) & " matches the model", checks, errors);
 			frames_done := frames_done + 1;
 			if (not frame_ok) then
 				bad := bad + 1;
@@ -745,9 +747,10 @@ begin
 			integer'image(worst) & " (frame " & integer'image(worst_frame) & "), level loads " &
 			integer'image(loads) & "; without a load: worst " & integer'image(worst_play) &
 			", PLAYING average " & integer'image(total_play / n_play));
-		chk.check(frames_done = FRAMES, "frames in the trace: " & integer'image(frames_done));
+		check(frames_done = FRAMES, "frames in the trace: " & integer'image(frames_done),
+			checks, errors);
 		finished <= true;
-		tb_finish("tb_game_core", chk.checks, chk.errors);
+		tb_finish("tb_game_core", checks, errors);
 		wait;
 	end process;
 end arch;

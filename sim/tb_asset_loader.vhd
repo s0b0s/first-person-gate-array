@@ -22,6 +22,11 @@
 --                   past the level's count) and the start pose
 --                 - a directory without the wanted id, and a bad magic,
 --                   give error_o, no writes and no done_o
+--                 The write monitors keep what they capture in signals
+--                 (one driver each) that the stimulus process reads; the
+--                 SRAM port process copies its check counts to sram_checks
+--                 and sram_errors, which the stimulus process adds to its
+--                 own at the end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 IEEE.math_real, tb_pkg, asset_loader, flash_reader,
@@ -30,6 +35,8 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type;
+--                 captured writes in signals instead of shared variables
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -134,7 +141,6 @@ architecture arch of tb_asset_loader is
 	type bytes_t is array (natural range <>) of integer;
 	type tiles_t is array (0 to 4095) of std_logic_vector(23 downto 0);
 	type records_t is array (0 to 31) of std_logic_vector(63 downto 0);
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -159,12 +165,13 @@ architecture arch of tb_asset_loader is
 	signal cs_n, sck, mosi, miso: std_logic;
 	signal flash_reads, flash_errors: natural;
 
-	-- Write monitors (cleared before each job)
+	-- Write monitors (cleared before each job; art_got is -1 until written)
 	signal clear_monitor: boolean := false;
 	signal map_writes, act_writes, sram_writes, dones: natural := 0;
-	shared variable got_tiles: tiles_t;
-	shared variable got_recs: records_t;
-	shared variable art_got: bytes_t(0 to ART_BYTES - 1);
+	signal got_tiles: tiles_t;
+	signal got_recs: records_t;
+	signal art_got: bytes_t(0 to ART_BYTES - 1) := (others => -1);
+	signal sram_checks, sram_errors: natural := 0; -- SRAM port process check counts
 
 	impure function read_file(name: string; max: natural) return bytes_t is
 		file f: char_file_t;
@@ -272,18 +279,23 @@ begin
 		variable r: real;
 		variable wait_left: integer := -1;
 		variable a: integer;
+		variable checks, errors: natural := 0;
 	begin
 		if rising_edge(clk) then
 			if ((m_gnt = '1') and (m_req = '1')) then
-				chk.check(m_we = '1', "SRAM reads are never issued");
+				check(m_we = '1', "SRAM reads are never issued", checks, errors);
 				a := to_integer(unsigned(m_addr)) - ART_BASE;
 				if ((a < 0) or (a >= ART_BYTES)) then
-					chk.check(false, "SRAM write outside the art area at " & to_hex(m_addr));
+					check(false, "SRAM write outside the art area at " & to_hex(m_addr),
+						checks, errors);
 				else
-					chk.check(art_got(a) = -1, "SRAM byte written twice at " & to_hex(m_addr));
-					art_got(a) := to_integer(unsigned(m_wdata));
+					check(art_got(a) = -1, "SRAM byte written twice at " & to_hex(m_addr),
+						checks, errors);
+					art_got(a) <= to_integer(unsigned(m_wdata));
 				end if;
 				sram_writes <= sram_writes + 1;
+				sram_checks <= checks;
+				sram_errors <= errors;
 			end if;
 			m_gnt <= '0';
 			if ((m_req = '1') and (m_gnt = '0')) then
@@ -312,19 +324,15 @@ begin
 				map_writes <= 0;
 				act_writes <= 0;
 				dones <= 0;
-				for i in 0 to 4095 loop
-					got_tiles(i) := (others => 'U');
-				end loop;
-				for i in 0 to 31 loop
-					got_recs(i) := (others => 'U');
-				end loop;
+				got_tiles <= (others => (others => 'U'));
+				got_recs <= (others => (others => 'U'));
 			else
 				if (map_we = '1') then
-					got_tiles(to_integer(unsigned(map_addr))) := map_data;
+					got_tiles(to_integer(unsigned(map_addr))) <= map_data;
 					map_writes <= map_writes + 1;
 				end if;
 				if (act_we = '1') then
-					got_recs(to_integer(unsigned(act_addr))) := act_data;
+					got_recs(to_integer(unsigned(act_addr))) <= act_data;
 					act_writes <= act_writes + 1;
 				end if;
 				if (done = '1') then
@@ -341,6 +349,7 @@ begin
 		variable n, count, bad, a: natural;
 		variable w: std_logic_vector(63 downto 0);
 		variable save: integer;
+		variable checks, errors: natural := 0;
 
 		procedure run_job(is_art: boolean; lvl: natural) is
 			variable cycles: natural := 0;
@@ -384,52 +393,51 @@ begin
 			flash_mem.write(FLASH_DATA_BASE + n, img(n));
 			n := n + 1;
 		end loop;
-		chk.check(n > 1_000_000, "game data image read: " & integer'image(n) & " bytes");
+		check(n > 1_000_000, "game data image read: " & integer'image(n) & " bytes", checks, errors);
 		art := read_file(ART_FILE, ART_BYTES);
-		for i in art'range loop
-			art_got(i) := -1;
-		end loop;
 		wait until (rst = '0');
 		wait until rising_edge(clk);
 
 		-- Art copy
 		run_job(true, 0);
-		chk.check(error = '0', "art: no error");
-		chk.check(dones = 1, "art: one done pulse");
-		chk.check(sram_writes = ART_BYTES, "art: SRAM writes " & integer'image(sram_writes));
+		check(error = '0', "art: no error", checks, errors);
+		check(dones = 1, "art: one done pulse", checks, errors);
+		check(sram_writes = ART_BYTES, "art: SRAM writes " & integer'image(sram_writes),
+			checks, errors);
 		bad := 0;
 		for i in art'range loop
 			if (art_got(i) /= art(i)) then
 				bad := bad + 1;
 			end if;
 		end loop;
-		chk.check(bad = 0, "art bytes wrong: " & integer'image(bad));
+		check(bad = 0, "art bytes wrong: " & integer'image(bad), checks, errors);
 
 		-- Levels 1, 2, 3
 		for lvl in 1 to 3 loop
 			lv := read_file(LEVEL_PREFIX & integer'image(lvl) & ".bin", lv'length);
 			run_job(false, lvl);
-			chk.check(error = '0', "level " & integer'image(lvl) & ": no error");
-			chk.check(dones = 1, "level " & integer'image(lvl) & ": one done pulse");
-			chk.check(map_writes = 4096, "level " & integer'image(lvl) & ": map writes " &
-				integer'image(map_writes));
-			chk.check(act_writes = 32, "level " & integer'image(lvl) & ": actor writes " &
-				integer'image(act_writes));
+			check(error = '0', "level " & integer'image(lvl) & ": no error", checks, errors);
+			check(dones = 1, "level " & integer'image(lvl) & ": one done pulse", checks, errors);
+			check(map_writes = 4096, "level " & integer'image(lvl) & ": map writes " &
+				integer'image(map_writes), checks, errors);
+			check(act_writes = 32, "level " & integer'image(lvl) & ": actor writes " &
+				integer'image(act_writes), checks, errors);
 			bad := 0;
 			for t in 0 to 4095 loop
 				if (to_integer(unsigned(got_tiles(t))) /= u(lv, 3 * t, 3)) then
 					bad := bad + 1;
 				end if;
 			end loop;
-			chk.check(bad = 0, "level " & integer'image(lvl) & ": wrong tiles " & integer'image(bad));
+			check(bad = 0, "level " & integer'image(lvl) & ": wrong tiles " & integer'image(bad),
+				checks, errors);
 			-- Level file after the 4096 3-byte tiles: x and y (4 bytes each) at 12288 and 12292,
 			-- angle (2) at 12296, actor count (2) at 12298, 8-byte actor records from 12300
-			chk.check(to_integer(unsigned(start_x)) = u(lv, 12288, 3), "level " &
-				integer'image(lvl) & ": start x");
-			chk.check(to_integer(unsigned(start_y)) = u(lv, 12292, 3), "level " &
-				integer'image(lvl) & ": start y");
-			chk.check(to_integer(unsigned(start_angle)) = u(lv, 12296, 2), "level " &
-				integer'image(lvl) & ": start angle");
+			check(to_integer(unsigned(start_x)) = u(lv, 12288, 3), "level " &
+				integer'image(lvl) & ": start x", checks, errors);
+			check(to_integer(unsigned(start_y)) = u(lv, 12292, 3), "level " &
+				integer'image(lvl) & ": start y", checks, errors);
+			check(to_integer(unsigned(start_angle)) = u(lv, 12296, 2), "level " &
+				integer'image(lvl) & ": start angle", checks, errors);
 			count := u(lv, 12298, 2);
 			bad := 0;
 			for k in 0 to 31 loop
@@ -443,35 +451,38 @@ begin
 					bad := bad + 1;
 				end if;
 			end loop;
-			chk.check(bad = 0, "level " & integer'image(lvl) & ": wrong actor slots " &
-				integer'image(bad) & " (" & integer'image(count) & " actors)");
+			check(bad = 0, "level " & integer'image(lvl) & ": wrong actor slots " &
+				integer'image(bad) & " (" & integer'image(count) & " actors)", checks, errors);
 		end loop;
 
 		-- Level 3's directory entry renamed to id 7: not found
 		-- Directory from byte 12, entries of 12 bytes (id, offset, length); low byte of id
 		a := FLASH_DATA_BASE + 12 + 12 * 3;
 		save := flash_mem.read(a);
-		chk.check(save = 3, "directory entry 3 is level 3");
+		check(save = 3, "directory entry 3 is level 3", checks, errors);
 		flash_mem.write(a, 7);
 		run_job(false, 3);
-		chk.check(error = '1', "missing item: error");
-		chk.check((map_writes = 0) and (act_writes = 0) and (dones = 0), "missing item: no writes, no done");
+		check(error = '1', "missing item: error", checks, errors);
+		check((map_writes = 0) and (act_writes = 0) and (dones = 0), "missing item: no writes, no done",
+			checks, errors);
 		flash_mem.write(a, save);
 
 		-- Bad magic
-		flash_mem.write(FLASH_DATA_BASE + 3, 16#00#); -- The 'O' (4F) of the magic "SHOOTER0"
+		flash_mem.write(FLASH_DATA_BASE + 3, 16#00#); -- The 'A' (41) of the magic "FPGADATA"
 		run_job(true, 0);
-		chk.check(error = '1', "bad magic: error");
-		chk.check((sram_writes = 0) and (dones = 0), "bad magic: no writes, no done");
-		flash_mem.write(FLASH_DATA_BASE + 3, 16#4F#);
+		check(error = '1', "bad magic: error", checks, errors);
+		check((sram_writes = 0) and (dones = 0), "bad magic: no writes, no done", checks, errors);
+		flash_mem.write(FLASH_DATA_BASE + 3, 16#41#); -- Restore the 'A'
 
 		-- And a good load afterwards
 		run_job(false, 2);
-		chk.check((error = '0') and (dones = 1) and (map_writes = 4096), "level 2 after errors");
+		check((error = '0') and (dones = 1) and (map_writes = 4096), "level 2 after errors",
+			checks, errors);
 
-		chk.check(flash_errors = 0, "flash model errors " & integer'image(flash_errors));
+		check(flash_errors = 0, "flash model errors " & integer'image(flash_errors), checks, errors);
 		finished <= true;
-		tb_finish("tb_asset_loader", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_asset_loader", checks + sram_checks, errors + sram_errors);
 		wait;
 	end process;
 end arch;

@@ -1,4 +1,4 @@
-"""Bit-accurate model of the game (stages 1 to 3): the specification of the game sequencer and
+"""Bit-accurate model of the game: the specification of the game sequencer and
 the actor engine RTL. Integer arithmetic only; ">>" is an arithmetic (floor) shift.
 
 One call of Game.step(snapshot, spans, zwall) is one frame. spans and zwall are what the renderer
@@ -37,9 +37,9 @@ IDLE, OPENING, OPEN, CLOSING = 0, 1, 2, 3
 TITLE, BRIEFING, PLAYING, PAUSED, DEAD, SCORE, ENDING = range(7)
 EYE_STAND, EYE_DUCK, EYE_DEAD = 32, 16, 8
 PEEK = 16
-# Stage 4 heights (units, 64 per tile): the player and monsters climb steps up to STEP_MAX,
+# Floor and ceiling heights (units, 64 per tile): the player and monsters climb steps up to STEP_MAX,
 # need PLAYER_H / ACTOR_H of headroom, and fall FALL_ACC faster each frame up to FALL_MAX.
-# On a flat level none of this ever triggers, so the stage-3 game is unchanged.
+# On a flat level none of this ever triggers.
 STEP_MAX, PLAYER_H, ACTOR_H = 24, 40, 40
 FALL_ACC, FALL_MAX = 2, 16
 COOLDOWN = {1: 14, 2: 40}
@@ -106,7 +106,7 @@ class Actor:
         self.x, self.y, self.state, self.timer = f["x"], f["y"], f["state"], f["timer"]
         self.health, self.type = f["health"], f["type"]
         self.active = bool(f["flags"] & 1)
-        self.ambush = bool(f["flags"] & 8)          # stage 5: deaf to sound alerts
+        self.ambush = bool(f["flags"] & 8)          # deaf to sound alerts
         self.solid = bool(f["flags"] & 2)
         self.awake = bool(f["flags"] & 4)
 
@@ -566,7 +566,7 @@ class Game:
                 self.alert()
 
     def alert(self):
-        """Stage 5 sound alert: the shot is heard in every cell connected to the player's
+        """Sound alert: the shot is heard in every cell connected to the player's
         through open cells (4 neighbors; walls and closed doors stop it). Every sleeping,
         living monster there that is not an ambusher wakes as if it had seen the player.
         Actors are woken in slot order, after the shot's hitscan."""
@@ -857,7 +857,7 @@ class Game:
     def state_words(self):
         """What the game testbench compares each frame (91 words: 19 scalars, 8 doors x 5,
         32 actor records). Word 5 = eye | z << 8 | vz << 16 (z and vz are 0 on flat levels,
-        so stage-3 sessions keep their CRCs)."""
+        so sessions on flat levels keep their CRCs)."""
         p = self.player
         w = [self.flow, self.level, self.px, self.py, self.angle,
              self.eye | (self.z << 8) | (self.vz << 16), self.off & 0xFF,

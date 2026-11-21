@@ -39,8 +39,13 @@
 --                 the first frame that never swaps.
 --                 About 0.3 s of simulated time (64 ms art copy, then one
 --                 16.7 ms frame each). BOOT_ART = false skips the art copy
---                 (the testbench preloads build/art.bin into the SRAM) for
---                 quick runs: SIM_GENERIC=BOOT_ART=false.
+--                 (the testbench preloads build/art.bin into the SRAM);
+--                 CHECK_FRAMES sets how many frames of the session are checked.
+--                 The regression runs two variants side by side, which
+--                 together check everything one long run would: the boot
+--                 path (art copy from flash, level 1 load, first 3 frames)
+--                 and the whole 12-frame session with the art preloaded.
+--                 RUN_VARIANTS: BOOT_ART=true,CHECK_FRAMES=3 BOOT_ART=false,CHECK_FRAMES=12
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
 --                 std.textio, tb_pkg, shooter_top and everything under it,
@@ -49,6 +54,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -67,7 +73,8 @@ entity tb_shooter_top is
 		GOLDEN_FILE: string := "../../sim/golden/system_trace.txt"; -- Relative to the run directory
 		GAMEDATA_FILE: string := "../../build/gamedata.bin";
 		ART_FILE: string := "../../build/art.bin";
-		BOOT_ART: boolean := true -- false: preload the art instead of the boot copy
+		BOOT_ART: boolean := true; -- false: preload the art instead of the boot copy
+		CHECK_FRAMES: positive := 12 -- Frames of the session to check (1 to N_FRAMES)
 	);
 end tb_shooter_top;
 
@@ -217,7 +224,6 @@ architecture arch of tb_shooter_top is
 	type char_file_t is file of character;
 	type crc_log_t is array (0 to 31) of std_logic_vector(31 downto 0);
 	type count_log_t is array (0 to 31) of natural;
-	shared variable chk: checker_t;
 
 	signal clk12: std_logic := '0';
 	signal btn: std_logic_vector(1 downto 0) := "01";
@@ -552,6 +558,7 @@ begin
 		alias level_status is << signal .tb_shooter_top.dut.level_status: std_logic_vector(1 downto 0) >>;
 		alias cycles is << signal .tb_shooter_top.dut.render_cycles: std_logic_vector(23 downto 0) >>;
 		alias underflows is << signal .tb_shooter_top.dut.underflows: std_logic_vector(15 downto 0) >>;
+		variable checks, errors: natural := 0;
 	begin
 		-- The flash holds the game data image after the bitstream
 		file_open(gd, GAMEDATA_FILE, read_mode);
@@ -562,7 +569,7 @@ begin
 			n := n + 1;
 		end loop;
 		file_close(gd);
-		chk.check(n > 1_000_000, "game data image read: " & integer'image(n) & " bytes");
+		check(n > 1_000_000, "game data image read: " & integer'image(n) & " bytes", checks, errors);
 
 		-- The session's snapshots go to the replay area, 5 bytes per frame,
 		-- little endian; four zero snapshots after them (the replay unit
@@ -602,13 +609,13 @@ begin
 
 		-- Boot: the art copy, then level 1 when the session asks for it
 		wait until (art_status /= "00") for 120 ms;
-		chk.check(art_status = "01", "art copied from flash, status " & to_hex(art_status));
+		check(art_status = "01", "art copied from flash, status " & to_hex(art_status), checks, errors);
 		tb_print("art copy done at " & time'image(now));
 
 		-- Frame by frame: once frame k is on the front buffer, compare it
 		-- and the game core's outputs for it
 		file_open(gf, GOLDEN_FILE, read_mode);
-		for f in 0 to N_FRAMES - 1 loop
+		for f in 0 to CHECK_FRAMES - 1 loop
 			readline(gf, l); -- F
 			readline(gf, l); -- G k flow crc sounds tint
 			read(l, c);
@@ -621,19 +628,19 @@ begin
 			want_crc := hexvec(s8);
 			readline(gf, l); -- E
 			wait until (unsigned(frames) >= f + 1) for 60 ms;
-			chk.check(unsigned(frames) >= f + 1, "frame " & integer'image(f) & " swapped");
+			check(unsigned(frames) >= f + 1, "frame " & integer'image(f) & " swapped", checks, errors);
 			-- A frame that never swaps leaves nothing else to check
 			exit when (unsigned(frames) < f + 1);
 			wait for 100 us;
 			-- The sounds of frame f are handed over by now (a few per frame,
 			-- right after its render start)
 			got_crc := crc_log(f);
-			chk.check(got_crc = want_crc, "frame " & integer'image(f) & " state CRC " &
-				to_hex(got_crc) & ", model " & to_hex(want_crc));
-			chk.check(snd_log(f) = nsnd, "frame " & integer'image(f) & " sounds " &
-				integer'image(snd_log(f)) & ", model " & integer'image(nsnd));
-			chk.check(tint_log(f) = tint, "frame " & integer'image(f) & " tint " &
-				integer'image(tint_log(f)) & ", model " & integer'image(tint));
+			check(got_crc = want_crc, "frame " & integer'image(f) & " state CRC " &
+				to_hex(got_crc) & ", model " & to_hex(want_crc), checks, errors);
+			check(snd_log(f) = nsnd, "frame " & integer'image(f) & " sounds " &
+				integer'image(snd_log(f)) & ", model " & integer'image(nsnd), checks, errors);
+			check(tint_log(f) = tint, "frame " & integer'image(f) & " tint " &
+				integer'image(tint_log(f)) & ", model " & integer'image(tint), checks, errors);
 			-- Framebuffer 0 at SRAM 0x00000, framebuffer 1 at 0x20000
 			if (front = '1') then
 				base := 16#20000#;
@@ -656,36 +663,38 @@ begin
 					end if;
 				end loop;
 			end loop;
-			chk.check(bad = 0, "frame " & integer'image(f) & " (flow " & integer'image(flow) &
-				") vs the model: " & integer'image(bad) & " wrong pixels");
+			check(bad = 0, "frame " & integer'image(f) & " (flow " & integer'image(flow) &
+				") vs the model: " & integer'image(bad) & " wrong pixels", checks, errors);
 			tb_print("frame " & integer'image(f) & ": flow " & integer'image(flow) & ", render clocks " &
 				integer'image(to_integer(unsigned(cycles))) & ", " & integer'image(bad) &
 				" wrong pixels, at " & time'image(now));
 			if (f = 2) then
-				chk.check(level_status = "01", "level 1 loaded, status " & to_hex(level_status));
+				check(level_status = "01", "level 1 loaded, status " & to_hex(level_status),
+					checks, errors);
 			end if;
 		end loop;
 		file_close(gf);
 
 		-- The replay unit's CRC log in SRAM, 4 bytes per frame, least significant first
-		for f in 0 to N_FRAMES - 1 loop
+		for f in 0 to CHECK_FRAMES - 1 loop
 			got_crc := sram_mem.read(CRC_BASE + 4 * f + 3) & sram_mem.read(CRC_BASE + 4 * f + 2) &
 				sram_mem.read(CRC_BASE + 4 * f + 1) & sram_mem.read(CRC_BASE + 4 * f);
-			chk.check(got_crc = crc_log(f), "replay CRC log frame " & integer'image(f) & ": " &
-				to_hex(got_crc));
+			check(got_crc = crc_log(f), "replay CRC log frame " & integer'image(f) & ": " &
+				to_hex(got_crc), checks, errors);
 		end loop;
 
-		chk.check(audio_nonzero > 100, "audio on the I2S pins: " & integer'image(audio_nonzero) &
-			" non-zero samples of " & integer'image(au_count));
-		chk.check(unsigned(underflows) = 0, "audio ring underflows " &
-			integer'image(to_integer(unsigned(underflows))));
-		chk.check(au_errors = 0, "I2S format errors " & integer'image(au_errors));
+		check(audio_nonzero > 100, "audio on the I2S pins: " & integer'image(audio_nonzero) &
+			" non-zero samples of " & integer'image(au_count), checks, errors);
+		check(unsigned(underflows) = 0, "audio ring underflows " &
+			integer'image(to_integer(unsigned(underflows))), checks, errors);
+		check(au_errors = 0, "I2S format errors " & integer'image(au_errors), checks, errors);
 		tb_print("late frames " & integer'image(to_integer(unsigned(late))));
-		chk.check(mon_errors = 0, "VGA timing errors " & integer'image(mon_errors));
-		chk.check(sram_errors = 0, "SRAM timing errors " & integer'image(sram_errors));
-		chk.check(flash_errors = 0, "flash protocol errors " & integer'image(flash_errors));
+		check(mon_errors = 0, "VGA timing errors " & integer'image(mon_errors), checks, errors);
+		check(sram_errors = 0, "SRAM timing errors " & integer'image(sram_errors), checks, errors);
+		check(flash_errors = 0, "flash protocol errors " & integer'image(flash_errors), checks, errors);
 		done <= true;
-		tb_finish("tb_shooter_top", chk.checks, chk.errors);
+		check(CHECK_FRAMES <= N_FRAMES, "CHECK_FRAMES " & integer'image(CHECK_FRAMES) & " within the session", checks, errors);
+		tb_finish("tb_shooter_top", checks, errors);
 		wait;
 	end process;
 end arch;

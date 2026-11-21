@@ -9,10 +9,10 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for the stage-4 ray engine against
+-- Description:    Self-checking testbench for the ray engine against
 --                 the golden model (tools/model/render.py via golden4.py):
 --                 sim/golden/ray4_poses.txt gives 27 poses (the 9 flat
---                 level-1 poses of stage 1, then 10 on level 3: stairs, a
+--                 level-1 poses of game_top, then 10 on level 3: stairs, a
 --                 ramp, a platform, a lower ceiling, a pit, a dais, standing
 --                 on a ramp, ducked in a pit, nose on a riser, down a ramp,
 --                 then 4 on the directed test map: a -y ramp from below and
@@ -42,6 +42,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -103,7 +104,6 @@ architecture arch of tb_ray_engine is
 	type clips_t is array (0 to SCREEN_W * 16 - 1) of integer;
 	type span_t is array (0 to 9) of integer; -- kind y0 y1 e tex tcol v0 step light side
 	type spans_t is array (0 to SCREEN_W * MAX_SPANS - 1) of span_t; -- One pose
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -279,6 +279,7 @@ begin
 		-- Golden header line read ahead (it may belong to the next pose)
 		variable have_hdr: boolean := false;
 		variable h_pose, h_col, h_z, h_ns, h_nc, h_rx, h_ry: integer;
+		variable checks, errors: natural := 0;
 
 		procedure compare(name: string; value, want: integer) is
 		begin
@@ -468,12 +469,14 @@ begin
 			end loop;
 			wait until rising_edge(clk);
 			wait until rising_edge(clk);
-			chk.check((col = SCREEN_W - 1) and (idx = nsexp(SCREEN_W - 1)) and (extra = 0), "pose " &
+			check((col = SCREEN_W - 1) and (idx = nsexp(SCREEN_W - 1)) and (extra = 0), "pose " &
 				integer'image(p) & ": all columns and spans out (" & integer'image(col + 1) & " columns, " &
-				integer'image(total) & " spans, " & integer'image(extra) & " extra)");
-			chk.check(dones = dones0 + 1, "pose " & integer'image(p) & ": one done pulse");
-			chk.check(zwrites = zw0 + SCREEN_W, "pose " & integer'image(p) & ": z-buffer writes");
-			chk.check(cwrites = cw0 + SCREEN_W, "pose " & integer'image(p) & ": clip-count writes");
+				integer'image(total) & " spans, " & integer'image(extra) & " extra)", checks, errors);
+			check(dones = dones0 + 1, "pose " & integer'image(p) & ": one done pulse", checks, errors);
+			check(zwrites = zw0 + SCREEN_W, "pose " & integer'image(p) & ": z-buffer writes",
+				checks, errors);
+			check(cwrites = cw0 + SCREEN_W, "pose " & integer'image(p) & ": clip-count writes",
+				checks, errors);
 			for x in 0 to SCREEN_W - 1 loop
 				col := x;
 				idx := 0;
@@ -485,17 +488,17 @@ begin
 					compare("clip top + 256 * bottom", cliprows(x * 16 + i), cliprowsexp(x * 16 + i));
 				end loop;
 			end loop;
-			chk.check(frame_bad = 0, "pose " & integer'image(p) & ": " & integer'image(frame_bad) &
-				" mismatches");
+			check(frame_bad = 0, "pose " & integer'image(p) & ": " & integer'image(frame_bad) &
+				" mismatches", checks, errors);
 			tb_print("pose " & integer'image(p) & ": " & integer'image(cycles) & " clocks, " &
 				integer'image(total) & " spans");
 		end loop;
 		-- A pose added to the golden file must not go untested
-		chk.check(endfile(fp), "ray4_poses.txt has more poses than POSES");
+		check(endfile(fp), "ray4_poses.txt has more poses than POSES", checks, errors);
 		file_close(fp);
 		file_close(fs);
 		finished <= true;
-		tb_finish("tb_ray_engine", chk.checks, chk.errors);
+		tb_finish("tb_ray_engine", checks, errors);
 		wait;
 	end process;
 end arch;

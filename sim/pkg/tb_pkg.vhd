@@ -10,10 +10,14 @@
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Helpers shared by the self-checking testbenches:
---                 - checker_t, a protected type that counts checks and
---                   errors; a testbench declares one shared variable of it
---                   so its clock, reset and stimulus processes can all
---                   check results.
+--                 - check, a procedure that counts one check in the
+--                   caller's checks and errors variables and reports a
+--                   failed check with severity error. Each checking
+--                   process keeps its own two counters; a process other
+--                   than the finishing one copies them onto its own pair
+--                   of signals, and the finishing process waits 1 ns (so
+--                   the last copies have arrived) and adds those to its
+--                   own counts before calling tb_finish.
 --                 - tb_finish prints "TB_RESULT <name> PASS checks=<n>"
 --                   (scripts/run_sim.py looks for it) or a failure, then
 --                   stops the simulation.
@@ -25,6 +29,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -34,12 +39,9 @@ use IEEE.numeric_std.all;
 use std.textio.all;
 
 package tb_pkg is
-	type checker_t is protected
-		-- Count one check; report an error (simulation continues) if false
-		procedure check(cond: boolean; msg: string);
-		impure function checks return natural;
-		impure function errors return natural;
-	end protected checker_t;
+	-- Count one check in checks; if cond is false, count an error in errors and
+	-- report it with severity error (the simulation continues)
+	procedure check(cond: boolean; msg: string; checks: inout natural; errors: inout natural);
 
 	-- Print the summary line and stop the simulation
 	procedure tb_finish(name: string; checks: natural; errors: natural);
@@ -51,29 +53,14 @@ package tb_pkg is
 end package tb_pkg;
 
 package body tb_pkg is
-	type checker_t is protected body
-		variable n_checks: natural := 0;
-		variable n_errors: natural := 0;
-
-		procedure check(cond: boolean; msg: string) is
-		begin
-			n_checks := n_checks + 1;
-			if (not cond) then
-				n_errors := n_errors + 1;
-				report "CHECK FAILED: " & msg severity error;
-			end if;
-		end procedure;
-
-		impure function checks return natural is
-		begin
-			return n_checks;
-		end function;
-
-		impure function errors return natural is
-		begin
-			return n_errors;
-		end function;
-	end protected body checker_t;
+	procedure check(cond: boolean; msg: string; checks: inout natural; errors: inout natural) is
+	begin
+		checks := checks + 1;
+		if (not cond) then
+			errors := errors + 1;
+			report "CHECK FAILED: " & msg severity error;
+		end if;
+	end procedure;
 
 	procedure tb_print(msg: string) is
 		variable l: line;

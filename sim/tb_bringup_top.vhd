@@ -9,9 +9,9 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    System testbench for the stage-0 bring-up design, from the
+-- Description:    System testbench for the bring-up design, from the
 --                 12 MHz oscillator (real MMCM model) to every board model:
---                 SRAM, SPI flash (game-data header "SHOOTER0" at
+--                 SRAM, SPI flash (game-data header "FPGADATA" at
 --                 0x220000), PS/2 keyboard and mouse with 10 kohm pull-ups,
 --                 VGA monitor, I2S receiver, and a PC on the UART.
 --                 Checks, about 40 ms of operation:
@@ -34,6 +34,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -193,7 +194,6 @@ architecture arch of tb_bringup_top is
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
 	type bytes_t is array (0 to 255) of std_logic_vector(7 downto 0);
 	type image_t is array (0 to 76_799) of integer;
-	shared variable chk: checker_t;
 
 	signal clk12: std_logic := '0';
 	signal done: boolean := false;
@@ -457,6 +457,7 @@ begin
 		variable a, bad: natural;
 		variable buf_base: natural;
 		variable i2s_errors_at_on: natural;
+		variable checks, errors: natural := 0;
 		alias front is << signal .tb_bringup_top.dut.front: std_logic >>;
 
 		procedure read_reg(n: natural; variable value: out std_logic_vector(31 downto 0)) is
@@ -465,34 +466,34 @@ begin
 			pc_send(pc_tx, x"52");
 			pc_send(pc_tx, std_logic_vector(to_unsigned(n, 8)));
 			wait until (nreplies >= first + 4) for 1 ms;
-			chk.check(nreplies >= first + 4, "reply to read reg " & integer'image(n));
+			check(nreplies >= first + 4, "reply to read reg " & integer'image(n), checks, errors);
 			-- The register comes back least significant byte first
 			value := replies((first + 3) mod 256) & replies((first + 2) mod 256) &
 				replies((first + 1) mod 256) & replies(first mod 256);
 		end procedure;
 	begin
-		-- Game-data header in flash: "SHOOTER0"
-		flash_mem.write(16#220000#, 16#53#);
-		flash_mem.write(16#220001#, 16#48#);
-		flash_mem.write(16#220002#, 16#4F#);
-		flash_mem.write(16#220003#, 16#4F#);
-		flash_mem.write(16#220004#, 16#54#);
-		flash_mem.write(16#220005#, 16#45#);
-		flash_mem.write(16#220006#, 16#52#);
-		flash_mem.write(16#220007#, 16#30#);
+		-- Game-data header in flash: "FPGADATA"
+		flash_mem.write(16#220000#, 16#46#);
+		flash_mem.write(16#220001#, 16#50#);
+		flash_mem.write(16#220002#, 16#47#);
+		flash_mem.write(16#220003#, 16#41#);
+		flash_mem.write(16#220004#, 16#44#);
+		flash_mem.write(16#220005#, 16#41#);
+		flash_mem.write(16#220006#, 16#54#);
+		flash_mem.write(16#220007#, 16#41#);
 		golden := read_golden;
 
 		-- Before pcb_on (10 ms of PWR_SENSE high): everything released
 		wait for 8 ms;
-		chk.check(led(0) = '1', "MMCM locked");
-		chk.check(led(1) = '0', "pcb_on still low at 8 ms");
-		chk.check((vga_r = "ZZZZ") and (vga_g = "ZZZZ") and (vga_b = "ZZZZ") and
-			(vga_hs = 'Z') and (vga_vs = 'Z'), "VGA pins high-Z before pcb_on");
-		chk.check((i2s_mclk = 'Z') and (i2s_sdin = 'Z'), "I2S pins high-Z before pcb_on");
-		chk.check((kb_clk = 'H') and (ms_clk = 'H'), "PS/2 lines released before pcb_on");
+		check(led(0) = '1', "MMCM locked", checks, errors);
+		check(led(1) = '0', "pcb_on still low at 8 ms", checks, errors);
+		check((vga_r = "ZZZZ") and (vga_g = "ZZZZ") and (vga_b = "ZZZZ") and
+			(vga_hs = 'Z') and (vga_vs = 'Z'), "VGA pins high-Z before pcb_on", checks, errors);
+		check((i2s_mclk = 'Z') and (i2s_sdin = 'Z'), "I2S pins high-Z before pcb_on", checks, errors);
+		check((kb_clk = 'H') and (ms_clk = 'H'), "PS/2 lines released before pcb_on", checks, errors);
 		wait for 3 ms;
-		chk.check(led(1) = '1', "pcb_on after 10 ms");
-		chk.check((vga_hs = '0') or (vga_hs = '1'), "VGA pins driven after pcb_on");
+		check(led(1) = '1', "pcb_on after 10 ms", checks, errors);
+		check((vga_hs = '0') or (vga_hs = '1'), "VGA pins driven after pcb_on", checks, errors);
 		-- The I2S receiver may see one partial channel when the pins switch
 		-- from high-Z to driven in the middle of a frame; count from here
 		i2s_errors_at_on := i2s_errors;
@@ -506,19 +507,19 @@ begin
 		first := nreplies;
 		pc_send(pc_tx, x"50");
 		wait until (nreplies > first) for 1 ms;
-		chk.check((nreplies > first) and (replies(first mod 256) = x"4B"), "UART ping");
+		check((nreplies > first) and (replies(first mod 256) = x"4B"), "UART ping", checks, errors);
 		read_reg(0, word);
-		chk.check(word = x"53470001", "build id " & to_hex(word));
+		check(word = x"53470001", "build id " & to_hex(word), checks, errors);
 		read_reg(4, word);
-		chk.check(word = x"00C22016", "flash JEDEC id " & to_hex(word));
+		check(word = x"00C22016", "flash JEDEC id " & to_hex(word), checks, errors);
 		read_reg(5, word);
-		chk.check(word = x"53484F4F", "flash data bytes 0-3 " & to_hex(word));
+		check(word = x"46504741", "flash data bytes 0-3 " & to_hex(word), checks, errors);
 		read_reg(6, word);
-		chk.check(word = x"54455230", "flash data bytes 4-7 " & to_hex(word));
+		check(word = x"44415441", "flash data bytes 4-7 " & to_hex(word), checks, errors);
 		read_reg(18, word);
-		chk.check(word(KEY_W) = '1', "W held in the key register " & to_hex(word));
+		check(word(KEY_W) = '1', "W held in the key register " & to_hex(word), checks, errors);
 		read_reg(8, word);
-		chk.check(word(7 downto 0) = x"1D", "keyboard history shows 1D " & to_hex(word));
+		check(word(7 downto 0) = x"1D", "keyboard history shows 1D " & to_hex(word), checks, errors);
 
 		-- Keyboard: W released (F0 1D)
 		kb_byte <= x"F0";
@@ -528,9 +529,9 @@ begin
 		kb_send <= not kb_send;
 		wait for 1.5 ms;
 		read_reg(18, word);
-		chk.check(word(KEY_W) = '0', "W released " & to_hex(word));
+		check(word(KEY_W) = '0', "W released " & to_hex(word), checks, errors);
 		read_reg(16, word);
-		chk.check(word = x"00000000", "no keyboard errors " & to_hex(word));
+		check(word = x"00000000", "no keyboard errors " & to_hex(word), checks, errors);
 
 		-- Let a few more frames go by, then check the status page and the
 		-- counters
@@ -554,27 +555,28 @@ begin
 				end loop;
 			end if;
 		end loop;
-		chk.check(bad = 0, "status page static rows: " & integer'image(bad) & " wrong pixels");
+		check(bad = 0, "status page static rows: " & integer'image(bad) & " wrong pixels",
+			checks, errors);
 
 		read_reg(1, word);
-		chk.check(word(15 downto 0) = x"0000", "SRAM self-test errors " & to_hex(word));
+		check(word(15 downto 0) = x"0000", "SRAM self-test errors " & to_hex(word), checks, errors);
 		read_reg(3, word);
-		chk.check(word(19 downto 16) /= x"0", "SRAM self-test has moved past phase 0");
+		check(word(19 downto 16) /= x"0", "SRAM self-test has moved past phase 0", checks, errors);
 		read_reg(22, word);
-		chk.check(unsigned(word(31 downto 16)) >= 2, "frames swapped " & to_hex(word));
-		chk.check(word(15 downto 0) = x"0000", "no late frames");
+		check(unsigned(word(31 downto 16)) >= 2, "frames swapped " & to_hex(word), checks, errors);
+		check(word(15 downto 0) = x"0000", "no late frames", checks, errors);
 		read_reg(26, word);
-		chk.check(word(15 downto 0) = x"0000", "no line fetch overruns");
+		check(word(15 downto 0) = x"0000", "no line fetch overruns", checks, errors);
 
-		chk.check(mon_errors = 0, "VGA timing errors " & integer'image(mon_errors));
-		chk.check(sram_errors = 0, "SRAM timing errors " & integer'image(sram_errors));
-		chk.check(flash_errors = 0, "flash protocol errors " & integer'image(flash_errors));
-		chk.check(i2s_errors = i2s_errors_at_on, "I2S format errors after pcb_on " &
-			integer'image(i2s_errors - i2s_errors_at_on));
-		chk.check(i2s_count > 100, "I2S samples received " & integer'image(i2s_count));
-		chk.check(kb_rx_count = 0, "nothing sent to the keyboard");
+		check(mon_errors = 0, "VGA timing errors " & integer'image(mon_errors), checks, errors);
+		check(sram_errors = 0, "SRAM timing errors " & integer'image(sram_errors), checks, errors);
+		check(flash_errors = 0, "flash protocol errors " & integer'image(flash_errors), checks, errors);
+		check(i2s_errors = i2s_errors_at_on, "I2S format errors after pcb_on " &
+			integer'image(i2s_errors - i2s_errors_at_on), checks, errors);
+		check(i2s_count > 100, "I2S samples received " & integer'image(i2s_count), checks, errors);
+		check(kb_rx_count = 0, "nothing sent to the keyboard", checks, errors);
 		done <= true;
-		tb_finish("tb_bringup_top", chk.checks, chk.errors);
+		tb_finish("tb_bringup_top", checks, errors);
 		wait;
 	end process;
 end arch;

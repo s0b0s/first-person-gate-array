@@ -28,6 +28,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -93,7 +94,6 @@ architecture arch of tb_ps2_host is
 	constant PERIOD: time := 100 ns; -- 10 MHz
 	type bytes_t is array (natural range <>) of std_logic_vector(7 downto 0);
 	constant SEQ: bytes_t := (x"1C", x"F0", x"1C", x"E0", x"75", x"00", x"FF", x"55");
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -219,6 +219,7 @@ begin
 	-- Stimulus
 	process
 		variable n0: natural;
+		variable checks, errors: natural := 0;
 
 		procedure dev_tx(b: std_logic_vector(7 downto 0); mode: natural) is
 			variable before: natural;
@@ -253,50 +254,53 @@ begin
 		for i in SEQ'range loop
 			dev_tx(SEQ(i), 0);
 		end loop;
-		chk.check(n_got = SEQ'length, "received " & integer'image(n_got) & " bytes");
+		check(n_got = SEQ'length, "received " & integer'image(n_got) & " bytes", checks, errors);
 		for i in SEQ'range loop
-			chk.check(got(i) = SEQ(i), "byte " & integer'image(i) & " got " & to_hex(got(i)) &
-				" want " & to_hex(SEQ(i)));
+			check(got(i) = SEQ(i), "byte " & integer'image(i) & " got " & to_hex(got(i)) &
+				" want " & to_hex(SEQ(i)), checks, errors);
 		end loop;
 
 		-- 2. Parity error, 3. bad stop bit
 		dev_tx(x"3A", 1);
-		chk.check((n_perr = 1) and (n_got = SEQ'length), "parity error reported, byte dropped");
+		check((n_perr = 1) and (n_got = SEQ'length), "parity error reported, byte dropped",
+			checks, errors);
 		dev_tx(x"3A", 2);
-		chk.check((n_ferr = 1) and (n_got = SEQ'length), "framing error reported, byte dropped");
+		check((n_ferr = 1) and (n_got = SEQ'length), "framing error reported, byte dropped",
+			checks, errors);
 
 		-- 4. Truncated byte: timeout after 2 ms, then a good byte
 		dev_tx(x"C3", 3);
-		chk.check(n_tout = 0, "no timeout before 2 ms");
+		check(n_tout = 0, "no timeout before 2 ms", checks, errors);
 		wait for 2.5 ms;
-		chk.check(n_tout = 1, "timeout after a truncated byte");
+		check(n_tout = 1, "timeout after a truncated byte", checks, errors);
 		dev_tx(x"AB", 0);
-		chk.check((n_got = SEQ'length + 1) and (got(SEQ'length) = x"AB"),
-			"good byte after a timeout");
+		check((n_got = SEQ'length + 1) and (got(SEQ'length) = x"AB"),
+			"good byte after a timeout", checks, errors);
 
 		-- 5. Host to device: both parities, acknowledged, nothing received
 		n0 := n_got;
 		host_tx(x"F4");
-		chk.check(n_done = 1, "send F4 acknowledged");
-		chk.check((dev_rx_count = 1) and (dev_rx_byte = x"F4"), "device got F4");
+		check(n_done = 1, "send F4 acknowledged", checks, errors);
+		check((dev_rx_count = 1) and (dev_rx_byte = x"F4"), "device got F4", checks, errors);
 		host_tx(x"FF");
 		host_tx(x"00");
-		chk.check(n_done = 3, "three sends acknowledged");
-		chk.check((dev_rx_count = 3) and (dev_rx_byte = x"00"), "device got FF then 00");
-		chk.check(dev_rx_perr = 0, "device saw good parity and stop bits");
-		chk.check((n_got = n0) and (n_perr = 1) and (n_ferr = 1) and (n_tout = 1),
-			"receiver quiet while sending");
-		chk.check((clk_pull = '0') and (dat_pull = '0'), "lines released after a send");
+		check(n_done = 3, "three sends acknowledged", checks, errors);
+		check((dev_rx_count = 3) and (dev_rx_byte = x"00"), "device got FF then 00", checks, errors);
+		check(dev_rx_perr = 0, "device saw good parity and stop bits", checks, errors);
+		check((n_got = n0) and (n_perr = 1) and (n_ferr = 1) and (n_tout = 1),
+			"receiver quiet while sending", checks, errors);
+		check((clk_pull = '0') and (dat_pull = '0'), "lines released after a send", checks, errors);
 
 		-- Receive still works after sending
 		dev_tx(x"FA", 0);
-		chk.check(got((n_got - 1) mod 32) = x"FA", "byte received after a send");
+		check(got((n_got - 1) mod 32) = x"FA", "byte received after a send", checks, errors);
 
 		-- 6. Silent device: send times out, lines released
 		dev_silent <= true;
 		host_tx(x"F4");
-		chk.check(n_err = 1, "send to a silent device times out");
-		chk.check((clk_pull = '0') and (dat_pull = '0'), "lines released after the timeout");
+		check(n_err = 1, "send to a silent device times out", checks, errors);
+		check((clk_pull = '0') and (dat_pull = '0'), "lines released after the timeout",
+			checks, errors);
 		dev_silent <= false;
 		wait for 1 ms;
 
@@ -307,21 +311,21 @@ begin
 		wait until rising_edge(clk);
 		tx_valid <= '0';
 		wait for 100 us;
-		chk.check(clk_pull = '1', "clock pulled during the inhibit time");
+		check(clk_pull = '1', "clock pulled during the inhibit time", checks, errors);
 		en <= '0';
 		wait for 1 ns;
-		chk.check((clk_pull = '0') and (dat_pull = '0'), "enable low releases the lines");
+		check((clk_pull = '0') and (dat_pull = '0'), "enable low releases the lines", checks, errors);
 		wait for 50 us;
-		chk.check(tx_ready = '0', "not ready while disabled");
+		check(tx_ready = '0', "not ready while disabled", checks, errors);
 		en <= '1';
 		wait for 3 ms;
-		chk.check((clk_pull = '0') and (dat_pull = '0') and (tx_ready = '1'),
-			"idle again after enable");
+		check((clk_pull = '0') and (dat_pull = '0') and (tx_ready = '1'),
+			"idle again after enable", checks, errors);
 		dev_tx(x"5A", 0);
-		chk.check(got((n_got - 1) mod 32) = x"5A", "receive works after re-enable");
+		check(got((n_got - 1) mod 32) = x"5A", "receive works after re-enable", checks, errors);
 
 		done <= true;
-		tb_finish("tb_ps2_host", chk.checks, chk.errors);
+		tb_finish("tb_ps2_host", checks, errors);
 		wait;
 	end process;
 end arch;

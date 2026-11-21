@@ -9,7 +9,7 @@ Actor record (64 bits, BRAM, 32 actors):
     15:0  x, Q6.10 tiles       31:16 y, Q6.10       38:32 state (0..127)
     44:39 timer (frames left; 63 = forever)          56:45 health (0..4095); fireballs:
           direction 0..15 (22.5 deg steps, clockwise from +x); items: item kind
-    59:57 type   62:60 flags (60 active, 61 solid, 62 awake)   63 ambush (stage 5: the
+    59:57 type   62:60 flags (60 active, 61 solid, 62 awake)   63 ambush (the
     monster ignores sound alerts and wakes only by sight or when hit)
 State table entry (22 bits): 4:0 frame, 10:5 duration, 14:11 action, 21:15 next.
 """

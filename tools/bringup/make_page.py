@@ -1,4 +1,4 @@
-"""Build the stage-0 bring-up status page ROM (rtl/bringup/page_rom.vhd).
+"""Build the bring-up status page ROM (rtl/bringup/page_rom.vhd).
 
 The page is 40 x 30 character cells (8 x 8 pixels each, 320 x 240). The layout below is
 plain text with fields in braces that show live hardware values in hex:
@@ -60,7 +60,7 @@ def history(word):
 
 
 LAYOUT = [
-    "SHOOTER GAME  STAGE 0 BRING-UP",
+    "FIRST-PERSON GATE ARRAY  BRING-UP",
     "========================================",
     "BUILD {0.8}  PCB {26.1.4} MMCM {26.1.5}",
     "FRAMES {22.4.4} LATE {22.4} BUS {23.6}",

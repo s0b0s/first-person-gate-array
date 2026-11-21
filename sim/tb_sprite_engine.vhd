@@ -14,7 +14,7 @@
 --                 sim/golden/sprite_cases.txt (session frames) and then
 --                 sim/golden/sprite_stress.txt (tools/model/sprite_stress.py:
 --                 full table, near limit, equal depths, screen edges, no
---                 sprites) and sim/golden/sprite4_cases.txt (stage 4: level-3
+--                 sprites) and sim/golden/sprite4_cases.txt (heights: level-3
 --                 frames and hand-placed scenes where sprites stand on raised
 --                 floors and are clipped by height edges) it loads the
 --                 camera, the sprite table (7 fields, with the floor
@@ -32,7 +32,9 @@
 --                 - the span list equals the golden one, and the span
 --                   count of the previous frame stays readable until done;
 --                 - one done_o per frame, busy_o low afterwards.
---                 Prints the clocks per case.
+--                 Prints the clocks per case. The capture process keeps the
+--                 written pixels in the signal img and counts them in
+--                 writes (both cleared through clear_store before a case).
 --                 RUN_VARIANTS: READY_PCT=60 READY_PCT=100
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -43,6 +45,8 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type;
+--                 captured pixels in a signal of the capture process
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -128,39 +132,7 @@ architecture arch of tb_sprite_engine is
 		return b;
 	end function;
 
-	-- Pixels written in the current frame (-1 = not written)
-	type image_store_t is protected
-		procedure clear;
-		procedure put(addr: natural; value: natural);
-		impure function get(addr: natural) return integer;
-		impure function writes return natural;
-	end protected image_store_t;
-	type image_store_t is protected body
-		type image_t is array (0 to PIXEL_COUNT - 1) of integer;
-		variable img: image_t := (others => -1);
-		variable n: natural := 0;
-		procedure clear is
-		begin
-			img := (others => -1);
-			n := 0;
-		end procedure;
-		procedure put(addr: natural; value: natural) is
-		begin
-			img(addr) := value;
-			n := n + 1;
-		end procedure;
-		impure function get(addr: natural) return integer is
-		begin
-			return img(addr);
-		end function;
-		impure function writes return natural is
-		begin
-			return n;
-		end function;
-	end protected body image_store_t;
-
-	shared variable chk: checker_t;
-	shared variable store: image_store_t;
+	type image_t is array (0 to PIXEL_COUNT - 1) of integer;
 
 	type spr_ram_t is array (0 to 31) of std_logic_vector(SPR_BITS - 1 downto 0);
 	type z_ram_t is array (0 to 511) of std_logic_vector(15 downto 0);
@@ -205,6 +177,12 @@ architecture arch of tb_sprite_engine is
 	signal dones: natural := 0;
 	signal bad_buf: natural := 0;
 	signal bad_addr: natural := 0;
+	-- Pixels written in the current frame (-1 = not written) and the
+	-- number of writes; driven by the capture process, cleared when
+	-- clear_store is true on a clock edge
+	signal img: image_t := (others => -1);
+	signal writes: natural := 0;
+	signal clear_store: boolean := false;
 
 	function hexval(c: character) return natural is
 	begin
@@ -344,9 +322,14 @@ begin
 	process(clk)
 	begin
 		if rising_edge(clk) then
+			if (clear_store) then
+				img <= (others => -1);
+				writes <= 0;
+			end if;
 			if ((pix_valid = '1') and (pix_ready = '1')) then
-				store.put(to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO))),
-					to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO))));
+				img(to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)))) <=
+					to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO)));
+				writes <= writes + 1;
 				if (pix_data(PIXW_BUF) /= buf) then
 					bad_buf <= bad_buf + 1;
 				end if;
@@ -374,6 +357,7 @@ begin
 		variable prev_spans: natural := 0;
 		variable t0: time;
 		variable want_span: integer_vector(0 to 3);
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst = '0');
 		wait until rising_edge(clk);
@@ -390,7 +374,7 @@ begin
 				readline(cases_f, l);
 				read(l, tag);
 				read(l, n);
-				chk.check(tag = 'C', "case header " & integer'image(k));
+				check(tag = 'C', "case header " & integer'image(k), checks, errors);
 				-- K cam_x cam_y angle eye
 				readline(cases_f, l);
 				read(l, tag);
@@ -434,7 +418,7 @@ begin
 					read(l, n);
 					z_ram(x) <= std_logic_vector(to_unsigned(n, 16));
 				end loop;
-				-- L lines (clip lists, stage-4 file only): L col n (z top bot) x n;
+				-- L lines (clip lists, heights file only): L col n (z top bot) x n;
 				-- every other column has no entries. Then B and the base image.
 				cnt := (others => 0);
 				loop
@@ -453,7 +437,7 @@ begin
 							std_logic_vector(to_unsigned(ctop, 8)) & std_logic_vector(to_unsigned(cz, 16));
 					end loop;
 				end loop;
-				chk.check(tag = 'B', "case " & integer'image(k) & ": base image header");
+				check(tag = 'B', "case " & integer'image(k) & ": base image header", checks, errors);
 				count_ram <= cnt;
 				clip_ram <= cram;
 				for y in 0 to 239 loop
@@ -464,23 +448,24 @@ begin
 						base_img(y * 320 + x) := hexval(c1) * 16 + hexval(c2);
 					end loop;
 				end loop;
-				store.clear;
+				clear_store <= true;
 
 				-- Run the frame
 				wait until rising_edge(clk);
+				clear_store <= false;
 				start <= '1';
 				wait until rising_edge(clk);
 				start <= '0';
 				t0 := now;
 				wait until rising_edge(clk);
-				chk.check(busy = '1', "case " & integer'image(k) & ": busy after start");
+				check(busy = '1', "case " & integer'image(k) & ": busy after start", checks, errors);
 				-- Spans of the previous frame stay readable while this one runs
-				chk.check(to_integer(unsigned(span_count)) = prev_spans, "case " & integer'image(k) &
-					": previous span count during the frame");
+				check(to_integer(unsigned(span_count)) = prev_spans, "case " & integer'image(k) &
+					": previous span count during the frame", checks, errors);
 				wait until (done = '1') for 10 ms;
-				chk.check(done = '1', "case " & integer'image(k) & ": done in time");
+				check(done = '1', "case " & integer'image(k) & ": done in time", checks, errors);
 				tb_print("case " & integer'image(k) & ": " & integer'image((now - t0) / PERIOD) &
-					" clocks, " & integer'image(store.writes) & " pixels (ready " &
+					" clocks, " & integer'image(writes) & " pixels (ready " &
 					integer'image(READY_PCT) & "%, grant " & integer'image(GNT_PCT) & "%)");
 				wait until rising_edge(clk);
 				wait for 1 ns; -- Let the capture process count the done pulse
@@ -495,7 +480,7 @@ begin
 						read(l, c2);
 						want := hexval(c1) * 16 + hexval(c2);
 						a := y * 320 + x;
-						got := store.get(a);
+						got := img(a);
 						if (got = -1) then -- Not written: the base image shows through
 							got := base_img(a);
 						end if;
@@ -509,21 +494,21 @@ begin
 						end if;
 					end loop;
 				end loop;
-				chk.check(wrong = 0, "case " & integer'image(k) & ": " & integer'image(wrong) &
-					" wrong pixels");
-				chk.check(to_integer(unsigned(pixels)) = minimum(store.writes, 65535), "case " & integer'image(k) &
+				check(wrong = 0, "case " & integer'image(k) & ": " & integer'image(wrong) &
+					" wrong pixels", checks, errors);
+				check(to_integer(unsigned(pixels)) = minimum(writes, 65535), "case " & integer'image(k) &
 					": pixels_o " & integer'image(to_integer(unsigned(pixels))) & " vs writes " &
-					integer'image(store.writes));
-				chk.check(dones = k + 1, "one done per frame, got " & integer'image(dones));
-				chk.check(busy = '0', "case " & integer'image(k) & ": idle after done");
+					integer'image(writes), checks, errors);
+				check(dones = k + 1, "one done per frame, got " & integer'image(dones), checks, errors);
+				check(busy = '0', "case " & integer'image(k) & ": idle after done", checks, errors);
 
 				-- Q n, then n x (idx x0 x1 z)
 				readline(cases_f, l);
 				read(l, tag);
 				read(l, n);
-				chk.check(to_integer(unsigned(span_count)) = n, "case " & integer'image(k) &
+				check(to_integer(unsigned(span_count)) = n, "case " & integer'image(k) &
 					": span count " & integer'image(to_integer(unsigned(span_count))) & " want " &
-					integer'image(n));
+					integer'image(n), checks, errors);
 				for j in 0 to n - 1 loop
 					for f in 0 to 3 loop
 						read(l, want_span(f));
@@ -531,23 +516,24 @@ begin
 					span_raddr <= std_logic_vector(to_unsigned(j, 5));
 					wait until rising_edge(clk);
 					wait for 1 ns;
-					chk.check((to_integer(unsigned(span_rdata(SPAN_IDX_HI downto SPAN_IDX_LO))) =
+					check((to_integer(unsigned(span_rdata(SPAN_IDX_HI downto SPAN_IDX_LO))) =
 						want_span(0)) and
 						(to_integer(unsigned(span_rdata(SPAN_X0_HI downto SPAN_X0_LO))) = want_span(1)) and
 						(to_integer(unsigned(span_rdata(SPAN_X1_HI downto SPAN_X1_LO))) = want_span(2)) and
 						(to_integer(unsigned(span_rdata(SPAN_Z_HI downto SPAN_Z_LO))) = want_span(3)),
 						"case " & integer'image(k) & " span " & integer'image(j) & " = " &
-						to_hex(span_rdata));
+						to_hex(span_rdata), checks, errors);
 				end loop;
 				prev_spans := n;
 				k := k + 1;
 			end loop;
 			file_close(cases_f);
 		end loop;
-		chk.check(bad_buf = 0, "pixels with the wrong buffer bit: " & integer'image(bad_buf));
-		chk.check(bad_addr = 0, "reads outside the art: " & integer'image(bad_addr));
+		check(bad_buf = 0, "pixels with the wrong buffer bit: " & integer'image(bad_buf),
+			checks, errors);
+		check(bad_addr = 0, "reads outside the art: " & integer'image(bad_addr), checks, errors);
 		finished <= true;
-		tb_finish("tb_sprite_engine", chk.checks, chk.errors);
+		tb_finish("tb_sprite_engine", checks, errors);
 		wait;
 	end process;
 end arch;

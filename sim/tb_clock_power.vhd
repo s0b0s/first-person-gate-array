@@ -19,6 +19,9 @@
 --                 - pcb_on turns on only after PWR_SENSE has been high
 --                   for HOLD_CYCLES (shortened to 200), ignores shorter
 --                   pulses, and turns off within 4 cycles of a drop.
+--                 The two reset-release processes copy their check counts
+--                 to their own signals; the stimulus process adds them to
+--                 its own at the end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 clock_reset, power_gate
@@ -26,6 +29,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -67,7 +71,6 @@ architecture arch of tb_clock_power is
 
 	constant PERIOD_12: time := 83.333 ns;
 	constant HOLD: positive := 200;
-	shared variable chk: checker_t;
 
 	signal clk12: std_logic := '0';
 	signal btn_rst: std_logic := '0';
@@ -78,6 +81,8 @@ architecture arch of tb_clock_power is
 	signal rst_pix: std_logic;
 	signal locked: std_logic;
 	signal pwr_sense: std_logic := '0';
+	signal rst_checks, rst_errors: natural := 0; -- Reset process check counts
+	signal pix_checks, pix_errors: natural := 0; -- rst_pix release check counts
 	signal pcb_on: std_logic;
 	signal done: boolean := false;
 begin
@@ -119,26 +124,33 @@ begin
 	-- Reset: this design has no external reset; the MMCM lock is the
 	-- reset. The process checks that both resets hold until lock.
 	process
+		variable checks, errors: natural := 0;
 	begin
 		wait for 1 ns;
-		chk.check((rst_sys = '1') and (rst_pix = '1'), "resets high at power-on");
+		check((rst_sys = '1') and (rst_pix = '1'), "resets high at power-on", checks, errors);
 		wait until (locked = '1');
-		chk.check((rst_sys = '1') and (rst_pix = '1'), "resets still high at lock");
+		check((rst_sys = '1') and (rst_pix = '1'), "resets still high at lock", checks, errors);
 		wait until falling_edge(rst_sys);
-		chk.check(clk_sys = '1', "rst_sys released on a clk_sys rising edge");
+		check(clk_sys = '1', "rst_sys released on a clk_sys rising edge", checks, errors);
+		rst_checks <= checks;
+		rst_errors <= errors;
 		wait;
 	end process;
 
 	process
+		variable checks, errors: natural := 0;
 	begin
 		wait until falling_edge(rst_pix);
-		chk.check(clk_pix = '1', "rst_pix released on a clk_pix rising edge");
+		check(clk_pix = '1', "rst_pix released on a clk_pix rising edge", checks, errors);
+		pix_checks <= checks;
+		pix_errors <= errors;
 		wait;
 	end process;
 
 	-- Stimulus and checks
 	process
 		variable t0, t1, t_rd: time;
+		variable checks, errors: natural := 0;
 	begin
 		wait until (rst_sys = '0') and (rst_pix = '0');
 		wait for 1 us;
@@ -150,16 +162,16 @@ begin
 			wait until rising_edge(clk_sys);
 		end loop;
 		t1 := now;
-		chk.check(abs ((t1 - t0) / 100 - 10 ns) < 10 ps, "clk_sys period " &
-			time'image((t1 - t0) / 100));
+		check(abs ((t1 - t0) / 100 - 10 ns) < 10 ps, "clk_sys period " &
+			time'image((t1 - t0) / 100), checks, errors);
 		wait until rising_edge(clk_pix);
 		t0 := now;
 		for i in 1 to 100 loop
 			wait until rising_edge(clk_pix);
 		end loop;
 		t1 := now;
-		chk.check(abs ((t1 - t0) / 100 - 40 ns) < 10 ps, "clk_pix period " &
-			time'image((t1 - t0) / 100));
+		check(abs ((t1 - t0) / 100 - 40 ns) < 10 ps, "clk_pix period " &
+			time'image((t1 - t0) / 100), checks, errors);
 
 		-- clk_sram_rd: same period, rising edge about 1.04 ns after clk_sys.
 		-- The MMCM model rounds single edges to whole picoseconds of a
@@ -169,15 +181,15 @@ begin
 		t0 := now;
 		wait until rising_edge(clk_rd);
 		t_rd := now - t0;
-		chk.check((t_rd > 0.95 ns) and (t_rd < 1.15 ns), "clk_sram_rd lag " &
-			time'image(t_rd));
+		check((t_rd > 0.95 ns) and (t_rd < 1.15 ns), "clk_sram_rd lag " &
+			time'image(t_rd), checks, errors);
 		t0 := now;
 		for i in 1 to 100 loop
 			wait until rising_edge(clk_rd);
 		end loop;
 		t1 := now;
-		chk.check(abs ((t1 - t0) / 100 - 10 ns) < 10 ps, "clk_sram_rd period " &
-			time'image((t1 - t0) / 100));
+		check(abs ((t1 - t0) / 100 - 10 ns) < 10 ps, "clk_sram_rd period " &
+			time'image((t1 - t0) / 100), checks, errors);
 
 		-- PWR_SENSE: a pulse shorter than HOLD does nothing
 		wait until rising_edge(clk_sys);
@@ -186,31 +198,32 @@ begin
 		wait for (HOLD / 2) * 10 ns;
 		pwr_sense <= '0';
 		wait for (HOLD + 20) * 10 ns;
-		chk.check(pcb_on = '0', "short PWR_SENSE pulse ignored");
+		check(pcb_on = '0', "short PWR_SENSE pulse ignored", checks, errors);
 
 		-- Held high: on after about HOLD + 4 cycles, not before HOLD
 		pwr_sense <= '1';
 		wait for (HOLD - 5) * 10 ns;
-		chk.check(pcb_on = '0', "pcb_on not before HOLD cycles");
+		check(pcb_on = '0', "pcb_on not before HOLD cycles", checks, errors);
 		wait for 20 * 10 ns;
-		chk.check(pcb_on = '1', "pcb_on after HOLD cycles");
+		check(pcb_on = '1', "pcb_on after HOLD cycles", checks, errors);
 
 		-- Drop: off within 4 clocks (3 synchronizer stages + output)
 		pwr_sense <= '0';
 		wait for 45 ns;
-		chk.check(pcb_on = '0', "pcb_on drops within 4 cycles");
+		check(pcb_on = '0', "pcb_on drops within 4 cycles", checks, errors);
 
 		-- Manual reset re-asserts both resets without waiting for a clock
 		btn_rst <= '1';
 		wait for 1 ns;
-		chk.check((rst_sys = '1') and (rst_pix = '1'), "btn_rst asserts resets at once");
+		check((rst_sys = '1') and (rst_pix = '1'), "btn_rst asserts resets at once", checks, errors);
 		wait for 200 ns;
 		btn_rst <= '0';
 		wait for 200 ns;
-		chk.check((rst_sys = '0') and (rst_pix = '0'), "resets release after btn_rst");
+		check((rst_sys = '0') and (rst_pix = '0'), "resets release after btn_rst", checks, errors);
 
 		done <= true;
-		tb_finish("tb_clock_power", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_clock_power", checks + rst_checks + pix_checks, errors + rst_errors + pix_errors);
 		wait;
 	end process;
 end arch;

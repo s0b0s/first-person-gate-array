@@ -9,7 +9,7 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Stage-0 bring-up design, kept buildable as a diagnostics
+-- Description:    Bring-up design, kept buildable as a diagnostics
 --                 image for checking the board, the PCB and its wiring.
 --                 - Display: 640x480 from the SRAM front buffer; BTN1
 --                   cycles the test patterns (framebuffer, color bands,
@@ -32,7 +32,7 @@
 --                 crossed only inside display_controller.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, every
---                 stage-0 block (see the component list)
+--                 bring-up block (see the component list)
 --
 -- Revision:
 -- Revision 0.01 - File Created

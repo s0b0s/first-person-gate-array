@@ -4,12 +4,12 @@
 -- Engineer:       Matthew Gordon
 --
 -- Create Date:    10/21/2026
--- Design Name:    Stage-1 Game Top Level Testbench
+-- Design Name:    Maze Game Top Level Testbench
 -- Module Name:    tb_game_top
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    System testbench for the stage-1 game: from the 12 MHz
+-- Description:    System testbench for the maze game: from the 12 MHz
 --                 oscillator (real MMCM model) through flash boot, the game
 --                 update, the renderer and the SRAM, with the board models
 --                 (SRAM, SPI flash holding build/gamedata.bin at 0x220000,
@@ -33,6 +33,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -178,7 +179,6 @@ architecture arch of tb_game_top is
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
 	type image_t is array (0 to 76_799) of integer;
 	type char_file_t is file of character;
-	shared variable chk: checker_t;
 
 	signal clk12: std_logic := '0';
 	signal done: boolean := false;
@@ -388,6 +388,7 @@ begin
 		alias pos_x is << signal .tb_game_top.dut.pos_x: std_logic_vector(21 downto 0) >>;
 		alias pos_y is << signal .tb_game_top.dut.pos_y: std_logic_vector(21 downto 0) >>;
 		alias cycles is << signal .tb_game_top.dut.render_cycles: std_logic_vector(23 downto 0) >>;
+		variable checks, errors: natural := 0;
 	begin
 		-- The flash holds the game data image after the bitstream
 		file_open(gd, GAMEDATA_FILE, read_mode);
@@ -397,16 +398,17 @@ begin
 			n := n + 1;
 		end loop;
 		file_close(gd);
-		chk.check(n > 12288, "game data image read: " & integer'image(n) & " bytes");
+		check(n > 12288, "game data image read: " & integer'image(n) & " bytes", checks, errors);
 		golden := read_golden;
 
 		-- Level load from flash
 		wait until (load_status /= "00") for 30 ms;
-		chk.check(load_status = "01", "level 1 loaded from flash, status " & to_hex(load_status));
+		check(load_status = "01", "level 1 loaded from flash, status " & to_hex(load_status),
+			checks, errors);
 
 		-- First frame swapped in: compare the whole front buffer
 		wait until (unsigned(frames) >= 1) for 60 ms;
-		chk.check(unsigned(frames) >= 1, "first frame swapped");
+		check(unsigned(frames) >= 1, "first frame swapped", checks, errors);
 		wait for 1 ms;
 		if (front = '1') then
 			base := 16#20000#;
@@ -419,9 +421,10 @@ begin
 				bad := bad + 1;
 			end if;
 		end loop;
-		chk.check(bad = 0, "first frame vs the Python model: " & integer'image(bad) & " wrong pixels");
+		check(bad = 0, "first frame vs the Python model: " & integer'image(bad) & " wrong pixels",
+			checks, errors);
 		tb_print("render clocks for the first frame: " & integer'image(to_integer(unsigned(cycles))));
-		chk.check(unsigned(cycles) < 300_000, "frame rendered in under 3 ms");
+		check(unsigned(cycles) < 300_000, "frame rendered in under 3 ms", checks, errors);
 
 		-- Hold W (make 1D) for a few frames, then release (F0 1D)
 		x_before := to_integer(unsigned(pos_x));
@@ -438,18 +441,19 @@ begin
 		tb_print("player x " & integer'image(x_before) & " -> " & integer'image(x_after) &
 			", y " & integer'image(to_integer(unsigned(pos_y))));
 		-- Positions are Q6.16 tiles: 4096 is 1/16 tile, y = 8.5 is the start row's middle
-		chk.check(x_after > x_before + 4096, "W moved the player east");
-		chk.check(x_after < 16 * 65536, "player stayed in the start room");
-		chk.check(unsigned(pos_y) = 8 * 65536 + 32768, "no sideways drift");
-		chk.check(unsigned(late) = 0, "no late frames: " & integer'image(to_integer(unsigned(late))));
-		chk.check(unsigned(frames) >= 3, "frames keep swapping: " &
-			integer'image(to_integer(unsigned(frames))));
+		check(x_after > x_before + 4096, "W moved the player east", checks, errors);
+		check(x_after < 16 * 65536, "player stayed in the start room", checks, errors);
+		check(unsigned(pos_y) = 8 * 65536 + 32768, "no sideways drift", checks, errors);
+		check(unsigned(late) = 0, "no late frames: " & integer'image(to_integer(unsigned(late))),
+			checks, errors);
+		check(unsigned(frames) >= 3, "frames keep swapping: " &
+			integer'image(to_integer(unsigned(frames))), checks, errors);
 
-		chk.check(mon_errors = 0, "VGA timing errors " & integer'image(mon_errors));
-		chk.check(sram_errors = 0, "SRAM timing errors " & integer'image(sram_errors));
-		chk.check(flash_errors = 0, "flash protocol errors " & integer'image(flash_errors));
+		check(mon_errors = 0, "VGA timing errors " & integer'image(mon_errors), checks, errors);
+		check(sram_errors = 0, "SRAM timing errors " & integer'image(sram_errors), checks, errors);
+		check(flash_errors = 0, "flash protocol errors " & integer'image(flash_errors), checks, errors);
 		done <= true;
-		tb_finish("tb_game_top", chk.checks, chk.errors);
+		tb_finish("tb_game_top", checks, errors);
 		wait;
 	end process;
 end arch;

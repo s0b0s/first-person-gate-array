@@ -1,5 +1,4 @@
-"""Check VHDL files against the team's structural rules (the
-lecture conventions and the course's own modules). tools/style/check_vhdl_style.py checks the
+"""Check VHDL files against the project's structural rules. tools/style/check_vhdl_style.py checks the
 formatting; this checks the structure.
 
 Usage:
@@ -11,17 +10,18 @@ Rules (code outside comments and string literals):
                 Engineer, Create Date, Design Name, Module Name, Project Name (First-Person
                 Gate Array), Target Devices, Tool versions, Description, Dependencies,
                 Revision, Additional Comments
-    library     "library IEEE;" (upper case, as in the course), numeric_std only (no
+    library     "library IEEE;" (upper case), numeric_std only (no
                 std_logic_arith, std_logic_unsigned, std_logic_signed)
     vhdl93      in rtl/, no VHDL-2008 predefined functions (maximum, minimum, to_string,
                 to_hstring...): xvhdl's 93 mode accepts them, Vivado synthesis does not
+    record      in rtl/, no record types (plain signals and arrays instead)
     arch        every architecture is named arch
     component   instances use component declarations, never "entity work.x"
     begin       "begin" on its own line
     map         one association per line inside port map ( / generic map (
     clocked     a process with rising_edge and a reset in its sensitivity list is (clk, rst)
                 and tests the reset before rising_edge; in rtl/, rising_edge only of a clock (a
-                name with "clk" in it, or C as in the course); a process with rising_edge and no
+                name with "clk" in it, or C); a process with rising_edge and no
                 reset is reported as "no reset" for review (allowed for RAM, ROM and pipeline
                 registers only)
     names       generics and constants in upper case; in rtl/ (except rtl/top/) every entity
@@ -84,6 +84,9 @@ def check(path):
             m = re.search(r"\b(maximum|minimum|to_string|to_hstring|to_ostring|to_bstring)\s*\(", low)
             if m:
                 bad(n, "%s() is VHDL-2008; the design is VHDL-93" % m.group(1))
+            # No record types in the design: plain signals and arrays instead
+            if re.search(r"\bis\s+record\b", low):
+                bad(n, "record type in the design (use plain signals or arrays)")
         # arch
         m = re.match(r"\s*architecture\s+(\w+)\s+of\s+\w+", code, re.IGNORECASE)
         if m and m.group(1) != "arch":
@@ -163,7 +166,7 @@ def check(path):
         resets = [x for x in sens if re.search(r"rst|reset", x, re.IGNORECASE)]
         for bn, clk in edges:
             # The design must detect edges of data by comparing with a register, never with
-            # rising_edge (course rule); testbenches and models may watch a bus or a line
+            # rising_edge (project rule); testbenches and models may watch a bus or a line
             if is_rtl and "clk" not in clk.lower() and clk != "C":
                 bad(bn, "rising_edge of '%s', not a clock" % clk)
         if edges and sens:

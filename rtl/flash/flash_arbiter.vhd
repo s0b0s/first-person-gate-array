@@ -18,7 +18,8 @@
 --                 last byte of its command has been delivered (data_last
 --                 taken), and every data byte goes to it. The other client
 --                 sees req_ready = '0' and data_valid = '0' meanwhile.
---                 States: S_IDLE (no command running), S_BUSY (owner set).
+--                 States: ARB_IDLE (no command running), ARB_BUSY (owner
+--                 set).
 --                 Clock domain: clk_i (system). No added latency: requests
 --                 and data pass through combinationally.
 --
@@ -27,6 +28,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - State type and state names renamed (<name>_state_type, prefixed states)
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -71,52 +73,52 @@ entity flash_arbiter is
 end flash_arbiter;
 
 architecture arch of flash_arbiter is
-	type state_t is (S_IDLE, S_BUSY);
-	signal state: state_t := S_IDLE;
+	type arb_state_type is (ARB_IDLE, ARB_BUSY);
+	signal arb_state: arb_state_type := ARB_IDLE;
 	signal owner: std_logic := '0'; -- Client that owns the running command
 	signal pick: std_logic; -- Client offered to the reader while idle
 begin
 	-- While idle, client 0 wins whenever it asks
 	pick <= '0' when (c0_req_valid_i = '1') else '1';
 
-	req_valid_o <= '0' when (state = S_BUSY) else
+	req_valid_o <= '0' when (arb_state = ARB_BUSY) else
 		c0_req_valid_i when (pick = '0') else c1_req_valid_i;
 	req_id_o <= c0_req_id_i when (pick = '0') else c1_req_id_i;
 	req_addr_o <= c0_req_addr_i when (pick = '0') else c1_req_addr_i;
 	req_len_o <= c0_req_len_i when (pick = '0') else c1_req_len_i;
-	c0_req_ready_o <= req_ready_i when ((state = S_IDLE) and (pick = '0')) else '0';
-	c1_req_ready_o <= req_ready_i when ((state = S_IDLE) and (pick = '1')) else '0';
+	c0_req_ready_o <= req_ready_i when ((arb_state = ARB_IDLE) and (pick = '0')) else '0';
+	c1_req_ready_o <= req_ready_i when ((arb_state = ARB_IDLE) and (pick = '1')) else '0';
 
 	-- Data goes to the owner only
-	c0_data_valid_o <= data_valid_i when ((state = S_BUSY) and (owner = '0')) else '0';
-	c1_data_valid_o <= data_valid_i when ((state = S_BUSY) and (owner = '1')) else '0';
+	c0_data_valid_o <= data_valid_i when ((arb_state = ARB_BUSY) and (owner = '0')) else '0';
+	c1_data_valid_o <= data_valid_i when ((arb_state = ARB_BUSY) and (owner = '1')) else '0';
 	c0_data_o <= data_i;
 	c1_data_o <= data_i;
 	c0_data_last_o <= data_last_i;
 	c1_data_last_o <= data_last_i;
-	data_ready_o <= '0' when (state = S_IDLE) else
+	data_ready_o <= '0' when (arb_state = ARB_IDLE) else
 		c0_data_ready_i when (owner = '0') else c1_data_ready_i;
 
 	process(clk_i, rst_i)
 	begin
 		if (rst_i = '1') then
-			state <= S_IDLE;
+			arb_state <= ARB_IDLE;
 			owner <= '0';
 		elsif rising_edge(clk_i) then
-			case state is
-				when S_IDLE =>
+			case arb_state is
+				when ARB_IDLE =>
 					if ((req_ready_i = '1') and
 						(((pick = '0') and (c0_req_valid_i = '1')) or
 						((pick = '1') and (c1_req_valid_i = '1')))) then
 						owner <= pick;
-						state <= S_BUSY;
+						arb_state <= ARB_BUSY;
 					end if;
-				when S_BUSY =>
+				when ARB_BUSY =>
 					-- The command ends when its last byte is taken
 					if ((data_valid_i = '1') and (data_last_i = '1') and
 						(((owner = '0') and (c0_data_ready_i = '1')) or
 						((owner = '1') and (c1_data_ready_i = '1')))) then
-						state <= S_IDLE;
+						arb_state <= ARB_IDLE;
 					end if;
 			end case;
 		end if;

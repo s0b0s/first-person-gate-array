@@ -15,7 +15,7 @@ like VHDL shift_right on signed. Fixed-point formats:
 Screen: 320 x 240, horizon at row 120 (between rows 119 and 120). Rows are sampled at their
 centers (y + 0.5), columns too (camera x from 2x + 1 - 320).
 
-Stage 4 (heights): each column walks the grid front to back with a
+Heights: each column walks the grid front to back with a
 window of rows still open (wtop..wbot, initially 0..239) and the current floor and ceiling
 heights F and C (those of the camera's tile). At every boundary where the heights change
 (a tile edge, or one of the 7 sub-edges inside a ramp tile), at distance d:
@@ -31,7 +31,7 @@ heights F and C (those of the camera's tile). At every boundary where the height
 At a solid wall (or a closed door) steps 1 and 2 run at the wall distance and the wall fills
 the rest of the window. Every row of the column is drawn exactly once. Wall, riser and upper
 textures are anchored at yq(64), so texel row = 64 - world height. With every height 0 and
-64 this is exactly the stage-3 column (same wall rows, same texture coordinates).
+64 this is exactly the flat column (same wall rows, same texture coordinates).
 A ramp tile rises from its floor height F (low end) by rise = (floor of the next tile in its
 direction) - F, in 8 flat steps: step j (j = 0 at the low end) has floor F + (rise * j) / 8.
 Its sub-edges along the ramp axis lie at (sd - dd) + ((k * dd) >> 3), k = 1..7.
@@ -39,7 +39,7 @@ Its sub-edges along the ramp axis lie at (sd - dd) + ((k * dd) >> 3), k = 1..7.
 Floors and ceilings: rowDist = (e * RINV[y]) >> 8 with e = eye - F (floor) or C - eye
 (ceiling) and RINV[y] = (KR << 8) // dy, dy = 256 * |row - horizon| + 128 (a constant ROM).
 
-Stage 4 effects (frame registers lmod and anim, from the game):
+Light effects (frame registers lmod and anim, from the game):
     light   every tile light is first offset by lmod[light_type] and clamped to 0..15
             (light_mods(): 0 steady, 1 flicker, 2 strobe, 3 glow, plus 2 for every type
             during the muzzle flash), then darkened with distance as before

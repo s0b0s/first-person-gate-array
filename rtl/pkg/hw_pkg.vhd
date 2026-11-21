@@ -18,7 +18,7 @@
 --
 -- Revision:
 -- Revision 0.01 - File Created
--- Revision 1.00 - Stage 0 constants
+-- Revision 1.00 - First working version
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------

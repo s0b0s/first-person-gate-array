@@ -3,7 +3,7 @@
 Input: the camera (position Q6.16, angle, eye height 0..127), the sprite table from the game
 (actor index, x and y in Q6.10, art frame, tile light, flags: bit 0 fullbright, bit 1 hitscan
 target, floor height 0..64 under the sprite), the wall z-buffer of this frame (z = perp >> 6,
-Q6.10), the clip lists of this frame (stage 4: per column, the open window (z, top, bottom)
+Q6.10), the clip lists of this frame (per column, the open window (z, top, bottom)
 after each height edge, nearest first) and the art (frame table + column-major texels, index
 255 transparent).
 

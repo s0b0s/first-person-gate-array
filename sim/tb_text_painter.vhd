@@ -27,6 +27,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -62,7 +63,6 @@ architecture arch of tb_text_painter is
 
 	constant PERIOD: time := 10 ns;
 	type image_t is array (0 to 76_799) of integer;
-	shared variable chk: checker_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -161,6 +161,7 @@ begin
 		variable golden: image_t;
 		variable written: image_t;
 		variable a, wrong, twice, missing: natural;
+		variable checks, errors: natural := 0;
 	begin
 		golden := read_golden;
 		wait until (rst = '0');
@@ -179,7 +180,8 @@ begin
 				wait until rising_edge(clk);
 				if ((pix_valid = '1') and (pix_ready = '1')) then
 					a := to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)));
-					chk.check(pix_data(PIXW_BUF) = buf, "pixel written to the wrong buffer");
+					check(pix_data(PIXW_BUF) = buf, "pixel written to the wrong buffer",
+						checks, errors);
 					if (written(a) /= -1) then
 						twice := twice + 1;
 					end if;
@@ -201,15 +203,15 @@ begin
 					missing := missing + 1;
 				end if;
 			end loop;
-			chk.check(wrong = 0, "page " & integer'image(page) & ": " & integer'image(wrong) &
-				" wrong pixels");
-			chk.check(twice = 0, "pixels written twice: " & integer'image(twice));
-			chk.check(missing = 0, "pixels never written: " & integer'image(missing));
+			check(wrong = 0, "page " & integer'image(page) & ": " & integer'image(wrong) &
+				" wrong pixels", checks, errors);
+			check(twice = 0, "pixels written twice: " & integer'image(twice), checks, errors);
+			check(missing = 0, "pixels never written: " & integer'image(missing), checks, errors);
 			wait until rising_edge(clk);
-			chk.check(busy = '0', "idle after done");
+			check(busy = '0', "idle after done", checks, errors);
 		end loop;
 		finished <= true;
-		tb_finish("tb_text_painter", chk.checks, chk.errors);
+		tb_finish("tb_text_painter", checks, errors);
 		wait;
 	end process;
 end arch;

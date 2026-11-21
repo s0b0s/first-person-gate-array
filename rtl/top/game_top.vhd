@@ -4,14 +4,14 @@
 -- Engineer:       Matthew Gordon
 --
 -- Create Date:    10/21/2026
--- Design Name:    Stage-1 Game Top Level
+-- Design Name:    Maze Game Top Level
 -- Module Name:    game_top
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Stage-1 game: walk the textured maze of level 1 in first
+-- Description:    Maze game: walk the textured maze of level 1 in first
 --                 person with keyboard and mouse, open doors, never pass
---                 through walls (the stage-1 goal).
+--                 through walls.
 --                 Boot: the level loader copies level 1 from flash into the
 --                 tile map (the map's power-on contents are level 1 too, so
 --                 a failed load still starts the game), then the game runs.
@@ -23,7 +23,7 @@
 --                 Tile map port B: the level loader while it runs, the game
 --                 while it updates, otherwise the renderer's floor caster
 --                 (the three never overlap in time).
---                 SRAM masters: 0 display, 1 (sprites, stage 2), 2 pixel
+--                 SRAM masters: 0 display, 1 (sprites, unused here), 2 pixel
 --                 FIFO, 3 UART debug port.
 --                 UART control register 32: bit 0 test tone, bit 7 test
 --                 pattern override with bits 6:4, bits 13:12 tint, bit 16
@@ -34,11 +34,11 @@
 --                 crossed only inside display_controller.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std, every
---                 stage-0 and stage-1 block
+--                 bring-up and maze block
 --
 -- Revision:
 -- Revision 0.01 - File Created
--- Revision 1.00 - Stage 1
+-- Revision 1.00 - First working version
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -52,7 +52,7 @@ use work.map_init_pkg.all;
 
 entity game_top is
 	generic(
-		BUILD_ID: std_logic_vector(31 downto 0) := x"53470101"; -- Stage 1 build
+		BUILD_ID: std_logic_vector(31 downto 0) := x"53470101"; -- Maze game build
 		POWER_HOLD: positive := 1_000_000 -- PWR_SENSE hold time in clocks (10 ms)
 	);
 	port(
@@ -606,7 +606,7 @@ begin
 	------------------------------------------------------------------
 	-- SRAM: arbiter, controller, pins
 	------------------------------------------------------------------
-	-- Packed master buses, master 3 leftmost; master 1 is unused in stage 1.
+	-- Packed master buses, master 3 leftmost; master 1 is unused here.
 	-- The pixel FIFO only writes, at '0' & buf & (y * 320 + x).
 	m_req <= g_req & fifo_valid & '0' & d_req;
 	m_we <= g_we & '1' & '0' & '0';
@@ -954,7 +954,7 @@ begin
 			angle_i => angle,
 			eye_i => eye,
 			doors_i => doors,
-			fx_i => (others => '0'), -- Stage-1 game: no light effects or animation
+			fx_i => (others => '0'), -- Maze game: no light effects or animation
 			buf_i => back,
 			map_a_addr_o => map_a_addr,
 			map_a_data_i => map_a_data,
@@ -967,7 +967,7 @@ begin
 			zbuf_data_o => open,
 			seen_we_o => open,
 			seen_addr_o => open,
-			clip_raddr_i => (others => '0'), -- Stage-1 game: no sprites to clip
+			clip_raddr_i => (others => '0'), -- Maze game: no sprites to clip
 			clip_rdata_o => open,
 			ccount_raddr_i => (others => '0'),
 			ccount_rdata_o => open,
@@ -1043,7 +1043,7 @@ begin
 	end process;
 
 	------------------------------------------------------------------
-	-- Audio: test tone only in stage 1 (off by default)
+	-- Audio: test tone only (off by default)
 	------------------------------------------------------------------
 	tone_440: tone_gen
 		port map (

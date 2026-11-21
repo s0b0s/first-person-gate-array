@@ -1,4 +1,4 @@
-"""The project's VHDL file header block, in one place (the format the team uses in its labs).
+"""The project's VHDL file header block, in one place (one format for every file).
 
     block(...)        builds a header block from its fields
     rewrite(path)     rewrites the header of an existing .vhd file into this format, keeping
@@ -24,8 +24,8 @@ ACRONYMS = {"sram": "SRAM", "ps2": "PS/2", "uart": "UART", "i2s": "I2S", "vga": 
             "rx": "Receiver", "tx": "Transmitter", "tb": "Testbench", "pkg": "Package",
             "io": "I/O", "hw": "Hardware", "ooc": "OOC", "spi": "SPI", "hud": "HUD"}
 DESIGN_NAMES = {
-    "bringup_top": "Bring-up Diagnostics Top Level", "game_top": "Stage-1 Game Top Level",
-    "shooter_top": "First-Person Gate Array Top Level", "game_seq": "Stage-1 Game Sequencer",
+    "bringup_top": "Bring-up Diagnostics Top Level", "game_top": "Maze Game Top Level",
+    "shooter_top": "First-Person Gate Array Top Level", "game_seq": "Maze Game Sequencer",
     "game_core": "Game Core", "render_top": "Wall Renderer", "frame_renderer": "Frame Renderer",
     "ray_engine": "Ray Engine", "column_rasterizer": "Column Rasterizer",
     "sprite_engine": "Sprite Engine", "overlay": "2D Overlay", "overlay_bcd": "Binary to BCD",

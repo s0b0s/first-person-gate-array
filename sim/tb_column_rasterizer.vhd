@@ -9,12 +9,12 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for the stage-4 column_rasterizer
+-- Description:    Self-checking testbench for the column_rasterizer
 --                 against the golden model (tools/model/render.py,
 --                 raster_spans). For each of the 27 poses of
 --                 sim/golden/ray4_poses.txt (9 flat level-1 poses, 10 on
 --                 level 3 with heights and ramps, 4 on the directed test
---                 map, 4 with the stage-4 effects: sky, light types,
+--                 map, 4 with the light effects: sky, light types,
 --                 animated slime) it drives the pose's camera, angle and
 --                 effects register (fx) and feeds the golden span
 --                 descriptors of sim/golden/ray4_spans.txt (format in
@@ -28,7 +28,9 @@
 --                 never written fails, like a framebuffer prefilled with a
 --                 wrong value), every pixel equal to the model, the buffer
 --                 bit, one done_o per frame, idle afterwards. Prints the
---                 clocks per frame.
+--                 clocks per frame. The capture process keeps the frame in
+--                 the signal img (cleared through clear_store before each
+--                 pose) and counts double writes in twice.
 --                 RUN_VARIANTS: READY_PCT=60 READY_PCT=100
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -38,6 +40,9 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type; tile
+--                 maps in a variable of the stimulus process, captured
+--                 frame in a signal of the capture process
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -85,61 +90,11 @@ architecture arch of tb_column_rasterizer is
 	constant POSES: natural := 27; -- Lines of ray4_poses.txt (checked at the end)
 	constant PIXELS: natural := 320 * 240;
 
-	-- Pixels captured for the current frame (-1 = not written)
-	type image_store_t is protected
-		procedure clear;
-		procedure put(addr: natural; value: natural);
-		impure function get(addr: natural) return integer;
-		impure function twice return natural;
-	end protected image_store_t;
-	type image_store_t is protected body
-		type image_t is array (0 to PIXELS - 1) of integer;
-		variable img: image_t := (others => -1);
-		variable dup: natural := 0;
-		procedure clear is
-		begin
-			img := (others => -1);
-			dup := 0;
-		end procedure;
-		procedure put(addr: natural; value: natural) is
-		begin
-			if (img(addr) /= -1) then
-				dup := dup + 1;
-			end if;
-			img(addr) := value;
-		end procedure;
-		impure function get(addr: natural) return integer is
-		begin
-			return img(addr);
-		end function;
-		impure function twice return natural is
-		begin
-			return dup;
-		end function;
-	end protected body image_store_t;
+	type image_t is array (0 to PIXELS - 1) of integer;
 
-	-- The tile maps of ray4_maps.txt (level 1 and level 3)
+	-- The tile maps of ray4_maps.txt, indexed by map level (1, 3, 9 = test map)
 	type tiles_t is array (0 to 4095) of std_logic_vector(23 downto 0);
-	type maps_t is protected
-		procedure put(m: natural; i: natural; t: std_logic_vector(23 downto 0));
-		impure function get(m: natural; i: natural) return std_logic_vector;
-	end protected maps_t;
-	type maps_t is protected body
-		type all_t is array (0 to 15) of tiles_t; -- Indexed by map level (1, 3, 9 = test map)
-		variable maps: all_t := (others => (others => (others => '0')));
-		procedure put(m: natural; i: natural; t: std_logic_vector(23 downto 0)) is
-		begin
-			maps(m)(i) := t;
-		end procedure;
-		impure function get(m: natural; i: natural) return std_logic_vector is
-		begin
-			return maps(m)(i);
-		end function;
-	end protected body maps_t;
-
-	shared variable chk: checker_t;
-	shared variable store: image_store_t;
-	shared variable maps: maps_t;
+	type maps_t is array (0 to 15) of tiles_t;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -161,6 +116,12 @@ architecture arch of tb_column_rasterizer is
 	signal busy, done: std_logic;
 	signal dones: natural := 0;
 	signal bad_buf: natural := 0;
+	-- Pixels captured for the current frame (-1 = not written) and the
+	-- number of writes to an already written pixel; driven by the capture
+	-- process, cleared when clear_store is true on a clock edge
+	signal img: image_t := (others => -1);
+	signal twice: natural := 0;
+	signal clear_store: boolean := false;
 
 	function hexval(c: character) return natural is
 	begin
@@ -236,11 +197,19 @@ begin
 
 	-- Capture pixel writes and done pulses
 	process(clk)
+		variable a: natural;
 	begin
 		if rising_edge(clk) then
+			if (clear_store) then
+				img <= (others => -1);
+				twice <= 0;
+			end if;
 			if ((pix_valid = '1') and (pix_ready = '1')) then
-				store.put(to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO))),
-					to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO))));
+				a := to_integer(unsigned(pix_data(PIXW_ADDR_HI downto PIXW_ADDR_LO)));
+				if (img(a) /= -1) then
+					twice <= twice + 1;
+				end if;
+				img(a) <= to_integer(unsigned(pix_data(PIXW_DATA_HI downto PIXW_DATA_LO)));
 				if (pix_data(PIXW_BUF) /= buf) then
 					bad_buf <= bad_buf + 1;
 				end if;
@@ -270,6 +239,8 @@ begin
 		variable c1, c2: character;
 		variable wrong, missing, a, got: integer;
 		variable fxv: std_logic_vector(FX_BITS - 1 downto 0);
+		variable maps: maps_t := (others => (others => (others => '0')));
+		variable checks, errors: natural := 0;
 	begin
 		-- Maps: "M <level>" then one line of 4096 hex words
 		while not endfile(maps_f) loop
@@ -283,7 +254,7 @@ begin
 				for j in 1 to 6 loop
 					hv := hv * 16 + hexval(s6(j));
 				end loop;
-				maps.put(m, i, std_logic_vector(to_unsigned(hv, 24)));
+				maps(m)(i) := std_logic_vector(to_unsigned(hv, 24));
 				if (i /= 4095) then
 					read(l, c);
 				end if;
@@ -312,13 +283,12 @@ begin
 			read(l, n);
 			fxv(FX_ANIM_HI downto FX_ANIM_LO) := std_logic_vector(to_unsigned(n, 2));
 			fx <= fxv;
-			for i in 0 to 4095 loop
-				t(i) := maps.get(m, i);
-			end loop;
+			t := maps(m);
 			tiles <= t;
 			buf <= '1' when ((k mod 2) = 1) else '0';
-			store.clear;
+			clear_store <= true;
 			wait until rising_edge(clk);
+			clear_store <= false;
 			start <= '1';
 			wait until rising_edge(clk);
 			start <= '0';
@@ -389,7 +359,7 @@ begin
 					read(l, c1);
 					read(l, c2);
 					a := y * 320 + xx;
-					got := store.get(a);
+					got := img(a);
 					if (got = -1) then
 						missing := missing + 1;
 					elsif (got /= hexval(c1) * 16 + hexval(c2)) then
@@ -403,20 +373,21 @@ begin
 				end loop;
 			end loop;
 			file_close(frame_f);
-			chk.check(wrong = 0, "pose " & integer'image(k) & ": " & integer'image(wrong) &
-				" wrong pixels");
-			chk.check(missing = 0, "pose " & integer'image(k) & ": " & integer'image(missing) &
-				" pixels never written");
-			chk.check(store.twice = 0, "pose " & integer'image(k) & ": " &
-				integer'image(store.twice) & " pixels written twice");
-			chk.check(dones = k + 1, "one done per frame, got " & integer'image(dones));
-			chk.check(busy = '0', "idle after done");
+			check(wrong = 0, "pose " & integer'image(k) & ": " & integer'image(wrong) &
+				" wrong pixels", checks, errors);
+			check(missing = 0, "pose " & integer'image(k) & ": " & integer'image(missing) &
+				" pixels never written", checks, errors);
+			check(twice = 0, "pose " & integer'image(k) & ": " &
+				integer'image(twice) & " pixels written twice", checks, errors);
+			check(dones = k + 1, "one done per frame, got " & integer'image(dones), checks, errors);
+			check(busy = '0', "idle after done", checks, errors);
 		end loop;
 		-- A pose added to the golden file must not go untested
-		chk.check(endfile(poses_f), "ray4_poses.txt has more poses than POSES");
-		chk.check(bad_buf = 0, "pixels with the wrong buffer bit: " & integer'image(bad_buf));
+		check(endfile(poses_f), "ray4_poses.txt has more poses than POSES", checks, errors);
+		check(bad_buf = 0, "pixels with the wrong buffer bit: " & integer'image(bad_buf),
+			checks, errors);
 		finished <= true;
-		tb_finish("tb_column_rasterizer", chk.checks, chk.errors);
+		tb_finish("tb_column_rasterizer", checks, errors);
 		wait;
 	end process;
 end arch;

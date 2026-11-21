@@ -6,18 +6,15 @@ Tile word (24 bits):
     23 door orientation: 0 = door plane perpendicular to x (rays and the player cross it while
        moving in x), 1 = perpendicular to y
 Special codes: 1 door, 2 locked door (needs key 1, blue), 3 locked door (key 2, red), 4 exit
-switch (a wall tile you "use"), 5 secret (a floor tile, counted once), 6 toxic floor, 7 ramp
-(stage 4).
+switch (a wall tile you "use"), 5 secret (a floor tile, counted once), 6 toxic floor, 7 ramp.
 Doors (specials 1..3) must have walls on both sides across their axis, so a ray or the player
 can only cross a door tile along the door's axis (check_doors() enforces it).
 
-Stage 4 heights: floor height = floor_h * 8 units (0..56), ceiling = 64 - ceil_h * 8 units
-(64..8); a tile is 64 units tall. Flat levels have every floor_h and ceil_h at 0, which is
-the stage-3 game. A ramp (special 7) keeps its direction in ceil_tex (0 +x, 1 -x, 2 +y, 3 -y;
+Heights: floor height = floor_h * 8 units (0..56), ceiling = 64 - ceil_h * 8 units
+(64..8); a tile is 64 units tall. Flat levels have every floor_h and ceil_h at 0. A ramp (special 7) keeps its direction in ceil_tex (0 +x, 1 -x, 2 +y, 3 -y;
 the ramp's ceiling flat is then flat 0) and rises from its own floor height to the floor
 height of the next tile in that direction (check_heights() enforces walls on its two sides,
-open tiles or doors at its ends, and chains of ramps in one direction). Bit 23 of an open, non-door tile marks a sky ceiling
-(stage 4).
+open tiles or doors at its ends, and chains of ramps in one direction). Bit 23 of an open, non-door tile marks a sky ceiling.
 
 Level item in flash (level.binary()): 4096 tile words x 3 bytes little endian, start x u32,
 start y u32 (Q6.16), start angle u16, actor count u16, then count x 8-byte actor records
@@ -132,7 +129,7 @@ class Level:
                     self.special[y][x] = SP_TOXIC
 
     def monster(self, x, y, typ, ambush=False):
-        """ambush (stage 5): the monster ignores sound alerts (wakes by sight or when hit)."""
+        """ambush: the monster ignores sound alerts (wakes by sight or when hit)."""
         self.actors.append((x + 0.5, y + 0.5, typ, 1 if ambush else 0))
 
     def item(self, x, y, kind):
@@ -377,8 +374,8 @@ def level2():
 
 
 def level3():
-    """Level 3: dark rooms and the boss arena; killing the Boss ends the game. Stage 4
-    heights: stairs to a platform, a ramp, a raised hall with a lower ceiling, a pit, drops
+    """Level 3: dark rooms and the boss arena; killing the Boss ends the game.
+    Heights: stairs to a platform, a ramp, a raised hall with a lower ceiling, a pit, drops
     and a dais."""
     lv = Level("Level 3", 3)
     lv.room(4, 26, 11, 37, 3, light=9)                        # A: start
@@ -436,7 +433,7 @@ def level3():
 
 
 def level_test():
-    """Directed stage-4 test map (not a game level; tools/model/golden4.py drives it with a
+    """Directed heights test map (not a game level; tools/model/golden4.py drives it with a
     scripted session). Along y = 3..5: a step up 16, a drop back to 0, then a step up 24 from 0
     (exactly STEP_MAX; higher steps cannot be reached anyway, since a floor above 24 leaves less
     than the 40 units of headroom under the 64-unit ceiling), then a drop to 0. A corridor south
@@ -464,7 +461,7 @@ def level_test():
 
 
 def level_alert():
-    """Directed stage-5 test map (not a game level; golden4.py drives it with a scripted
+    """Directed sound-alert test map (not a game level; golden4.py drives it with a scripted
     session): from the start room A, room B lies around a corner (no line of sight) with a
     normal Grunt and an ambushing Grunt; room C lies behind a closed door with a Grunt. A shot
     from A must wake only B's normal Grunt; after the door is opened, a second shot must also

@@ -10,7 +10,7 @@
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
 -- Description:    Walls, floors and ceilings of one frame with floor and
---                 ceiling heights and ramps (stage 4):
+--                 ceiling heights and ramps:
 --                   ray_engine -> span FIFO (16) -> column_rasterizer
 --                   -> pixel write port (to the SRAM pixel FIFO)
 --                 The ray engine walks each column front to back and sends
@@ -30,7 +30,7 @@
 --                             (5,120 words, about 4.5 BRAM36)
 --                   counts    320 x 5: clip entries per column
 --                 Frame registers (pos, angle, eye, doors, fx, buf) must be
---                 stable from start_i until done_o. fx_i (stage 4 effects:
+--                 stable from start_i until done_o. fx_i (effects:
 --                 light type offsets, animation frame) goes to both engines:
 --                 the ray engine for wall, riser and upper-wall light, the
 --                 rasterizer for floor and ceiling light, the sky (with the
@@ -46,7 +46,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
--- Revision 2.10 - Stage 4 effects: fx_i to both engines, angle to the
+-- Revision 2.10 - Effects: fx_i to both engines, angle to the
 --                 rasterizer (2.00: spans, clip RAM and clip counts)
 -- Additional Comments:
 --                 None.

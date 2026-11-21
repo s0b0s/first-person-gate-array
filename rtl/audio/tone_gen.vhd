@@ -9,7 +9,7 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Stage-0 test tone: a sine at FREQ_HZ and quarter volume
+-- Description:    Test tone: a sine at FREQ_HZ and quarter volume
 --                 (peak 8192 of 32767) for the I2S output. A 32-bit phase
 --                 accumulator advances once per output sample (step_i,
 --                 from i2s_tx's sample_req_o); its top 8 bits index a

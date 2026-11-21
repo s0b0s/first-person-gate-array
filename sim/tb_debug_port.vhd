@@ -19,7 +19,9 @@
 --                 bytes then read back (checked against the SRAM model's
 --                 back door as well), an unknown command, and a command
 --                 abandoned half-way (dropped after TIMEOUT_MS = 1 ms, the
---                 next ping still works).
+--                 next ping still works). The PC-side receiver copies its
+--                 start and stop bit check counts to rx_checks and
+--                 rx_errors; the stimulus process adds them at the end.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 sram_model, debug_port, uart_rx, uart_tx, sram_arbiter,
@@ -28,6 +30,7 @@
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
+-- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -148,7 +151,6 @@ architecture arch of tb_debug_port is
 	constant BIT_TIME: time := 1 us; -- 1 Mbaud
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
 	type bytes_t is array (0 to 255) of std_logic_vector(7 downto 0);
-	shared variable chk: checker_t;
 
 	signal clk, clk_rd: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -160,6 +162,7 @@ architecture arch of tb_debug_port is
 	signal rx_count, tx_count: std_logic_vector(15 downto 0);
 	signal replies: bytes_t;
 	signal nreplies: natural := 0;
+	signal rx_checks, rx_errors: natural := 0; -- PC-side receiver check counts
 
 	signal g_req, g_we: std_logic;
 	signal g_addr: std_logic_vector(18 downto 0);
@@ -313,16 +316,19 @@ begin
 	-- PC side receiver: sample each bit in its middle
 	process
 		variable b: std_logic_vector(7 downto 0);
+		variable checks, errors: natural := 0;
 	begin
 		wait until falling_edge(fpga_tx);
 		wait for BIT_TIME / 2;
-		chk.check(fpga_tx = '0', "start bit");
+		check(fpga_tx = '0', "start bit", checks, errors);
 		for i in 0 to 7 loop
 			wait for BIT_TIME;
 			b(i) := fpga_tx;
 		end loop;
 		wait for BIT_TIME;
-		chk.check(fpga_tx = '1', "stop bit");
+		check(fpga_tx = '1', "stop bit", checks, errors);
+		rx_checks <= checks;
+		rx_errors <= errors;
 		replies(nreplies mod 256) <= b;
 		nreplies <= nreplies + 1;
 	end process;
@@ -331,13 +337,14 @@ begin
 	process
 		variable first: natural;
 		variable ok: boolean;
+		variable checks, errors: natural := 0;
 
 		-- Wait for n more reply bytes (or give up after a long time)
 		procedure expect(n: natural; msg: string) is
 		begin
 			wait until (nreplies >= first + n) for 2 ms;
-			chk.check(nreplies >= first + n, msg & ": got " & integer'image(nreplies - first) &
-				" of " & integer'image(n) & " reply bytes");
+			check(nreplies >= first + n, msg & ": got " & integer'image(nreplies - first) &
+				" of " & integer'image(n) & " reply bytes", checks, errors);
 		end procedure;
 
 		impure function reply(i: natural) return std_logic_vector is
@@ -352,21 +359,22 @@ begin
 		first := nreplies;
 		pc_send(pc_tx, x"50");
 		expect(1, "ping");
-		chk.check(reply(0) = x"4B", "ping replies K");
+		check(reply(0) = x"4B", "ping replies K", checks, errors);
 
 		-- Echo
 		first := nreplies;
 		pc_send(pc_tx, x"45");
 		pc_send(pc_tx, x"A5");
 		expect(1, "echo");
-		chk.check(reply(0) = x"A5", "echo returns the byte");
+		check(reply(0) = x"A5", "echo returns the byte", checks, errors);
 
 		-- Read status register 5: 0x05050505, little endian
 		first := nreplies;
 		pc_send(pc_tx, x"52");
 		pc_send(pc_tx, x"05");
 		expect(4, "read reg 5");
-		chk.check((reply(0) & reply(1) & reply(2) & reply(3)) = x"05050505", "status reg 5 value");
+		check((reply(0) & reply(1) & reply(2) & reply(3)) = x"05050505", "status reg 5 value",
+			checks, errors);
 
 		-- Write control register 33, read it back
 		first := nreplies;
@@ -378,20 +386,22 @@ begin
 		pc_send(pc_tx, x"34");
 		pc_send(pc_tx, x"12");
 		expect(1, "write reg 33");
-		chk.check(reply(0) = x"4B", "write replies K");
-		chk.check(ctrl(63 downto 32) = x"12345678", "ctrl word 1 written");
+		check(reply(0) = x"4B", "write replies K", checks, errors);
+		check(ctrl(63 downto 32) = x"12345678", "ctrl word 1 written", checks, errors);
 		first := nreplies;
 		pc_send(pc_tx, x"52");
 		pc_send(pc_tx, x"21");
 		expect(4, "read reg 33");
-		chk.check((reply(3) & reply(2) & reply(1) & reply(0)) = x"12345678", "reg 33 reads back");
+		check((reply(3) & reply(2) & reply(1) & reply(0)) = x"12345678", "reg 33 reads back",
+			checks, errors);
 
 		-- Unused register reads as 0
 		first := nreplies;
 		pc_send(pc_tx, x"52");
 		pc_send(pc_tx, x"40");
 		expect(4, "read reg 64");
-		chk.check((reply(0) & reply(1) & reply(2) & reply(3)) = x"00000000", "unused register is 0");
+		check((reply(0) & reply(1) & reply(2) & reply(3)) = x"00000000", "unused register is 0",
+			checks, errors);
 
 		-- SRAM write: 40 bytes at 0x41230
 		first := nreplies;
@@ -407,14 +417,14 @@ begin
 			pc_send(pc_tx, std_logic_vector(to_unsigned(200 - 3 * i, 8)));
 		end loop;
 		expect(1, "SRAM write");
-		chk.check(reply(0) = x"4B", "SRAM write replies K");
+		check(reply(0) = x"4B", "SRAM write replies K", checks, errors);
 		ok := true;
 		for i in 0 to 39 loop
 			if (sram_mem.read(16#41230# + i) /= std_logic_vector(to_unsigned(200 - 3 * i, 8))) then
 				ok := false;
 			end if;
 		end loop;
-		chk.check(ok, "SRAM holds the 40 written bytes");
+		check(ok, "SRAM holds the 40 written bytes", checks, errors);
 
 		-- SRAM read back
 		first := nreplies;
@@ -432,13 +442,13 @@ begin
 				ok := false;
 			end if;
 		end loop;
-		chk.check(ok, "SRAM read returns the 40 bytes");
+		check(ok, "SRAM read returns the 40 bytes", checks, errors);
 
 		-- Unknown command
 		first := nreplies;
 		pc_send(pc_tx, x"5A");
 		expect(1, "unknown command");
-		chk.check(reply(0) = x"3F", "unknown command replies ?");
+		check(reply(0) = x"3F", "unknown command replies ?", checks, errors);
 
 		-- Abandoned command: 'W' and two bytes, then silence past the
 		-- timeout; the next ping must work
@@ -447,18 +457,20 @@ begin
 		pc_send(pc_tx, x"21");
 		pc_send(pc_tx, x"00");
 		wait for 1.5 ms;
-		chk.check(nreplies = first, "no reply to an abandoned command");
+		check(nreplies = first, "no reply to an abandoned command", checks, errors);
 		pc_send(pc_tx, x"50");
 		expect(1, "ping after timeout");
-		chk.check(reply(0) = x"4B", "ping works after a dropped command");
-		chk.check(ctrl(63 downto 32) = x"12345678", "abandoned write changed nothing");
+		check(reply(0) = x"4B", "ping works after a dropped command", checks, errors);
+		check(ctrl(63 downto 32) = x"12345678", "abandoned write changed nothing", checks, errors);
 
 		-- Every byte the PC side sent above
-		chk.check(unsigned(rx_count) = 74, "rx byte count " & integer'image(to_integer(unsigned(rx_count))));
-		chk.check(unsigned(tx_count) = nreplies, "tx byte count");
-		chk.check(sram_errors = 0, "SRAM model timing errors");
+		check(unsigned(rx_count) = 74, "rx byte count " & integer'image(to_integer(unsigned(rx_count))),
+			checks, errors);
+		check(unsigned(tx_count) = nreplies, "tx byte count", checks, errors);
+		check(sram_errors = 0, "SRAM model timing errors", checks, errors);
 		done <= true;
-		tb_finish("tb_debug_port", chk.checks, chk.errors);
+		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
+		tb_finish("tb_debug_port", checks + rx_checks, errors + rx_errors);
 		wait;
 	end process;
 end arch;

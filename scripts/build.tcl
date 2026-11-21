@@ -46,7 +46,7 @@ if {[info exists ::env(VIVADO_THREADS)]} {
 }
 set_param general.maxThreads $threads
 puts "Vivado threads: [get_param general.maxThreads]"
-# The design is VHDL-93 (the course's standard); only the testbenches use VHDL-2008
+# The design is VHDL-93; only the testbenches use VHDL-2008
 read_vhdl $pkgs
 read_vhdl $others
 read_xdc [file join $root constraints cmod_a7_shooter.xdc]
