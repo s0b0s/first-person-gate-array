@@ -14,8 +14,8 @@ Port names differ per computer (COM3... on Windows, /dev/ttyUSB1 on Linux,
 its FTDI USB ID (0403). The FTDI chip has two channels, A JTAG and B UART; Windows usually
 lists only B, Linux both (the UART is the second, ttyUSB1).
 
-The link rate is found by itself: 4 Mbaud first (current bitstreams), then 1 Mbaud (older
-ones). A frame stream left running (live_view.py) is stopped first.
+The link rate is found by itself: 12 Mbaud first (current bitstreams), then 4 and 1 Mbaud
+(older ones). A frame stream left running (live_view.py) is stopped first.
 
 Usage (or "uv run" in place of "python"; "auto" or a port name in place of COM5):
     python tools/uart/debug_uart.py ports                  list serial ports, board marked
@@ -36,7 +36,7 @@ import sys
 import time
 import zlib
 
-BAUDS = (4_000_000, 1_000_000)  # Tried in this order
+BAUDS = (12_000_000, 4_000_000, 1_000_000)  # Tried in this order
 FB_BASE = (0x00000, 0x20000)
 WIDTH, HEIGHT = 320, 240
 NPIX = WIDTH * HEIGHT
@@ -84,9 +84,10 @@ class DebugPort:
             self.ser.timeout = 2
 
     def send_spaced(self, data):
-        """Send bytes 2 ms apart. At the wrong rate each byte then reaches the board as a
-        short burst that decodes to 0xFC..0xFF (bits 2..7 see the idle line), never a
-        command, so probing cannot write anything."""
+        """Send bytes 2 ms apart, so probing at the wrong rate is harmless: a byte sent faster
+        than the board's rate arrives as a short burst whose upper bits read the idle line
+        (0xF8..0xFF), and one sent slower arrives as runs of three or more equal bits, while
+        every command letter has single-bit runs. Neither can be a command."""
         for b in data:
             self.ser.write(bytes([b]))
             self.ser.flush()
@@ -152,38 +153,58 @@ class DebugPort:
 
 
 # ----------------------------------------------------------------------------------------
-# Frame stream ('V'): 'F', frame number (2 bytes), pixel count (3), flags, tint, palette
-# count, RLE data, 16-bit pixel sum (2). RLE: a byte other than ESC is one pixel; ESC n v
-# is n pixels of value v.
+# Frame stream ('V'): 'F', frame number (2 bytes), pixel count (3), flags (bit 0 RLE, 1 blank,
+# 2 delta, 6:4 pattern), tint, palette count, data, 16-bit pixel sum (2). Data: a byte other
+# than ESC is one pixel; ESC n v is n pixels of value v; ESC 0 n is n pixels unchanged since
+# the previous frame (delta frames only).
 # ----------------------------------------------------------------------------------------
 ESC = 0xFF
 HEADER = 9
 
 
-def encode_rle(pixels):
-    """The debug port's encoder in Python (for tests and size estimates)."""
+def encode_rle(pixels, prev=None):
+    """The debug port's encoder in Python (for tests and size estimates); prev given: a delta
+    frame against it."""
     out = bytearray()
 
-    def flush(v, n):
-        if n >= 3 or v == ESC:
+    def lit(v):
+        out.extend((ESC, 1, ESC) if v == ESC else (v,))
+
+    def flush(skip, v, h2, n):
+        if skip and n >= 3:
+            out.extend((ESC, 0, n))
+        elif skip:
+            lit(v)
+            if n == 2:
+                lit(h2)
+        elif n >= 3 or v == ESC:
             out.extend((ESC, n, v))
         else:
             out.extend(bytes((v,)) * n)
-    run_v, run_n = 0, 0
-    for p in pixels:
-        if run_n and (p != run_v or run_n == 255):
-            flush(run_v, run_n)
-            run_n = 0
-        run_v, run_n = p, run_n + 1
-    flush(run_v, run_n)
+    skip, run_v, h2, n = False, 0, 0, 0
+    for i, p in enumerate(pixels):
+        same = prev is not None and p == prev[i]
+        if n and not skip and p == run_v and n < 255:
+            n += 1
+        elif n and skip and same and n < 255:
+            if n == 1:
+                h2 = p
+            n += 1
+        else:
+            if n:
+                flush(skip, run_v, h2, n)
+            skip, run_v, n = same, p, 1
+    flush(skip, run_v, h2, n)
     return bytes(out)
 
 
-def stream_frame(pixels, number=0, flags=1, tint=0, pal_count=0):
-    """One whole stream frame as the debug port sends it."""
+def stream_frame(pixels, number=0, flags=1, tint=0, pal_count=0, prev=None):
+    """One whole stream frame as the debug port sends it (a delta frame when prev is given)."""
+    if prev is not None:
+        flags |= 4
     head = b"F" + struct.pack("<H", number & 0xFFFF) + struct.pack("<I", len(pixels))[:3]
     head += bytes((flags, tint, pal_count))
-    return head + encode_rle(pixels) + struct.pack("<H", sum(pixels) & 0xFFFF)
+    return head + encode_rle(pixels, prev) + struct.pack("<H", sum(pixels) & 0xFFFF)
 
 
 class Frame:
@@ -191,27 +212,36 @@ class Frame:
         self.number, self.flags, self.tint, self.pal_count = number, flags, tint, pal_count
         self.pixels = pixels
         self.blank = bool(flags & 2)
+        self.delta = bool(flags & 4)
         self.pattern = (flags >> 4) & 7
 
 
 class StreamDecoder:
-    """Turns stream bytes into Frames. Feed it whatever arrives; damaged frames (bad
-    header, wrong sum) are skipped and the decoder looks for the next 'F'."""
+    """Turns stream bytes into Frames. Feed it whatever arrives. A delta frame is applied to
+    the last frame decoded; one that cannot be (no base yet, or its sum fails) is dropped and
+    need_key is set, so the caller can ask for a key frame ('V' 1). Bytes that do not parse
+    as a frame are skipped until the next 'F'."""
 
     def __init__(self, npix=NPIX):
         self.npix = npix
         self.buf = bytearray()
-        self.bad = 0        # damaged frames and junk bytes skipped
+        self.bad = 0            # damaged frames and junk bytes skipped
+        self.image = None       # the last frame decoded: the base of the next delta frame
+        self.need_key = False
         self._reset()
 
     def _reset(self):
-        self.head = None    # header fields once a plausible header is seen
+        self.head = None        # header fields once a plausible header is seen
         self.out = bytearray()
-        self.pos = 0        # next unread byte of buf
+        self.pos = 0            # next unread byte of buf
 
     def _resync(self):
-        """Drop the frame start in buf and look for the next 'F'."""
+        """Drop the frame start in buf and look for the next 'F'. A frame lost after a good
+        header may have been a delta the next one builds on, so the base is dropped too."""
         self.bad += 1
+        if self.head is not None:
+            self.image = None
+            self.need_key = True
         nxt = self.buf.find(b"F", 1)
         del self.buf[:nxt if nxt > 0 else len(self.buf)]
         self._reset()
@@ -234,13 +264,14 @@ class StreamDecoder:
                 h = self.buf
                 count = h[3] | (h[4] << 8) | (h[5] << 16)
                 flags = h[6]
-                if count != self.npix or not flags & 1 or flags & 0x8C or h[7] > 3:
+                if count != self.npix or not flags & 1 or flags & 0x88 or h[7] > 3:
                     self._resync()
                     continue
                 self.head = (h[1] | (h[2] << 8), flags, h[7], h[8])
                 self.pos = HEADER
-            # RLE data: copy literal stretches between ESC bytes in one go
+            # Data: copy literal stretches between ESC bytes in one go
             buf, out, need = self.buf, self.out, self.npix
+            base = self.image if self.image is not None else bytes(need)
             while len(out) < need and self.pos < len(buf):
                 esc = buf.find(ESC, self.pos)
                 end = len(buf) if esc < 0 else esc
@@ -250,27 +281,40 @@ class StreamDecoder:
                 if len(out) == need or esc < 0 or self.pos < esc:
                     continue
                 if esc + 2 >= len(buf):
-                    break                       # the run's n and v have not arrived yet
+                    break                       # the run's two bytes have not arrived yet
                 n, v = buf[esc + 1], buf[esc + 2]
+                if n == 0:                      # ESC 0 v: v pixels unchanged
+                    n, chunk = v, base[len(out):len(out) + v]
+                else:
+                    chunk = bytes((v,)) * n
                 if n == 0 or len(out) + n > need:
                     break
-                out += bytes((v,)) * n
+                out += chunk
                 self.pos = esc + 3
             if len(out) < need:
                 if self.pos + 2 < len(buf) and buf[self.pos] == ESC and \
-                        (buf[self.pos + 1] == 0 or len(out) + buf[self.pos + 1] > need):
+                        ((buf[self.pos + 1] == 0 and buf[self.pos + 2] == 0) or
+                         len(out) + (buf[self.pos + 1] or buf[self.pos + 2]) > need):
                     self._resync()              # impossible run: damaged frame
                     continue
                 return frames
             if len(buf) < self.pos + 2:
                 return frames
-            if buf[self.pos] | (buf[self.pos + 1] << 8) != sum(out) & 0xFFFF:
-                self._resync()
-                continue
             number, flags, tint, pal = self.head
-            frames.append(Frame(number, flags, tint, pal, bytes(out)))
+            whole = buf[self.pos] | (buf[self.pos + 1] << 8) == sum(out) & 0xFFFF
             del self.buf[:self.pos + 2]
             self._reset()
+            if not whole or (flags & 4 and self.image is None):
+                # Damaged, or a delta frame without its base: the picture can no longer
+                # follow the deltas until a key frame comes
+                self.bad += 1
+                self.image = None
+                self.need_key = True
+                continue
+            self.image = bytes(out)
+            if not flags & 4:
+                self.need_key = False
+            frames.append(Frame(number, flags, tint, pal, self.image))
 
 
 MODEL_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "model"
@@ -308,7 +352,7 @@ def capture(dp, png_path):
         dp.write_reg(32, ctrl)
     write_png(png_path, data, default_palette())
     lights = pal_mod.light_table(pal_mod.palette())
-    tiles = level_mod.level1().tile_words()
+    tiles = level_mod.level_maze().tile_words()  # game_top's built-in map
     image, _ = render.render_frame(render.Frame(px, py, angle, eye, doors), tiles,
                                    textures.wall_textures(), textures.flat_textures(), lights)
     diff = sum(1 for a, b in zip(data, image) if a != b)

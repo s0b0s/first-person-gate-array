@@ -17,8 +17,13 @@
 --                 4. rx3 (1 Mbaud) from a source 3% slow and 3% fast.
 --                 5. A low stop bit gives frame_err and no byte; a break gives
 --                    no bytes; the next byte after it is received normally.
---                 The path 1 sender and path 2 stimulus hand their counts to
---                 the path 3 process on their own signals.
+--                 6. 12 Mbaud (8.33 clocks per bit, fractional timing):
+--                    64 bytes back to back tx4 -> rx4, each frame exactly
+--                    84 clocks; start bit and 8 zero bits last exactly
+--                    750 ns (9 ideal bits); rx5 from an ideal source and
+--                    from sources 2% slow and 2% fast.
+--                 The path 1 sender, path 2 stimulus and path 4 process hand
+--                 their counts to the path 3 process on their own signals.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 uart_tx, uart_rx
@@ -27,6 +32,7 @@
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
 -- Revision 1.01 - Procedure-based checks instead of a protected type
+-- Revision 1.02 - 12 Mbaud paths
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -104,6 +110,24 @@ architecture arch of tb_uart is
 	signal rx3_log: byte_log_t := (others => (others => '0'));
 	signal rx3_bytes: natural := 0;
 	signal rx3_ferrs: natural := 0;
+
+	-- Path 4: 12 Mbaud loopback, and a testbench source into a 12 Mbaud receiver
+	constant BIT12: time := 83333 ps; -- 1 / 12 MHz
+	signal tx4_data: std_logic_vector(7 downto 0) := (others => '0');
+	signal tx4_valid: std_logic := '0';
+	signal tx4_ready: std_logic;
+	signal line4: std_logic;
+	signal rx4_data: std_logic_vector(7 downto 0);
+	signal rx4_valid, rx4_err: std_logic;
+	signal rx4_count, rx4_bad, rx4_errs: natural := 0;
+	signal zero_run4: time := 0 ns; -- Low time of the first 12 Mbaud frame (byte 0x00)
+	signal line5: std_logic := '1';
+	signal rx5_data: std_logic_vector(7 downto 0);
+	signal rx5_valid, rx5_err: std_logic;
+	signal rx5_log: byte_log_t := (others => (others => '0'));
+	signal rx5_bytes, rx5_ferrs: natural := 0;
+	signal p4_checks, p4_errors: natural := 0; -- Path 4 check counts
+	signal p4_done: boolean := false;
 
 	-- Drive one 8N1 frame with the given bit time and stop bit level
 	procedure send_serial(signal line: out std_logic; data: std_logic_vector(7 downto 0);
@@ -184,6 +208,45 @@ begin
 			data_o => rx3_data,
 			valid_o => rx3_valid,
 			frame_err_o => rx3_err
+		);
+
+	tx4: uart_tx
+		generic map (
+			BAUD => 12_000_000
+		)
+		port map (
+			clk_i => clk,
+			rst_i => rst,
+			data_i => tx4_data,
+			valid_i => tx4_valid,
+			ready_o => tx4_ready,
+			tx_o => line4
+		);
+
+	rx4: uart_rx
+		generic map (
+			BAUD => 12_000_000
+		)
+		port map (
+			clk_i => clk,
+			rst_i => rst,
+			rx_i => line4,
+			data_o => rx4_data,
+			valid_o => rx4_valid,
+			frame_err_o => rx4_err
+		);
+
+	rx5: uart_rx
+		generic map (
+			BAUD => 12_000_000
+		)
+		port map (
+			clk_i => clk,
+			rst_i => rst,
+			rx_i => line5,
+			data_o => rx5_data,
+			valid_o => rx5_valid,
+			frame_err_o => rx5_err
 		);
 
 	-- Clock
@@ -300,6 +363,99 @@ begin
 		wait;
 	end process;
 
+	-- Path 4 recorders: rx4 bytes must be (k * 29) mod 256; rx5 bytes are logged
+	process(clk)
+	begin
+		if rising_edge(clk) then
+			if (rx4_valid = '1') then
+				if (unsigned(rx4_data) /= to_unsigned((rx4_count * 29) mod 256, 8)) then
+					rx4_bad <= rx4_bad + 1;
+				end if;
+				rx4_count <= rx4_count + 1;
+			end if;
+			if (rx4_err = '1') then
+				rx4_errs <= rx4_errs + 1;
+			end if;
+			if (rx5_valid = '1') then
+				rx5_log(rx5_bytes mod 64) <= rx5_data;
+				rx5_bytes <= rx5_bytes + 1;
+			end if;
+			if (rx5_err = '1') then
+				rx5_ferrs <= rx5_ferrs + 1;
+			end if;
+		end if;
+	end process;
+
+	-- Path 4 bit timing: the first frame is 0x00, so the line stays low for
+	-- the start bit and 8 data bits
+	process
+		variable t0: time;
+	begin
+		wait until falling_edge(line4);
+		t0 := now;
+		wait until rising_edge(line4);
+		zero_run4 <= now - t0;
+		wait;
+	end process;
+
+	-- Path 4 sender and checks (the only driver of line5)
+	process
+		variable t_first, t_last: time;
+		variable checks, errors: natural := 0;
+	begin
+		wait until (rst = '0');
+		wait until rising_edge(clk);
+		for i in 0 to 63 loop
+			tx4_data <= std_logic_vector(to_unsigned((i * 29) mod 256, 8));
+			tx4_valid <= '1';
+			loop
+				wait until rising_edge(clk);
+				exit when (tx4_ready = '1');
+			end loop;
+			if (i = 0) then
+				t_first := now;
+			end if;
+			t_last := now;
+		end loop;
+		tx4_valid <= '0';
+		-- 10 bits of 9, 8, 8, 9, 8, 8, 9, 8, 8, 9 clocks = 84 clocks per frame
+		check(t_last - t_first = 63 * 84 * PERIOD, "12 Mbaud frames back to back, took " &
+			time'image(t_last - t_first), checks, errors);
+		check(zero_run4 = 750 ns, "12 Mbaud start + 8 zero bits last 750 ns, got " &
+			time'image(zero_run4), checks, errors);
+		-- rx5: an ideal source, then 2% slow and 2% fast
+		for i in 0 to 7 loop
+			send_serial(line5, std_logic_vector(to_unsigned(16#5A# + 23 * i, 8)), BIT12, '1');
+		end loop;
+		for i in 0 to 7 loop
+			send_serial(line5, std_logic_vector(to_unsigned(16#81# + 41 * i, 8)), BIT12 * 102 / 100, '1');
+		end loop;
+		for i in 0 to 7 loop
+			send_serial(line5, std_logic_vector(to_unsigned(16#0F# + 59 * i, 8)), BIT12 * 98 / 100, '1');
+		end loop;
+		wait for 2 us;
+		check(rx4_count = 64, "12 Mbaud loopback received " & integer'image(rx4_count) &
+			" bytes", checks, errors);
+		check((rx4_bad = 0) and (rx4_errs = 0), "12 Mbaud loopback: " & integer'image(rx4_bad) &
+			" wrong bytes, " & integer'image(rx4_errs) & " framing errors", checks, errors);
+		check((rx5_bytes = 24) and (rx5_ferrs = 0), "12 Mbaud receiver: " & integer'image(rx5_bytes) &
+			" of 24 bytes, " & integer'image(rx5_ferrs) & " framing errors", checks, errors);
+		for i in 0 to 7 loop
+			check(unsigned(rx5_log(i)) = to_unsigned((16#5A# + 23 * i) mod 256, 8),
+				"12 Mbaud byte " & integer'image(i) & " got " & to_hex(rx5_log(i)), checks, errors);
+			check(unsigned(rx5_log(8 + i)) = to_unsigned((16#81# + 41 * i) mod 256, 8),
+				"12 Mbaud 2% slow byte " & integer'image(i) & " got " & to_hex(rx5_log(8 + i)),
+				checks, errors);
+			check(unsigned(rx5_log(16 + i)) = to_unsigned((16#0F# + 59 * i) mod 256, 8),
+				"12 Mbaud 2% fast byte " & integer'image(i) & " got " & to_hex(rx5_log(16 + i)),
+				checks, errors);
+		end loop;
+		p4_checks <= checks;
+		p4_errors <= errors;
+		p4_done <= true;
+		wait;
+	end process;
+
 	-- Path 3 recorder: every byte and framing error from rx3
 	process(clk)
 	begin
@@ -359,9 +515,13 @@ begin
 			" bytes", checks, errors);
 		check(rx1_bad = 0, "loopback wrong bytes: " & integer'image(rx1_bad), checks, errors);
 		check(rx1_errs = 0, "loopback framing errors: " & integer'image(rx1_errs), checks, errors);
+		if (not p4_done) then
+			wait until p4_done;
+		end if;
 		done <= true;
 		wait for 1 ns; -- The other processes' last counts reach their signals a delta later
-		tb_finish("tb_uart", checks + tx1_checks + p2_checks, errors + tx1_errors + p2_errors);
+		tb_finish("tb_uart", checks + tx1_checks + p2_checks + p4_checks,
+			errors + tx1_errors + p2_errors + p4_errors);
 		wait;
 	end process;
 end arch;

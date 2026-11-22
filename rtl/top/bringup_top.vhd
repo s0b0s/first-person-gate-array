@@ -17,7 +17,7 @@
 --                 - SRAM self-test on 0x40000..0x7FFFF (outside both
 --                   framebuffers), flash JEDEC ID and data-area pattern,
 --                   PS/2 keyboard and mouse, 440 Hz tone on the Pmod
---                   I2S2, UART debug port (BAUD, 4 Mbaud) with frame stream.
+--                   I2S2, UART debug port (BAUD, 12 Mbaud) with frame stream.
 --                 SRAM masters: 0 display, 1 SRAM tester, 2 pixel FIFO,
 --                 3 UART. VGA and I2S pins are high impedance and PS/2
 --                 released until pcb_on.
@@ -44,8 +44,8 @@ use work.game_pkg.all;
 
 entity bringup_top is
 	generic(
-		BUILD_ID: std_logic_vector(31 downto 0) := x"53470002"; -- Shown on the status page
-		BAUD: natural := 4_000_000 -- UART rate: 25 clocks per bit at 100 MHz (uart_rx needs 16 or more)
+		BUILD_ID: std_logic_vector(31 downto 0) := x"53470003"; -- Shown on the status page
+		BAUD: natural := 12_000_000 -- UART rate: 8.33 clocks per bit at 100 MHz (fractional bit timing)
 	);
 	port(
 		clk12: in std_logic; -- 12 MHz oscillator
@@ -385,10 +385,13 @@ architecture arch of bringup_top is
 	component debug_port is
 		generic(
 			CLK_HZ: natural := 100_000_000;
-			BAUD: natural := 4_000_000;
+			BAUD: natural := 12_000_000;
 			TIMEOUT_MS: natural := 100;
 			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0');
-			FRAME_PIXELS: positive := 76_800
+			FRAME_PIXELS: positive := 76_800;
+			SHADOW0_BASE: natural := VIEW0_BASE;
+			SHADOW0_BYTES: natural := VIEW0_BYTES;
+			SHADOW1_BASE: natural := VIEW1_BASE
 		);
 		port(
 			clk_i: in std_logic;

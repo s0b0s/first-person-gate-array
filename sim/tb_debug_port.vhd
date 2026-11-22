@@ -17,22 +17,30 @@
 --                 SRAM write and read back (also via the model's back
 --                 door), unknown command, and a command abandoned half-way
 --                 (dropped after TIMEOUT_MS = 1 ms; the next ping works).
---                 Frame stream ('V', FRAME_PIXELS = 1024 to keep it short;
---                 both framebuffers preloaded through the model's back door
---                 with long runs, runs over 255, runs of 1 to 3, ESC-valued
---                 pixels and single values):
+--                 Frame stream ('V', FRAME_PIXELS = 1024 to keep it short,
+--                 shadow split after pixel 600 so both shadow areas are
+--                 used; both framebuffers preloaded through the model's
+--                 back door with long runs, runs over 255, runs of 1 to 3,
+--                 ESC-valued pixels and single values):
 --                 - header fields: 'F', frame number, pixel count, flags
---                   (RLE, blank, pattern), tint, palette count
---                 - RLE bytes equal a reference encoder's byte for byte, and
---                   decode back to the front buffer; the pixel sum matches
---                 - the first frame follows 'V' at once; three front changes
---                   give two frames numbered +1 and +3 (one skipped), from
---                   the new front buffer; no frame without a change
+--                   (RLE, blank, delta, pattern), tint, palette count
+--                 - data bytes equal a reference encoder's byte for byte
+--                   (key and delta frames), decode back to the front
+--                   buffer (skips from the previous image), the pixel sum
+--                   matches, and the shadow holds the frame afterwards
+--                 - the first frame follows 'V' at once as a key frame;
+--                   three front changes while a command is pending give one
+--                   delta frame numbered +3 (two skipped) from the new front
+--                   buffer; two more give +5 with nothing changed (only skip
+--                   tokens); no frame without a change
+--                 - pixels changed between frames give short skips sent as
+--                   literals, ESC-valued ones included
 --                 - a register read sent during a frame: the frame arrives
 --                   whole and the reply follows it
+--                 - 'V' 1 while streaming: the next frame is a key frame
 --                 - 'V' 0 during a frame: the frame ends, then 'K', then no
 --                   more frames
---                 RUN_VARIANTS: BAUD=1000000 BAUD=4000000
+--                 RUN_VARIANTS: BAUD=1000000 BAUD=4000000 BAUD=12000000
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 sram_model, debug_port, uart_rx, uart_tx, sram_arbiter,
@@ -43,6 +51,7 @@
 -- Revision 1.00 - First working version
 -- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Revision 1.02 - BAUD generic, frame stream tests
+-- Revision 1.03 - Delta frames, 12 Mbaud
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -55,7 +64,7 @@ use work.hw_pkg.all;
 
 entity tb_debug_port is
 	generic(
-		BAUD: natural := 4_000_000 -- UART rate of the port and the PC side
+		BAUD: natural := 12_000_000 -- UART rate of the port and the PC side
 	);
 end tb_debug_port;
 
@@ -63,10 +72,13 @@ architecture arch of tb_debug_port is
 	component debug_port is
 		generic(
 			CLK_HZ: natural := 100_000_000;
-			BAUD: natural := 4_000_000;
+			BAUD: natural := 12_000_000;
 			TIMEOUT_MS: natural := 100;
 			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0');
-			FRAME_PIXELS: positive := 76_800
+			FRAME_PIXELS: positive := 76_800;
+			SHADOW0_BASE: natural := VIEW0_BASE;
+			SHADOW0_BYTES: natural := VIEW0_BYTES;
+			SHADOW1_BASE: natural := VIEW1_BASE
 		);
 		port(
 			clk_i: in std_logic;
@@ -171,6 +183,8 @@ architecture arch of tb_debug_port is
 	constant BIT_TIME: time := 1 sec / BAUD;
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
 	constant NPIX: natural := 1024; -- Pixels per streamed frame here
+	constant SPLIT: natural := 600; -- Pixels in the first shadow area here
+	type image_t is array (0 to NPIX - 1) of natural;
 	constant RING: natural := 8192; -- Received bytes kept (a frame is at most 3 * NPIX + 11)
 	type bytes_t is array (0 to RING - 1) of std_logic_vector(7 downto 0);
 
@@ -255,7 +269,8 @@ begin
 			BAUD => BAUD,
 			TIMEOUT_MS => 1,
 			CTRL_INIT => (others => '0'),
-			FRAME_PIXELS => NPIX
+			FRAME_PIXELS => NPIX,
+			SHADOW0_BYTES => SPLIT
 		)
 		port map (
 			clk_i => clk,
@@ -409,6 +424,7 @@ begin
 		variable nexp: natural; -- Its length
 		variable fnum, fnum0: natural; -- Frame numbers from headers
 		variable lost: boolean; -- A stream byte never came
+		variable prev: image_t; -- The last frame sent (what the PC shows)
 
 		-- Byte k after first as a number, waiting for it if needed (0 once a byte is lost)
 		procedure get(k: natural; b: out natural) is
@@ -424,46 +440,103 @@ begin
 			end if;
 		end procedure;
 
-		-- Append the bytes of one finished run to exp (the RTL's rule)
-		procedure flush(v: natural; n: natural) is
+		-- Pixel i of framebuffer fb, from the SRAM model
+		impure function img(fb: natural; i: natural) return natural is
 		begin
-			if ((n >= 3) or (v = 255)) then
-				exp(nexp) := x"FF";
-				exp(nexp + 1) := std_logic_vector(to_unsigned(n, 8));
-				exp(nexp + 2) := std_logic_vector(to_unsigned(v, 8));
-				nexp := nexp + 3;
+			if (fb = 1) then
+				return to_integer(unsigned(sram_mem.read(FB1_BASE + i)));
+			end if;
+			return to_integer(unsigned(sram_mem.read(FB0_BASE + i)));
+		end function;
+
+		-- Shadow address of pixel i (the DUT's two areas)
+		function shadow_at(i: natural) return natural is
+		begin
+			if (i < SPLIT) then
+				return VIEW0_BASE + i;
+			end if;
+			return VIEW1_BASE + i - SPLIT;
+		end function;
+
+		procedure put(b: natural) is
+		begin
+			exp(nexp) := std_logic_vector(to_unsigned(b, 8));
+			nexp := nexp + 1;
+		end procedure;
+
+		-- One literal pixel: the value, or ESC 1 ESC
+		procedure put_lit(v: natural) is
+		begin
+			if (v = 255) then
+				put(255);
+				put(1);
+				put(255);
+			else
+				put(v);
+			end if;
+		end procedure;
+
+		-- Append the bytes of one finished run to exp (the RTL's rule)
+		procedure flush(skip: boolean; v: natural; h2: natural; n: natural) is
+		begin
+			if (skip and (n >= 3)) then
+				put(255);
+				put(0);
+				put(n);
+			elsif (skip) then
+				put_lit(v);
+				if (n = 2) then
+					put_lit(h2);
+				end if;
+			elsif ((n >= 3) or (v = 255)) then
+				put(255);
+				put(n);
+				put(v);
 			else
 				for j in 1 to n loop
-					exp(nexp) := std_logic_vector(to_unsigned(v, 8));
-					nexp := nexp + 1;
+					put(v);
 				end loop;
 			end if;
 		end procedure;
 
-		-- Reference encoder: the RLE bytes of framebuffer fb into exp
-		procedure ref_encode(fb: natural) is
-			variable rv, rl, v: natural;
+		-- Reference encoder: the data bytes of framebuffer fb into exp, as a
+		-- delta frame against prev or as a key frame
+		procedure ref_encode(fb: natural; delta: boolean) is
+			variable rv, rl, v, h2: natural;
+			variable rs, same: boolean;
 		begin
 			nexp := 0;
 			rv := 0;
 			rl := 0;
+			h2 := 0;
+			rs := false;
 			for i in 0 to NPIX - 1 loop
-				v := pix(fb, i);
-				if ((rl /= 0) and ((v /= rv) or (rl = 255))) then
-					flush(rv, rl);
-					rl := 1;
-				else
+				v := img(fb, i);
+				same := delta and (v = prev(i));
+				if ((rl /= 0) and (not rs) and (v = rv) and (rl < 255)) then
 					rl := rl + 1;
+				elsif ((rl /= 0) and rs and same and (rl < 255)) then
+					if (rl = 1) then
+						h2 := v;
+					end if;
+					rl := rl + 1;
+				else
+					if (rl /= 0) then
+						flush(rs, rv, h2, rl);
+					end if;
+					rs := same;
+					rv := v;
+					rl := 1;
 				end if;
-				rv := v;
 			end loop;
-			flush(rv, rl);
+			flush(rs, rv, h2, rl);
 		end procedure;
 
 		-- Read the frame that starts at byte first, check it against framebuffer
-		-- fb, put its number in fnum and move first past it
-		procedure check_frame(fb: natural; msg: string) is
-			variable b, n, v, k, count, sum, bad, mism: natural;
+		-- fb (a delta frame against prev, or a key frame), put its number in
+		-- fnum, move first past it, and make it the new prev
+		procedure check_frame(fb: natural; delta: boolean; msg: string) is
+			variable b, n, v, k, count, sum, bad, mism, flags: natural;
 		begin
 			lost := false;
 			get(0, b);
@@ -476,14 +549,17 @@ begin
 			get(5, v);
 			check(b + 256 * n + 65536 * v = NPIX, msg & ": pixel count", checks, errors);
 			get(6, b);
-			check(b = 16 * to_integer(unsigned(view(4 downto 2))) + 2 * to_integer(unsigned(view(5 downto 5))) + 1,
-				msg & ": flags (RLE, blank, pattern) " & integer'image(b), checks, errors);
+			flags := 16 * to_integer(unsigned(view(4 downto 2))) + 2 * to_integer(unsigned(view(5 downto 5))) + 1;
+			if (delta) then
+				flags := flags + 4;
+			end if;
+			check(b = flags, msg & ": flags (RLE, blank, delta, pattern) " & integer'image(b), checks, errors);
 			get(7, b);
 			check(b = to_integer(unsigned(view(1 downto 0))), msg & ": tint", checks, errors);
 			get(8, b);
 			check(b = to_integer(unsigned(pal_count)), msg & ": palette count", checks, errors);
 			-- Byte for byte against the reference encoder
-			ref_encode(fb);
+			ref_encode(fb, delta);
 			mism := 0;
 			for j in 0 to nexp - 1 loop
 				get(9 + j, b);
@@ -491,9 +567,9 @@ begin
 					mism := mism + 1;
 				end if;
 			end loop;
-			check(mism = 0, msg & ": RLE bytes equal the reference encoder (" & integer'image(mism) &
+			check(mism = 0, msg & ": data bytes equal the reference encoder (" & integer'image(mism) &
 				" of " & integer'image(nexp) & " differ)", checks, errors);
-			-- Decode the same bytes back into pixels
+			-- Decode the same bytes back into pixels (ESC 0 n: n pixels from prev)
 			k := 9;
 			count := 0;
 			bad := 0;
@@ -505,12 +581,23 @@ begin
 					get(k, n);
 					get(k + 1, v);
 					k := k + 2;
+					if (n = 0) then
+						for j in 1 to v loop
+							if (count < NPIX) then
+								if (prev(count) /= img(fb, count)) then
+									bad := bad + 1;
+								end if;
+								sum := (sum + prev(count)) mod 65536;
+							end if;
+							count := count + 1;
+						end loop;
+					end if;
 				else
 					n := 1;
 					v := b;
 				end if;
 				for j in 1 to n loop
-					if ((count < NPIX) and (v /= pix(fb, count))) then
+					if ((count < NPIX) and (v /= img(fb, count))) then
 						bad := bad + 1;
 					end if;
 					count := count + 1;
@@ -525,6 +612,17 @@ begin
 			check(b + 256 * n = sum, msg & ": pixel sum", checks, errors);
 			check(not lost, msg & ": every byte arrived", checks, errors);
 			first := first + k + 2;
+			-- The PC now shows this frame, and so must the shadow
+			wait for 2 us; -- The last shadow writes leave the DUT
+			bad := 0;
+			for i in 0 to NPIX - 1 loop
+				prev(i) := img(fb, i);
+				if (to_integer(unsigned(sram_mem.read(shadow_at(i)))) /= prev(i)) then
+					bad := bad + 1;
+				end if;
+			end loop;
+			check(bad = 0, msg & ": shadow holds the frame (" & integer'image(bad) & " wrong)",
+				checks, errors);
 		end procedure;
 	begin
 		wait until (rst = '0');
@@ -653,14 +751,14 @@ begin
 		front <= '1'; -- Front change 1, while the stream is off
 		wait for 1 us;
 
-		-- 'V' 1: 'K', then a frame of the front buffer at once
+		-- 'V' 1: 'K', then a key frame of the front buffer at once
 		first := nreplies;
 		pc_send(pc_tx, x"56");
 		pc_send(pc_tx, x"01");
 		expect(1, "stream on");
 		check(reply(0) = x"4B", "'V' 1 replies K", checks, errors);
 		first := first + 1;
-		check_frame(1, "first frame");
+		check_frame(1, false, "first frame (key)");
 		fnum0 := fnum;
 		check(fnum0 = 1, "first frame number counts the front change before it", checks, errors);
 
@@ -668,38 +766,72 @@ begin
 		wait for 300 * BIT_TIME;
 		check(nreplies = first, "no frame without a front change", checks, errors);
 
-		-- Three changes within one header: frames +1 and +3 follow (the +2
-		-- frame is skipped, never waited for), both from FB0
+		-- Front changes while the port waits for an echo argument (commands
+		-- come first, so no frame starts yet; pixels are read from the live
+		-- front buffer, so changing it during a frame would tear the picture):
+		-- three changes give one delta frame numbered +3 (two skipped, never
+		-- waited for) from FB0; two more give +5, nothing changed
+		pc_send(pc_tx, x"45");
+		wait for BIT_TIME + 200 ns; -- The port has taken the command byte
 		front <= '0';
 		wait for 50 ns;
 		front <= '1';
 		wait for 50 ns;
 		front <= '0';
-		check_frame(0, "frame after three changes");
-		check(fnum = fnum0 + 1, "its number is +1", checks, errors);
-		check_frame(0, "next frame");
-		check(fnum = fnum0 + 3, "its number is +3 (one frame skipped)", checks, errors);
+		pc_send(pc_tx, x"3C");
+		expect(1, "echo during front changes");
+		check(reply(0) = x"3C", "echo returns the byte", checks, errors);
+		first := first + 1;
+		check_frame(0, true, "frame after three changes");
+		check(fnum = fnum0 + 3, "its number is +3 (two frames skipped)", checks, errors);
+		pc_send(pc_tx, x"45");
+		wait for BIT_TIME + 200 ns;
+		front <= '1';
+		wait for 50 ns;
+		front <= '0';
+		pc_send(pc_tx, x"3D");
+		expect(1, "echo during two front changes");
+		first := first + 1;
+		check_frame(0, true, "frame with nothing changed");
+		check(fnum = fnum0 + 5, "its number is +5", checks, errors);
+		check(nexp = 3 * ((NPIX + 254) / 255), "nothing changed: only skip tokens, " &
+			integer'image(nexp) & " bytes", checks, errors);
 		wait for 300 * BIT_TIME;
 		check(nreplies = first, "no further frames", checks, errors);
+
+		-- Change FB1 so that the unchanged pixels 400..408 (255, 255, 9, 10,
+		-- 10, 11, 11, 11, 255 in both buffers) split into skips of 2, 1, 1
+		-- and 2 pixels, sent as literals (ESC 1 ESC for the 255s)
+		sram_mem.write(FB1_BASE + 402, x"4D");
+		sram_mem.write(FB1_BASE + 404, x"4E");
+		sram_mem.write(FB1_BASE + 406, x"4F");
 
 		-- A register read sent during a frame: the frame arrives whole, then the reply
 		front <= '1';
 		wait until (nreplies >= first + 12) for 5 ms;
 		pc_send(pc_tx, x"52");
 		pc_send(pc_tx, x"05");
-		check_frame(1, "frame with a command inside");
-		check(fnum = fnum0 + 4, "its number is +4", checks, errors);
+		check_frame(1, true, "frame with a command inside");
+		check(fnum = fnum0 + 6, "its number is +6", checks, errors);
 		expect(4, "read reg 5 during a frame");
 		check((reply(0) & reply(1) & reply(2) & reply(3)) = x"05050505", "reply follows the frame",
 			checks, errors);
 		first := first + 4;
+
+		-- 'V' 1 while streaming: 'K', then a key frame at once
+		pc_send(pc_tx, x"56");
+		pc_send(pc_tx, x"01");
+		expect(1, "key frame request");
+		check(reply(0) = x"4B", "'V' 1 again replies K", checks, errors);
+		first := first + 1;
+		check_frame(1, false, "requested key frame");
 
 		-- 'V' 0 during a frame: the frame ends, then 'K', then no more frames
 		front <= '0';
 		wait until (nreplies >= first + 12) for 5 ms;
 		pc_send(pc_tx, x"56");
 		pc_send(pc_tx, x"00");
-		check_frame(0, "frame with a stop inside");
+		check_frame(0, true, "frame with a stop inside");
 		expect(1, "stream off");
 		check(reply(0) = x"4B", "'V' 0 replies K after the frame", checks, errors);
 		first := first + 1;

@@ -64,7 +64,7 @@ def test_map_poses():
 
 
 def effect_poses():
-    """Light effect poses: sky over level 1's slime pit (animated slime walls) and over
+    """Light effect poses: sky over the flat maze's slime pit (animated slime walls) and over
     the level-3 arena during a strobe, the flickering hall and the glowing room during a
     muzzle flash (offsets from render.light_mods)."""
     q = B.q16
@@ -77,16 +77,17 @@ def effect_poses():
 
 
 def all_poses():
-    """The flat level-1 poses of game_top (their images equal its goldens but for one
+    """The flat maze poses of game_top (their images equal its goldens but for one
     pixel), then the heights poses, the test-map poses and the effects poses."""
-    lv1 = L.level1()
-    return ([(1, fr) for fr in B.test_poses(lv1)] + heights_poses() + test_map_poses() +
+    maze = L.level_maze()
+    return ([(1, fr) for fr in B.test_poses(maze)] + heights_poses() + test_map_poses() +
             effect_poses())
 
 
 def write_ray_goldens(golden, walls, flats, lights, preview=None):
     """Maps, poses, spans and frame images; returns (pose count, divider operand pairs)."""
-    maps = {1: L.level1().tile_words(), 3: L.level3().tile_words(), 9: L.level_test().tile_words()}
+    maps = {1: L.level_maze().tile_words(),  # map 1: game_top's flat maze
+            3: L.level3().tile_words(), 9: L.level_test().tile_words()}
     with open(golden / "ray4_maps.txt", "w", encoding="ascii", newline="\n") as f:
         for n, tiles in sorted(maps.items()):
             f.write("M %d\n" % n)

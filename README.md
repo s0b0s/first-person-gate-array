@@ -120,10 +120,10 @@ wiring test pages) and `game_top` (the first playable maze) build the same way.
 `tools/uart/live_view.py` (or double-click `tools/uart/live_view.bat`) shows the game in a
 window over the board's USB cable, like a second monitor. It finds the board and the link rate
 by itself and reconnects when the board is reset, reprogrammed or unplugged; close the window
-to stop it. The board streams each new frame run-length encoded at 4 Mbaud (about 7 to 30
-frames a second, depending on how busy the picture is); older bitstreams without the stream
-command are read frame by frame instead (about 1 frame a second at 1 Mbaud). The keyboard and
-mouse stay on the board. `tools/uart/debug_uart.py` reads and writes registers and memory, and
+to stop it. The board streams each new frame at 12 Mbaud, sending only the pixels that changed
+since the frame before, run-length encoded, so the window keeps up with the game's 60 frames a
+second; a whole new view while turning fast takes longer. Older bitstreams without the stream
+command are read frame by frame instead. The keyboard and mouse stay on the board. `tools/uart/debug_uart.py` reads and writes registers and memory, and
 its `capture` command freezes the game for an exact frame dump.
 
 ## Art and sound

@@ -40,7 +40,7 @@
 --                   35 bits 1:0 replay mode (0 pass, 1 record, 2 play)
 --                   36 bits 6:0 game state word shown in status 26, 27
 --                 Status registers: see the "Status words" block below.
---                 UART at BAUD (4 Mbaud); 'V' streams each new frame
+--                 UART at BAUD (12 Mbaud); 'V' streams each new frame
 --                 (debug_port, tools/uart/live_view.py).
 --                 Clock domains: clk_sys (100 MHz), clk_pix (25 MHz),
 --                 crossed only inside display_controller.
@@ -65,8 +65,8 @@ use work.render_types_pkg.all;
 
 entity shooter_top is
 	generic(
-		BUILD_ID: std_logic_vector(31 downto 0) := x"53470302"; -- Full game build
-		BAUD: natural := 4_000_000; -- UART rate: 25 clocks per bit at 100 MHz (uart_rx needs 16 or more)
+		BUILD_ID: std_logic_vector(31 downto 0) := x"53470303"; -- Full game build
+		BAUD: natural := 12_000_000; -- UART rate: 8.33 clocks per bit at 100 MHz (fractional bit timing)
 		POWER_HOLD: positive := 1_000_000; -- PWR_SENSE hold time in clocks (10 ms)
 		REPLAY_INIT: natural range 0 to 2 := 0; -- Replay mode at reset (2: the system testbench plays a session)
 		BOOT_ART: boolean := true -- false: no art copy at boot (simulation preloads the SRAM)
@@ -609,10 +609,13 @@ architecture arch of shooter_top is
 	component debug_port is
 		generic(
 			CLK_HZ: natural := 100_000_000;
-			BAUD: natural := 4_000_000;
+			BAUD: natural := 12_000_000;
 			TIMEOUT_MS: natural := 100;
 			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0');
-			FRAME_PIXELS: positive := 76_800
+			FRAME_PIXELS: positive := 76_800;
+			SHADOW0_BASE: natural := VIEW0_BASE;
+			SHADOW0_BYTES: natural := VIEW0_BYTES;
+			SHADOW1_BASE: natural := VIEW1_BASE
 		);
 		port(
 			clk_i: in std_logic;

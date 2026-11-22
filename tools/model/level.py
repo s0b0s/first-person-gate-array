@@ -275,12 +275,30 @@ class Level:
                 else:
                     row += WALL_CHARS.get(self.wall[y][x], "?")
             lines.append(row)
+        # Second picture: what the first cannot show
+        lines += ["", "Heights: open tiles show the floor height in steps of 8 (0..7), / a ramp, "
+                  "* sky, - a lowered ceiling over floor 0, + a lowered ceiling over a raised floor"]
+        for y in range(SIZE):
+            row = ""
+            for x in range(SIZE):
+                if self.wall[y][x] != 0 and self.door[y][x] is None:
+                    row += " "
+                elif self.ramp_dir[y][x] is not None:
+                    row += "/"
+                elif self.sky[y][x]:
+                    row += "*"
+                elif self.ch[y][x]:
+                    row += "+" if self.fh[y][x] else "-"
+                else:
+                    row += str(self.fh[y][x])
+            lines.append(row.rstrip())
         with open(path, "w", encoding="ascii", newline="\n") as f:
             f.write("\n".join(lines) + "\n")
 
 
-def level1():
-    """Level 1: doors and an exit switch; Grunts and one Fiend."""
+def level_maze():
+    """The flat first maze: the built-in map of game_top (rtl/pkg/map_init_pkg.vhd) and the
+    flat poses of the renderer goldens. Kept as it was; level 1 grew heights from it."""
     lv = Level("Level 1", 1)
     lv.room(4, 4, 15, 13, 2, light=13, floor=0, ceil=2)       # A: start hall
     lv.room(28, 4, 39, 15, 5, light=12, floor=0, ceil=2)      # B: tech room
@@ -327,23 +345,113 @@ def level1():
     return lv
 
 
+def level1():
+    """Level 1: doors, a blue key and an exit switch; Grunts and Fiends.
+    Heights: steps to a corner ledge, a ramp and a step up into a raised tech room, a drop into the metal
+    hall, a dais, steps up to the exit room, a walkway around a sunken slime pit, and low
+    ceilings in a corridor and the wooden room."""
+    lv = Level("Level 1", 1)
+    lv.room(4, 4, 15, 13, 2, light=13, floor=0, ceil=2)       # A: start hall
+    lv.heights(4, 4, 8, 5, fh=2)                              #    corner ledge 16 high
+    lv.heights(4, 6, 8, 6, fh=1)                              #    one step up to it
+    lv.room(28, 4, 39, 15, 5, light=12, floor=0, ceil=2)      # B: tech room
+    lv.heights(28, 4, 39, 15, fh=2)                           #    raised 16
+    lv.room(24, 28, 47, 43, 4, light=11, floor=0, ceil=2)     # C: metal hall
+    for px, py in ((30, 33), (30, 38), (41, 33), (41, 38)):
+        lv.pillar(px, py, 6)
+    lv.heights(43, 40, 47, 43, fh=1)                          #    dais in the south-east corner
+    lv.zone(43, 40, 47, 43, ltype=3)                          #    glowing light
+    lv.room(4, 30, 11, 45, 3, light=7, floor=1, ceil=3)       # D: dark wooden room
+    lv.zone(4, 30, 11, 45, ltype=1)                           #    flickering light
+    lv.heights(4, 30, 11, 45, ch=1)                           #    low ceiling (56)
+    lv.room(56, 24, 60, 40, 7, light=14, floor=0, ceil=2)     # E: blue tiles, exit
+    lv.heights(56, 24, 60, 40, fh=2)                          #    raised 16
+    lv.room(28, 48, 45, 58, 6, light=6, floor=1, ceil=3)      # F: slime pit
+    lv.heights(28, 48, 45, 58, fh=2)                          #    walkway 16 high
+    lv.heights(31, 51, 42, 56, fh=0)                          #    around a pit 16 deep
+    lv.toxic(31, 51, 42, 56)                                  #    of slime
+    lv.set_sky(28, 48, 45, 58)                                #    open to the sky
+    lv.corridor(16, 8, 27, 8)
+    lv.heights(19, 8, 23, 8, ch=2)                            # A to B: low ceiling (48)
+    lv.zone(19, 8, 23, 8, ltype=2)                            #    strobing light
+    lv.ramp(25, 8, 25, 8, "+x")                               #    a ramp up 8, then a step up 8
+    lv.heights(26, 8, 26, 8, fh=1)                            #    into B
+    lv.heights(27, 8, 27, 8, fh=2)
+    lv.corridor(33, 16, 33, 27)
+    lv.heights(33, 16, 33, 23, fh=2)                          # B to C at B's height, then a
+    lv.corridor(12, 36, 23, 36)                               #    drop of 16 at y = 24
+    lv.corridor(48, 30, 55, 30)
+    lv.heights(52, 30, 52, 30, fh=1)                          # C to E: two steps up
+    lv.heights(53, 30, 55, 30, fh=2)
+    lv.corridor(8, 14, 8, 29)
+    lv.corridor(36, 44, 36, 47)                               # C to F: a step up 16 at y = 48
+    lv.add_door(16, 8, 0)
+    lv.add_door(33, 16, 1)
+    lv.add_door(23, 36, 0)
+    lv.add_door(48, 30, 0, SP_LOCKED1)                        # exit room: needs the blue key
+    lv.add_door(8, 20, 1)
+    lv.add_door(36, 45, 1)
+    lv.exit_switch(61, 32)                                   # east wall of room E
+    lv.secret(4, 45)                                         # corner of the dark room
+    lv.start = (9.5, 8.5, 0)
+    # Enemies
+    lv.monster(34, 9, A.GRUNT)
+    lv.monster(37, 12, A.GRUNT)
+    lv.monster(28, 36, A.GRUNT)
+    lv.monster(44, 30, A.GRUNT)
+    lv.monster(8, 40, A.GRUNT)
+    lv.monster(58, 36, A.FIEND, ambush=True)                 # waits in the exit room until seen
+    lv.monster(35, 54, A.GRUNT)
+    lv.monster(40, 57, A.FIEND)
+    # Items
+    lv.item(13, 11, A.I_BULLETS)
+    lv.item(38, 5, A.I_HEALTH)
+    lv.item(46, 42, A.I_SHOTGUN)
+    lv.item(46, 36, A.I_KEY1)                                # between the dais and the exit door
+    lv.item(25, 42, A.I_SHELLS)
+    lv.item(5, 44, A.I_MEDIKIT)
+    lv.item(59, 25, A.I_ARMOR)
+    lv.item(30, 57, A.I_BULLETS)
+    return lv
+
+
 def level2():
-    """Level 2: a blue key behind slime and a locked door to the exit; Fiends join in."""
+    """Level 2: a blue key behind slime and a locked door to the exit; Fiends join in.
+    Heights: a glowing platform in the brick hall, steps up into a raised slime cavern with a
+    sunken toxic pool, a step and a ramp down to the key room (low ceiling, key on a dais), a drop into
+    the open stone yard, and a raised exit end."""
     lv = Level("Level 2", 2)
     lv.room(4, 4, 13, 13, 4, light=12)                        # A: start, metal
     lv.room(24, 4, 41, 13, 1, light=11)                       # B: brick hall
+    lv.heights(37, 4, 41, 13, fh=2)                           #    platform 16 high
+    lv.heights(36, 4, 36, 13, fh=1)                           #    one step up to it
+    lv.zone(36, 4, 41, 13, ltype=3)                           #    glowing light
     lv.room(24, 22, 41, 37, 6, light=8, floor=1, ceil=3)      # C: slime cavern
+    lv.heights(24, 22, 41, 37, fh=2)                          #    walkway 16 high
+    lv.heights(26, 26, 39, 33, fh=0)                          #    around a sunken pool
     lv.toxic(26, 26, 39, 33)
     lv.room(48, 22, 58, 31, 7, light=13)                      # D: key room
+    lv.heights(48, 22, 58, 31, ch=2)                          #    low ceiling (48)
+    lv.zone(48, 22, 58, 31, ltype=1)                          #    flickering light
+    lv.heights(55, 25, 57, 27, fh=1)                          #    key on a dais
     lv.room(4, 26, 15, 41, 2, light=10)                       # E: stone yard
     lv.room(4, 50, 21, 58, 5, light=14)                       # F: exit room
+    lv.heights(17, 50, 21, 58, fh=2)                          #    raised exit end
+    lv.heights(16, 50, 16, 58, fh=1)                          #    one step up to it
+    lv.zone(16, 50, 21, 58, ltype=2)                          #    strobing light
     for px, py in ((28, 7), (33, 10), (38, 7)):
         lv.pillar(px, py, 4)
     lv.corridor(14, 8, 23, 8)
     lv.corridor(32, 14, 32, 21)
+    lv.heights(32, 20, 32, 20, fh=1)                          # B to C: two steps up
+    lv.heights(32, 21, 32, 21, fh=2)
     lv.corridor(42, 27, 47, 27)
+    lv.heights(42, 27, 42, 27, fh=2)                          # C to D: a step down 8, then a
+    lv.heights(43, 27, 43, 27, fh=1)                          #    ramp down 8
+    lv.ramp(44, 27, 44, 27, "-x")
     lv.corridor(16, 34, 23, 34)
-    lv.corridor(10, 42, 10, 49)
+    lv.heights(18, 34, 23, 34, fh=2)                          # C to E at C's height, then a
+    lv.corridor(10, 42, 10, 49)                               #    drop of 16 at x = 17
     lv.add_door(18, 8, 0)
     lv.add_door(32, 18, 1)
     lv.add_door(45, 27, 0)
@@ -351,6 +459,7 @@ def level2():
     lv.add_door(10, 46, 1, SP_LOCKED1)                        # needs the blue key
     lv.exit_switch(22, 54)
     lv.secret(58, 31)
+    lv.set_sky(4, 26, 15, 41)                                 # E: the yard is open to the sky
     lv.start = (8.5, 8.5, 0)
     lv.monster(30, 5, A.GRUNT)
     lv.monster(40, 12, A.GRUNT)
@@ -359,7 +468,7 @@ def level2():
     lv.monster(39, 35, A.GRUNT)
     lv.monster(55, 25, A.FIEND)
     lv.monster(57, 30, A.GRUNT)
-    lv.monster(6, 30, A.BRUTE)
+    lv.monster(6, 30, A.BRUTE, ambush=True)                  # waits in the yard until seen
     lv.monster(12, 38, A.GRUNT)
     lv.monster(14, 56, A.FIEND)
     lv.item(56, 26, A.I_KEY1)

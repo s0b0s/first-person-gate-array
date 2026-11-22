@@ -25,7 +25,7 @@
 --                 pattern override (bits 6:4), bits 13:12 tint, bit 16
 --                 freeze (front buffer kept for a dump). Register 33: frame
 --                 start line (default 115). Status: "Status words" below.
---                 UART at BAUD (4 Mbaud); 'V' streams each new frame.
+--                 UART at BAUD (12 Mbaud); 'V' streams each new frame.
 --                 Clock domains: clk_sys (100 MHz), clk_pix (25 MHz),
 --                 crossed only inside display_controller.
 --
@@ -48,8 +48,8 @@ use work.map_init_pkg.all;
 
 entity game_top is
 	generic(
-		BUILD_ID: std_logic_vector(31 downto 0) := x"53470102"; -- Maze game build
-		BAUD: natural := 4_000_000; -- UART rate: 25 clocks per bit at 100 MHz (uart_rx needs 16 or more)
+		BUILD_ID: std_logic_vector(31 downto 0) := x"53470103"; -- Maze game build
+		BAUD: natural := 12_000_000; -- UART rate: 8.33 clocks per bit at 100 MHz (fractional bit timing)
 		POWER_HOLD: positive := 1_000_000 -- PWR_SENSE hold time in clocks (10 ms)
 	);
 	port(
@@ -427,10 +427,13 @@ architecture arch of game_top is
 	component debug_port is
 		generic(
 			CLK_HZ: natural := 100_000_000;
-			BAUD: natural := 4_000_000;
+			BAUD: natural := 12_000_000;
 			TIMEOUT_MS: natural := 100;
 			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0');
-			FRAME_PIXELS: positive := 76_800
+			FRAME_PIXELS: positive := 76_800;
+			SHADOW0_BASE: natural := VIEW0_BASE;
+			SHADOW0_BYTES: natural := VIEW0_BYTES;
+			SHADOW1_BASE: natural := VIEW1_BASE
 		);
 		port(
 			clk_i: in std_logic;

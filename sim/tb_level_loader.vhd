@@ -13,7 +13,8 @@
 --                 flash_reader and spi_flash_model, preloaded with
 --                 build/gamedata.bin at FLASH_DATA_BASE. Tests:
 --                 1. Level 1: 4096 map writes, each address once, equal to
---                    map_init_pkg; start x = 9.5, y = 8.5 (Q6.16), angle 0.
+--                    the model's level 1 (sim/golden/level1_tiles.txt);
+--                    start x = 9.5, y = 8.5 (Q6.16), angle 0.
 --                 2. Missing id 7: error_o, no done, no writes.
 --                 3. Bad magic: error_o.
 --                 4. Level 1 again after the errors: works.
@@ -21,28 +22,30 @@
 --                 done_errors.
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
---                 level_loader, flash_reader, spi_flash_model, hw_pkg,
---                 map_init_pkg, render_types_pkg
+--                 std.textio, level_loader, flash_reader, spi_flash_model,
+--                 hw_pkg, render_types_pkg
 --
 -- Revision:
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
 -- Revision 1.01 - Procedure-based checks instead of a protected type
+-- Revision 1.02 - Level 1 tiles from a golden file (level 1 is no longer game_top's map)
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
 library IEEE;
 use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
+use std.textio.all;
 use work.tb_pkg.all;
 use work.hw_pkg.all;
 use work.render_types_pkg.all;
-use work.map_init_pkg.all;
 use work.spi_flash_model_pkg.all;
 
 entity tb_level_loader is
 	generic(
-		IMAGE_FILE: string := "../../build/gamedata.bin" -- Relative to the run directory
+		IMAGE_FILE: string := "../../build/gamedata.bin"; -- Relative to the run directory
+		TILES_FILE: string := "../../sim/golden/level1_tiles.txt" -- Level 1 tile words
 	);
 end tb_level_loader;
 
@@ -117,6 +120,22 @@ architecture arch of tb_level_loader is
 
 	constant PERIOD: time := 10 ns;
 	type char_file_t is file of character;
+	type tiles_t is array (0 to 4095) of std_logic_vector(23 downto 0);
+
+	-- Level 1's tile words as the model writes them
+	impure function read_tiles return tiles_t is
+		file f: text open read_mode is TILES_FILE;
+		variable l: line;
+		variable t: tiles_t;
+	begin
+		for i in 0 to 4095 loop
+			readline(f, l);
+			hread(l, t(i));
+		end loop;
+		return t;
+	end function;
+
+	signal level1_tiles: tiles_t := read_tiles;
 
 	signal clk: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -234,7 +253,7 @@ begin
 			elsif (map_we = '1') then
 				a := to_integer(unsigned(map_addr));
 				writes <= writes + 1;
-				if (map_data /= LEVEL1_TILES(a)) then
+				if (map_data /= level1_tiles(a)) then
 					wrong <= wrong + 1;
 				end if;
 				if (seen(a)) then

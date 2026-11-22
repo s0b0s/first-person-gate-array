@@ -55,6 +55,13 @@ package hw_pkg is
 	constant FB1_BASE: natural := 16#20000#;
 	constant ART_BASE: natural := 16#40000#;
 	constant REPLAY_BASE: natural := 16#71000#;
+	-- Frame stream shadow: the last frame sent over the UART, in the two
+	-- spare areas after the framebuffers (54,272 bytes after FB0, the other
+	-- 22,528 after FB1); pixel n < VIEW0_BYTES at VIEW0_BASE + n, the rest
+	-- at VIEW1_BASE + n - VIEW0_BYTES
+	constant VIEW0_BASE: natural := 16#12C00#;
+	constant VIEW0_BYTES: natural := 16#20000# - 16#12C00#; -- 54,272
+	constant VIEW1_BASE: natural := 16#32C00#;
 
 	-- QSPI flash: bitstream at 0, game data at 0x220000
 	constant FLASH_ADDR_BITS: natural := 22;
@@ -64,6 +71,8 @@ package hw_pkg is
 	function cycles_ns(clk_hz: natural; t_ns: natural) return natural;
 	-- Smallest number of bits that can hold the value n (at least 1)
 	function bits_for(n: natural) return natural;
+	-- Greatest common divisor (UART bit timing: CLK_HZ / BAUD as a fraction)
+	function gcd(a: natural; b: natural) return natural;
 end package hw_pkg;
 
 package body hw_pkg is
@@ -81,5 +90,18 @@ package body hw_pkg is
 			b := b + 1;
 		end loop;
 		return b;
+	end function;
+
+	function gcd(a: natural; b: natural) return natural is
+		variable x: natural := a;
+		variable y: natural := b;
+		variable t: natural;
+	begin
+		while (y /= 0) loop
+			t := x mod y;
+			x := y;
+			y := t;
+		end loop;
+		return x;
 	end function;
 end package body hw_pkg;

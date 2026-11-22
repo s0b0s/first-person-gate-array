@@ -9,13 +9,15 @@
     uv run tools/uart/live_view.py --selftest round-trip test of the stream decoder, and
                                               stream sizes and frame rates for model frames
 
-Nothing to press: it finds the board's port, finds the link rate (4 Mbaud, else 1 Mbaud) and
-shows frames until the window is closed. Unplugging, resetting or reprogramming the board
+Nothing to press: it finds the board's port, finds the link rate (12 Mbaud, else 4 or 1
+Mbaud) and shows frames until the window is closed. Unplugging, resetting or reprogramming the board
 shows "waiting for board" in the title bar and it reconnects by itself.
 
 Two ways to get frames:
     stream   bitstreams with the 'V' command: the board sends each new front buffer,
-             run-length encoded, between other commands (rtl/debug/debug_port.vhd)
+             run-length encoded and, in current bitstreams, only where it changed since
+             the frame before (delta frames; a key frame with every pixel when the
+             viewer asks, e.g. after a damaged frame) (rtl/debug/debug_port.vhd)
     polling  older bitstreams: read the display status word for the front buffer, then
              the 76,800 bytes with 'M'
 Both can tear (a frame swap during the transfer); the debug_uart.py "capture" command
@@ -182,7 +184,7 @@ class Link(threading.Thread):
     def run_stream(self, dp):
         dec = du.StreamDecoder()
         dp.ser.timeout = 0.1
-        last = time.monotonic()
+        last = asked = time.monotonic()
         try:
             while not self.stopping.is_set():
                 data = dp.ser.read(max(1, dp.ser.in_waiting))
@@ -190,6 +192,11 @@ class Link(threading.Thread):
                 for frame in dec.feed(data):
                     self.publish(frame)
                     last = now
+                if dec.need_key and now - asked > 1.0:
+                    # A delta frame could not be applied: ask for a whole frame. Its 'K'
+                    # arrives between frames and the decoder skips it.
+                    dp.ser.write(b"V\x01")
+                    asked = now
                 if now - last > self.QUIET:
                     # No frames: game frozen, board reset (stream off) or reprogrammed. A
                     # ping tells which; restarting the stream also sends one frame at once.
@@ -323,13 +330,42 @@ def selftest():
     print("decoder round trip (%d frames, junk, one damaged frame skipped): %s"
           % (len(want), "PASS" if ok else "FAIL"))
 
-    print("\n%-28s %8s %7s %9s %9s" % ("frame", "bytes", "ratio", "4 Mbaud", "1 Mbaud"))
-    for name, pixels in samples:
-        size = len(du.stream_frame(pixels))
-        print("%-28s %8d %6.2fx %6.1f fps %6.1f fps" % (name, size, du.NPIX / size,
-              4e6 / 10 / size, 1e6 / 10 / size))
-    print("%-28s %8d %7s %6.1f fps %6.1f fps" % ("polling ('M', any frame)", du.NPIX, "-",
-          4e6 / 10 / du.NPIX, 1e6 / 10 / du.NPIX))
+    # Delta frames: a key frame, then deltas; a damaged delta sets need_key and frames are
+    # dropped until the next key frame
+    page = samples[0][1]
+    page2 = bytearray(page)
+    for i in range(3000, 3400):          # a few counter digits change
+        page2[i] ^= 0x0A
+    page2 = bytes(page2)
+    seq = [(0, page, None), (1, page2, page), (2, page2, page2), (3, page, page2)]
+    stream = b"".join(du.stream_frame(p, n, prev=b) for n, p, b in seq)
+    dec, got = du.StreamDecoder(), []
+    for i in range(0, len(stream), 777):
+        got += dec.feed(stream[i:i + 777])
+    ok_d = [(f.number, f.pixels) for f in got] == [(n, p) for n, p, _ in seq]
+    bad = bytearray(du.stream_frame(page, 4, prev=page))
+    bad[12] ^= 0x01
+    got2 = dec.feed(bytes(bad)) + dec.feed(du.stream_frame(page2, 5, prev=page))
+    ok_k = dec.need_key and not got2
+    got3 = dec.feed(du.stream_frame(page2, 6))
+    ok_k = ok_k and [f.number for f in got3] == [6] and not dec.need_key
+    print("delta frames round trip: %s; damaged delta -> key frame needed, then recovered: %s"
+          % ("PASS" if ok_d else "FAIL", "PASS" if ok_k else "FAIL"))
+    ok = ok and ok_d and ok_k
+
+    print("\n%-34s %8s %7s %9s %9s" % ("frame", "bytes", "ratio", "12 Mbaud", "4 Mbaud"))
+    rows = [(name, len(du.stream_frame(p))) for name, p in samples]
+    rows.append(("page, a few digits changed (delta)", len(du.stream_frame(page2, prev=page))))
+    rows.append(("page, nothing changed (delta)", len(du.stream_frame(page, prev=page))))
+    frames4 = [p for name, p in samples if name.startswith("frame4")]
+    if len(frames4) >= 2:
+        rows.append(("game view to another (delta)", len(du.stream_frame(frames4[1], prev=frames4[0]))))
+    for name, size in rows:
+        print("%-34s %8d %6.2fx %6.1f fps %6.1f fps" % (name, size, du.NPIX / size,
+              min(60.0, 12e6 / 10 / size), min(60.0, 4e6 / 10 / size)))
+    print("%-34s %8d %7s %6.1f fps %6.1f fps" % ("polling ('M', any frame)", du.NPIX, "-",
+          12e6 / 10 / du.NPIX, 4e6 / 10 / du.NPIX))
+    print("(frame rates are link limits, capped at the game's 60)")
     return 0 if ok else 1
 
 

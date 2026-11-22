@@ -12,7 +12,7 @@
 -- Description:    System testbench for the bring-up design: 12 MHz
 --                 oscillator (real MMCM model), SRAM, SPI flash ("FPGADATA"
 --                 at 0x220000), PS/2 keyboard and mouse (10 kohm pull-ups),
---                 VGA monitor, I2S receiver and a PC on the UART (4 Mbaud).
+--                 VGA monitor, I2S receiver and a PC on the UART (12 Mbaud).
 --                 Checks over about 40 ms:
 --                 - VGA, I2S and PS/2 released before pcb_on (10 ms)
 --                 - UART ping; build id, JEDEC id, first 8 flash data bytes;
@@ -32,6 +32,7 @@
 -- Revision 1.00 - First working version
 -- Revision 1.01 - Procedure-based checks instead of a protected type
 -- Revision 1.02 - UART at 4 Mbaud, display word
+-- Revision 1.03 - UART at 12 Mbaud
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -53,7 +54,7 @@ end tb_bringup_top;
 architecture arch of tb_bringup_top is
 	component bringup_top is
 		generic(
-			BUILD_ID: std_logic_vector(31 downto 0) := x"53470002"
+			BUILD_ID: std_logic_vector(31 downto 0) := x"53470003"
 		);
 		port(
 			clk12: in std_logic;
@@ -187,7 +188,7 @@ architecture arch of tb_bringup_top is
 	end component;
 
 	constant PERIOD_12: time := 83.333 ns;
-	constant BIT_TIME: time := 250 ns; -- UART at 4 Mbaud (the default BAUD)
+	constant BIT_TIME: time := 83333 ps; -- UART at 12 Mbaud (the default BAUD)
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
 	type bytes_t is array (0 to 255) of std_logic_vector(7 downto 0);
 	type image_t is array (0 to 76_799) of integer;
@@ -505,7 +506,7 @@ begin
 		wait until (nreplies > first) for 1 ms;
 		check((nreplies > first) and (replies(first mod 256) = x"4B"), "UART ping", checks, errors);
 		read_reg(0, word);
-		check(word = x"53470002", "build id " & to_hex(word), checks, errors);
+		check(word = x"53470003", "build id " & to_hex(word), checks, errors);
 		read_reg(4, word);
 		check(word = x"00C22016", "flash JEDEC id " & to_hex(word), checks, errors);
 		read_reg(5, word);

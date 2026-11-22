@@ -6,13 +6,14 @@
 Outputs:
     rtl/pkg/palette_pkg.vhd        game palette (power-on palette RAM contents)
     rtl/pkg/render_pkg.vhd         renderer constants, sin and camera-x tables
-    rtl/pkg/map_init_pkg.vhd       level 1 tile words (map BRAM power-on contents)
+    rtl/pkg/map_init_pkg.vhd       flat maze tile words (game_top's map BRAM contents)
     rtl/render/wall_rom.vhd        8 wall textures, column-major, 32 KB
     rtl/render/flat_rom.vhd        4 floor/ceiling flats, row-major, 16 KB
     rtl/render/light_rom.vhd       light table, 16 levels x 256 indices, 4 KB
-    assets/levels/level1.txt       readable picture of level 1
-    build/level1.bin               level 1 item for the flash image
+    assets/levels/level<n>.txt     readable pictures of levels 1 to 3
+    build/level<n>.bin             level items for the flash image
     sim/golden/divider.txt         divider operands and results (n d q)
+    sim/golden/level1_tiles.txt    level 1 tile words, 4096 lines of 6 hex digits (tb_level_loader)
     sim/golden/ray4_*.txt, frame4_<k>.txt   renderer poses, spans and frames (golden4.py)
     sim/golden/game_trace.txt      frozen trace of game_seq.vhd, not regenerated
     sim/golden/game2_trace.txt, game4_trace.txt, game4d_trace.txt, sprite*, overlay_cases,
@@ -220,13 +221,16 @@ def main():
     flats = textures.flat_textures()
     blob, table = art.art_blob()
     levels = [f() for f in level_mod.LEVELS]
-    lv = levels[0]
+    lv = level_mod.level_maze()               # game_top's built-in map: the flat first maze
     tiles = lv.tile_words()
 
     for l in levels:
         l.write_ascii(ROOT / "assets" / "levels" / ("level%d.txt" % l.number))
         (ROOT / "build").mkdir(exist_ok=True)
         (ROOT / "build" / ("level%d.bin" % l.number)).write_bytes(l.binary())
+    # What the level loader must write into the map for level 1 (not game_top's built-in maze)
+    (GOLDEN / "level1_tiles.txt").write_text(
+        "".join("%06X\n" % w for w in levels[0].tile_words()), encoding="ascii", newline="\n")
     (ROOT / "build" / "art.bin").write_bytes(blob)
     export.palette_pkg(ROOT / "rtl" / "pkg" / "palette_pkg.vhd", pal)
     export.render_pkg(ROOT / "rtl" / "pkg" / "render_pkg.vhd")
@@ -260,7 +264,7 @@ def main():
                       4096, [i for row in lights for i in row], 12)
 
     # Renderer goldens: ray4_*.txt and frame4_*.txt (golden4.py); the first nine poses are the
-    # flat level-1 poses of game_top (frame4_0.txt is the first frame tb_game_top expects).
+    # flat maze poses of game_top (frame4_0.txt is the first frame tb_game_top expects).
     n_poses, divs = golden4.write_ray_goldens(
         GOLDEN, walls, flats, lights,
         (lambda k, image: write_png(ROOT / "build" / "preview" / ("frame4_%d.png" % k),
