@@ -14,6 +14,9 @@ Port names differ per computer (COM3... on Windows, /dev/ttyUSB1 on Linux,
 its FTDI USB ID (0403). The FTDI chip has two channels, A JTAG and B UART; Windows usually
 lists only B, Linux both (the UART is the second, ttyUSB1).
 
+The link rate is found by itself: 4 Mbaud first (current bitstreams), then 1 Mbaud (older
+ones). A frame stream left running (live_view.py) is stopped first.
+
 Usage (or "uv run" in place of "python"; "auto" or a port name in place of COM5):
     python tools/uart/debug_uart.py ports                  list serial ports, board marked
     python tools/uart/debug_uart.py COM5 ping
@@ -25,26 +28,83 @@ Usage (or "uv run" in place of "python"; "auto" or a port name in place of COM5)
     python tools/uart/debug_uart.py COM5 capture out.png   maze game: freeze, dump the
         front buffer and the pose, render the same frame with the Python model, compare
         pixel by pixel, then unfreeze
+For a live picture, run tools/uart/live_view.py (or double-click live_view.bat).
 """
 
 import struct
 import sys
+import time
 import zlib
 
-BAUD = 1_000_000
+BAUDS = (4_000_000, 1_000_000)  # Tried in this order
 FB_BASE = (0x00000, 0x20000)
 WIDTH, HEIGHT = 320, 240
+NPIX = WIDTH * HEIGHT
 
 
 class DebugPort:
-    def __init__(self, port):
+    def __init__(self, port, baud=BAUDS[0]):
         try:
             import serial  # pyserial, imported here so --help works without it
         except ImportError:
             sys.exit("pyserial is missing: run 'pip install -r requirements.txt', or run this "
                      "script with 'uv run' instead of 'python'")
-        self.ser = serial.Serial(port, BAUD, timeout=2)
+        self.port, self.baud = port, baud
+        self.ser = serial.Serial(port, baud, timeout=2)
         self.ser.reset_input_buffer()
+
+    @classmethod
+    def connect(cls, port, bauds=BAUDS):
+        """Open the port at the first rate the board answers on."""
+        for baud in bauds:
+            dp = cls(port, baud)
+            if dp.sync():
+                return dp
+            dp.close()
+        raise IOError("no answer from the board on %s at %s baud" %
+                      (port, " or ".join(str(b) for b in bauds)))
+
+    def close(self):
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+
+    def drain(self, quiet=0.05, limit=0.15):
+        """Discard input until the line has been silent for quiet seconds; False if it is
+        still busy after limit seconds (a frame stream is running)."""
+        self.ser.timeout = quiet
+        end = time.monotonic() + limit
+        try:
+            while time.monotonic() < end:
+                if not self.ser.read(65536):
+                    return True
+            return False
+        finally:
+            self.ser.timeout = 2
+
+    def send_spaced(self, data):
+        """Send bytes 2 ms apart. At the wrong rate each byte then reaches the board as a
+        short burst that decodes to 0xFC..0xFF (bits 2..7 see the idle line), never a
+        command, so probing cannot write anything."""
+        for b in data:
+            self.ser.write(bytes([b]))
+            self.ser.flush()
+            time.sleep(0.002)
+
+    def sync(self):
+        """Stop a running frame stream, then check the link with a ping."""
+        if not self.drain():
+            self.send_spaced(b"V\x00")       # the board finishes its frame, then says K
+            if not self.drain(limit=2.0):
+                return False
+        self.ser.reset_input_buffer()
+        self.ser.timeout = 0.3
+        try:
+            self.send_spaced(b"P")
+            return self.ser.read(1) == b"K"
+        finally:
+            self.ser.timeout = 2
 
     def _read(self, n):
         data = self.ser.read(n)
@@ -81,6 +141,137 @@ class DebugPort:
         if self._read(1) != b"K":
             raise IOError("SRAM write not acknowledged")
 
+    def stream(self, on):
+        """Frame stream on or off; False if the bitstream has no 'V' command."""
+        self.ser.write(b"V" + bytes([1 if on else 0]))
+        reply = self._read(1)
+        if reply == b"?":
+            self._read(1)  # the argument byte was taken as a second unknown command
+            return False
+        return reply == b"K"
+
+
+# ----------------------------------------------------------------------------------------
+# Frame stream ('V'): 'F', frame number (2 bytes), pixel count (3), flags, tint, palette
+# count, RLE data, 16-bit pixel sum (2). RLE: a byte other than ESC is one pixel; ESC n v
+# is n pixels of value v.
+# ----------------------------------------------------------------------------------------
+ESC = 0xFF
+HEADER = 9
+
+
+def encode_rle(pixels):
+    """The debug port's encoder in Python (for tests and size estimates)."""
+    out = bytearray()
+
+    def flush(v, n):
+        if n >= 3 or v == ESC:
+            out.extend((ESC, n, v))
+        else:
+            out.extend(bytes((v,)) * n)
+    run_v, run_n = 0, 0
+    for p in pixels:
+        if run_n and (p != run_v or run_n == 255):
+            flush(run_v, run_n)
+            run_n = 0
+        run_v, run_n = p, run_n + 1
+    flush(run_v, run_n)
+    return bytes(out)
+
+
+def stream_frame(pixels, number=0, flags=1, tint=0, pal_count=0):
+    """One whole stream frame as the debug port sends it."""
+    head = b"F" + struct.pack("<H", number & 0xFFFF) + struct.pack("<I", len(pixels))[:3]
+    head += bytes((flags, tint, pal_count))
+    return head + encode_rle(pixels) + struct.pack("<H", sum(pixels) & 0xFFFF)
+
+
+class Frame:
+    def __init__(self, number, flags, tint, pal_count, pixels):
+        self.number, self.flags, self.tint, self.pal_count = number, flags, tint, pal_count
+        self.pixels = pixels
+        self.blank = bool(flags & 2)
+        self.pattern = (flags >> 4) & 7
+
+
+class StreamDecoder:
+    """Turns stream bytes into Frames. Feed it whatever arrives; damaged frames (bad
+    header, wrong sum) are skipped and the decoder looks for the next 'F'."""
+
+    def __init__(self, npix=NPIX):
+        self.npix = npix
+        self.buf = bytearray()
+        self.bad = 0        # damaged frames and junk bytes skipped
+        self._reset()
+
+    def _reset(self):
+        self.head = None    # header fields once a plausible header is seen
+        self.out = bytearray()
+        self.pos = 0        # next unread byte of buf
+
+    def _resync(self):
+        """Drop the frame start in buf and look for the next 'F'."""
+        self.bad += 1
+        nxt = self.buf.find(b"F", 1)
+        del self.buf[:nxt if nxt > 0 else len(self.buf)]
+        self._reset()
+
+    def feed(self, data):
+        self.buf += data
+        frames = []
+        while True:
+            if self.head is None:
+                start = self.buf.find(b"F")
+                if start < 0:
+                    self.bad += 1 if self.buf else 0
+                    self.buf.clear()
+                    return frames
+                if start:
+                    self.bad += 1
+                    del self.buf[:start]
+                if len(self.buf) < HEADER:
+                    return frames
+                h = self.buf
+                count = h[3] | (h[4] << 8) | (h[5] << 16)
+                flags = h[6]
+                if count != self.npix or not flags & 1 or flags & 0x8C or h[7] > 3:
+                    self._resync()
+                    continue
+                self.head = (h[1] | (h[2] << 8), flags, h[7], h[8])
+                self.pos = HEADER
+            # RLE data: copy literal stretches between ESC bytes in one go
+            buf, out, need = self.buf, self.out, self.npix
+            while len(out) < need and self.pos < len(buf):
+                esc = buf.find(ESC, self.pos)
+                end = len(buf) if esc < 0 else esc
+                take = min(end - self.pos, need - len(out))
+                out += buf[self.pos:self.pos + take]
+                self.pos += take
+                if len(out) == need or esc < 0 or self.pos < esc:
+                    continue
+                if esc + 2 >= len(buf):
+                    break                       # the run's n and v have not arrived yet
+                n, v = buf[esc + 1], buf[esc + 2]
+                if n == 0 or len(out) + n > need:
+                    break
+                out += bytes((v,)) * n
+                self.pos = esc + 3
+            if len(out) < need:
+                if self.pos + 2 < len(buf) and buf[self.pos] == ESC and \
+                        (buf[self.pos + 1] == 0 or len(out) + buf[self.pos + 1] > need):
+                    self._resync()              # impossible run: damaged frame
+                    continue
+                return frames
+            if len(buf) < self.pos + 2:
+                return frames
+            if buf[self.pos] | (buf[self.pos + 1] << 8) != sum(out) & 0xFFFF:
+                self._resync()
+                continue
+            number, flags, tint, pal = self.head
+            frames.append(Frame(number, flags, tint, pal, bytes(out)))
+            del self.buf[:self.pos + 2]
+            self._reset()
+
 
 MODEL_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent / "model"
 
@@ -95,7 +286,6 @@ def default_palette():
 def capture(dp, png_path):
     """Freeze the game, dump the front buffer and pose, compare with the model."""
     sys.path.insert(0, str(MODEL_DIR))
-    import time
     import render
     import palette as pal_mod
     import textures
@@ -159,17 +349,22 @@ def is_uart_channel(p):
     return (p.serial_number or "").endswith("B") or (p.location or "").endswith(".1")
 
 
-def find_board_port():
-    """The Cmod's UART: the FTDI port on channel B, or the only FTDI port there is."""
+def board_ports():
+    """Candidate Cmod UARTs: the FTDI ports on channel B, or every FTDI port if none is."""
     ftdi = [p for p in list_ports() if p.vid == FTDI_VID]
-    uart = [p for p in ftdi if is_uart_channel(p)] or ftdi
+    return [p.device for p in ([p for p in ftdi if is_uart_channel(p)] or ftdi)]
+
+
+def find_board_port():
+    """The Cmod's UART for the command line: exactly one candidate, or exit."""
+    uart = board_ports()
     if len(uart) == 1:
-        return uart[0].device
+        return uart[0]
     if not uart:
         sys.exit("no FTDI serial port found: is the Cmod plugged in? "
                  "('ports' lists what there is)")
     sys.exit("several FTDI serial ports (%s): give the port name instead of 'auto'" %
-             ", ".join(p.device for p in uart))
+             ", ".join(uart))
 
 
 def main():
@@ -184,8 +379,11 @@ def main():
     port, cmd, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if port == "auto":
         port = find_board_port()
-        print("using", port)
-    dp = DebugPort(port)
+    try:
+        dp = DebugPort.connect(port)
+    except IOError as e:
+        sys.exit(str(e))
+    print("using %s at %d baud" % (port, dp.baud))
     if cmd == "ping":
         print("OK" if dp.ping() else "no answer")
     elif cmd == "status":

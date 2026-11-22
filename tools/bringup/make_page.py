@@ -24,6 +24,8 @@ rtl/top/bringup_top.vhd; keep this list in step with it:
    8-11 keyboard bytes, newest first  25 input snapshot bits 39:32
   12-15 mouse bytes, newest first     26 overruns(15:0) pcb_on(16) locked(20)
                                       27 audio on(0) pattern(6:4)
+                                      28 display: pcb_on(0) locked(1) front(2)
+                                         tint(5:4) pattern(10:8)
 
 Also writes sim/golden/page_expected.txt (one line of 320 two-digit hex palette indices per
 row): the image drawn when word w holds test_value(w) = (0x9E3779B9 * (w + 1)) mod 2^32, as
@@ -83,8 +85,8 @@ LAYOUT = [
     "AUDIO {27.1}  PATTERN {27.1.4}",
     "",
     "BTN1: NEXT PATTERN   BTN0: RESET",
-    "UART 1000000 8N1: P PING, R/W REGS,",
-    " M READ SRAM, S WRITE SRAM",
+    "UART 4000000 8N1: P PING, R/W REGS,",
+    " M READ SRAM, S WRITE SRAM, V STREAM",
 ]
 
 FIELD = re.compile(r"\{(\d+)\.(\d+)(?:\.(\d+))?\}")

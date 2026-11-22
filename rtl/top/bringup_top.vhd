@@ -17,7 +17,7 @@
 --                 - SRAM self-test on 0x40000..0x7FFFF (outside both
 --                   framebuffers), flash JEDEC ID and data-area pattern,
 --                   PS/2 keyboard and mouse, 440 Hz tone on the Pmod
---                   I2S2, UART debug port (1 Mbaud).
+--                   I2S2, UART debug port (BAUD, 4 Mbaud) with frame stream.
 --                 SRAM masters: 0 display, 1 SRAM tester, 2 pixel FIFO,
 --                 3 UART. VGA and I2S pins are high impedance and PS/2
 --                 released until pcb_on.
@@ -44,7 +44,8 @@ use work.game_pkg.all;
 
 entity bringup_top is
 	generic(
-		BUILD_ID: std_logic_vector(31 downto 0) := x"53470001" -- Shown on the status page
+		BUILD_ID: std_logic_vector(31 downto 0) := x"53470002"; -- Shown on the status page
+		BAUD: natural := 4_000_000 -- UART rate: 25 clocks per bit at 100 MHz (uart_rx needs 16 or more)
 	);
 	port(
 		clk12: in std_logic; -- 12 MHz oscillator
@@ -384,9 +385,10 @@ architecture arch of bringup_top is
 	component debug_port is
 		generic(
 			CLK_HZ: natural := 100_000_000;
-			BAUD: natural := 1_000_000;
+			BAUD: natural := 4_000_000;
 			TIMEOUT_MS: natural := 100;
-			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0')
+			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0');
+			FRAME_PIXELS: positive := 76_800
 		);
 		port(
 			clk_i: in std_logic;
@@ -395,6 +397,9 @@ architecture arch of bringup_top is
 			tx_o: out std_logic;
 			status_i: in std_logic_vector(32 * 32 - 1 downto 0);
 			ctrl_o: out std_logic_vector(8 * 32 - 1 downto 0);
+			front_i: in std_logic;
+			view_i: in std_logic_vector(7 downto 0);
+			pal_count_i: in std_logic_vector(7 downto 0);
 			m_req_o: out std_logic;
 			m_we_o: out std_logic;
 			m_addr_o: out std_logic_vector(18 downto 0);
@@ -442,6 +447,7 @@ architecture arch of bringup_top is
 	signal vga_hs_i, vga_vs_i: std_logic;
 	signal vga_t: std_logic_vector(13 downto 0);
 	signal front, back, rendering: std_logic;
+	signal view: std_logic_vector(7 downto 0); -- Stream header: 1:0 tint, 4:2 pattern, 5 blank
 	signal frame_start, frame_done: std_logic;
 	signal frame_count, late_count: std_logic_vector(15 downto 0);
 	signal overruns: unsigned(15 downto 0) := (others => '0');
@@ -645,6 +651,7 @@ begin
 	end process;
 
 	pattern <= ctrl(6 downto 4) when (ctrl(7) = '1') else std_logic_vector(pattern_btn);
+	view <= "000" & pattern & ctrl(13 downto 12);
 
 	display: display_controller
 		port map (
@@ -931,6 +938,7 @@ begin
 	------------------------------------------------------------------
 	uart: debug_port
 		generic map (
+			BAUD => BAUD,
 			CTRL_INIT => CTRL_INIT
 		)
 		port map (
@@ -940,6 +948,9 @@ begin
 			tx_o => uart_rxd_out,
 			status_i => values,
 			ctrl_o => ctrl,
+			front_i => front,
+			view_i => view,
+			pal_count_i => (others => '0'), -- The palette is never rewritten
 			m_req_o => g_req,
 			m_we_o => g_we,
 			m_addr_o => g_addr,
@@ -977,7 +988,11 @@ begin
 	values(26 * 32 + 31 downto 26 * 32) <= "00000000000" & locked & "000" & pcb_on &
 		std_logic_vector(overruns);
 	values(27 * 32 + 31 downto 27 * 32) <= x"000000" & '0' & pattern & "000" & ctrl(0); -- Pattern 6:4, tone 0
-	values(31 * 32 + 31 downto 28 * 32) <= (others => '0');
+	-- Display word: 0 PCB on, 1 locked, 2 front buffer, 5:4 tint, 10:8 pattern,
+	-- 12 blank (always 0 here) (what the VGA output shows; live_view.py reads it when polling)
+	values(28 * 32 + 31 downto 28 * 32) <= x"0000" & "00000" & pattern & "00" & ctrl(13 downto 12) &
+		'0' & front & locked & pcb_on;
+	values(31 * 32 + 31 downto 29 * 32) <= (others => '0');
 
 	------------------------------------------------------------------
 	-- LEDs. The RGB LED is very bright, so it runs at 1/32 duty.

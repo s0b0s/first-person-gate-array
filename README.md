@@ -93,10 +93,10 @@ test boots the complete design from a simulated flash chip and plays a scripted 
 ## Building
 
 You need Vivado 2025.1 (xsim runs the testbenches) and Python 3.9 or newer. The Python tools
-use only the standard library, except the UART debug tool (`tools/uart/debug_uart.py`), which
-needs `pyserial`: `pip install -r requirements.txt`, or run it with
-[uv](https://docs.astral.sh/uv/) as `uv run tools/uart/debug_uart.py ...`. Run everything from
-the repository root.
+use only the standard library, except the UART tools in `tools/uart/`: the debug tool needs
+`pyserial` (`pip install -r requirements.txt`) and the live viewer also `pygame-ce`. With
+[uv](https://docs.astral.sh/uv/), `uv run tools/uart/debug_uart.py ...` installs what each needs.
+Run everything from the repository root.
 
 On a fresh clone, run the first two steps first: they write the art, level and game-data
 files into `build/` that the testbenches and the flash image read.
@@ -114,6 +114,17 @@ files into `build/` that the testbenches and the flash image read.
 The build writes `build/shooter_top/shooter_top.bit` (load straight into the FPGA) and
 `shooter_top.mcs` (program into flash so the game boots on its own). `bringup_top` (board and
 wiring test pages) and `game_top` (the first playable maze) build the same way.
+
+## Watching the game without a monitor
+
+`tools/uart/live_view.py` (or double-click `tools/uart/live_view.bat`) shows the game in a
+window over the board's USB cable, like a second monitor. It finds the board and the link rate
+by itself and reconnects when the board is reset, reprogrammed or unplugged; close the window
+to stop it. The board streams each new frame run-length encoded at 4 Mbaud (about 7 to 30
+frames a second, depending on how busy the picture is); older bitstreams without the stream
+command are read frame by frame instead (about 1 frame a second at 1 Mbaud). The keyboard and
+mouse stay on the board. `tools/uart/debug_uart.py` reads and writes registers and memory, and
+its `capture` command freezes the game for an exact frame dump.
 
 ## Art and sound
 

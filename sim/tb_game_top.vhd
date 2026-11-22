@@ -48,7 +48,7 @@ end tb_game_top;
 architecture arch of tb_game_top is
 	component game_top is
 		generic(
-			BUILD_ID: std_logic_vector(31 downto 0) := x"53470101";
+			BUILD_ID: std_logic_vector(31 downto 0) := x"53470102";
 			POWER_HOLD: positive := 1_000_000
 		);
 		port(

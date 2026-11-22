@@ -68,7 +68,7 @@ end tb_shooter_top;
 architecture arch of tb_shooter_top is
 	component shooter_top is
 		generic(
-			BUILD_ID: std_logic_vector(31 downto 0) := x"53470301";
+			BUILD_ID: std_logic_vector(31 downto 0) := x"53470302";
 			POWER_HOLD: positive := 1_000_000;
 			REPLAY_INIT: natural range 0 to 2 := 0;
 			BOOT_ART: boolean := true

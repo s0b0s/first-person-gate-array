@@ -12,10 +12,11 @@
 -- Description:    System testbench for the bring-up design: 12 MHz
 --                 oscillator (real MMCM model), SRAM, SPI flash ("FPGADATA"
 --                 at 0x220000), PS/2 keyboard and mouse (10 kohm pull-ups),
---                 VGA monitor, I2S receiver and a PC on the UART.
+--                 VGA monitor, I2S receiver and a PC on the UART (4 Mbaud).
 --                 Checks over about 40 ms:
 --                 - VGA, I2S and PS/2 released before pcb_on (10 ms)
---                 - UART ping; build id, JEDEC id, first 8 flash data bytes
+--                 - UART ping; build id, JEDEC id, first 8 flash data bytes;
+--                   display word (PCB on, locked, pattern and tint 0)
 --                 - a make code sets the key register and history, a
 --                   break code clears it
 --                 - SRAM self-test clean; no late frames or fetch overruns
@@ -30,6 +31,7 @@
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
 -- Revision 1.01 - Procedure-based checks instead of a protected type
+-- Revision 1.02 - UART at 4 Mbaud, display word
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -51,7 +53,7 @@ end tb_bringup_top;
 architecture arch of tb_bringup_top is
 	component bringup_top is
 		generic(
-			BUILD_ID: std_logic_vector(31 downto 0) := x"53470001"
+			BUILD_ID: std_logic_vector(31 downto 0) := x"53470002"
 		);
 		port(
 			clk12: in std_logic;
@@ -185,7 +187,7 @@ architecture arch of tb_bringup_top is
 	end component;
 
 	constant PERIOD_12: time := 83.333 ns;
-	constant BIT_TIME: time := 1 us; -- UART at 1 Mbaud
+	constant BIT_TIME: time := 250 ns; -- UART at 4 Mbaud (the default BAUD)
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
 	type bytes_t is array (0 to 255) of std_logic_vector(7 downto 0);
 	type image_t is array (0 to 76_799) of integer;
@@ -503,13 +505,16 @@ begin
 		wait until (nreplies > first) for 1 ms;
 		check((nreplies > first) and (replies(first mod 256) = x"4B"), "UART ping", checks, errors);
 		read_reg(0, word);
-		check(word = x"53470001", "build id " & to_hex(word), checks, errors);
+		check(word = x"53470002", "build id " & to_hex(word), checks, errors);
 		read_reg(4, word);
 		check(word = x"00C22016", "flash JEDEC id " & to_hex(word), checks, errors);
 		read_reg(5, word);
 		check(word = x"46504741", "flash data bytes 0-3 " & to_hex(word), checks, errors);
 		read_reg(6, word);
 		check(word = x"44415441", "flash data bytes 4-7 " & to_hex(word), checks, errors);
+		read_reg(28, word);
+		check((word(1 downto 0) = "11") and (word(5 downto 4) = "00") and (word(10 downto 8) = "000"),
+			"display word " & to_hex(word), checks, errors);
 		read_reg(18, word);
 		check(word(KEY_W) = '1', "W held in the key register " & to_hex(word), checks, errors);
 		read_reg(8, word);

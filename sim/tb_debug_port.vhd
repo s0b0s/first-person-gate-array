@@ -9,7 +9,7 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Simulation only (Vivado xsim)
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
--- Description:    Self-checking testbench for debug_port at 1 Mbaud with
+-- Description:    Self-checking testbench for debug_port at BAUD with
 --                 the real SRAM path behind master 3 (sram_arbiter,
 --                 sram_controller, sram_model) and a PC-side UART. Tests:
 --                 ping, echo, status register read, control register
@@ -17,6 +17,22 @@
 --                 SRAM write and read back (also via the model's back
 --                 door), unknown command, and a command abandoned half-way
 --                 (dropped after TIMEOUT_MS = 1 ms; the next ping works).
+--                 Frame stream ('V', FRAME_PIXELS = 1024 to keep it short;
+--                 both framebuffers preloaded through the model's back door
+--                 with long runs, runs over 255, runs of 1 to 3, ESC-valued
+--                 pixels and single values):
+--                 - header fields: 'F', frame number, pixel count, flags
+--                   (RLE, blank, pattern), tint, palette count
+--                 - RLE bytes equal a reference encoder's byte for byte, and
+--                   decode back to the front buffer; the pixel sum matches
+--                 - the first frame follows 'V' at once; three front changes
+--                   give two frames numbered +1 and +3 (one skipped), from
+--                   the new front buffer; no frame without a change
+--                 - a register read sent during a frame: the frame arrives
+--                   whole and the reply follows it
+--                 - 'V' 0 during a frame: the frame ends, then 'K', then no
+--                   more frames
+--                 RUN_VARIANTS: BAUD=1000000 BAUD=4000000
 --
 -- Dependencies:   VHDL-2008, IEEE.std_logic_1164, IEEE.numeric_std, tb_pkg,
 --                 sram_model, debug_port, uart_rx, uart_tx, sram_arbiter,
@@ -26,6 +42,7 @@
 -- Revision 0.01 - File Created
 -- Revision 1.00 - First working version
 -- Revision 1.01 - Procedure-based checks instead of a protected type
+-- Revision 1.02 - BAUD generic, frame stream tests
 -- Additional Comments:
 --                 None.
 --------------------------------------------------------------------------
@@ -34,17 +51,22 @@ use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
 use work.tb_pkg.all;
 use work.sram_model_pkg.all;
+use work.hw_pkg.all;
 
 entity tb_debug_port is
+	generic(
+		BAUD: natural := 4_000_000 -- UART rate of the port and the PC side
+	);
 end tb_debug_port;
 
 architecture arch of tb_debug_port is
 	component debug_port is
 		generic(
 			CLK_HZ: natural := 100_000_000;
-			BAUD: natural := 1_000_000;
+			BAUD: natural := 4_000_000;
 			TIMEOUT_MS: natural := 100;
-			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0')
+			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0');
+			FRAME_PIXELS: positive := 76_800
 		);
 		port(
 			clk_i: in std_logic;
@@ -53,6 +75,9 @@ architecture arch of tb_debug_port is
 			tx_o: out std_logic;
 			status_i: in std_logic_vector(32 * 32 - 1 downto 0);
 			ctrl_o: out std_logic_vector(8 * 32 - 1 downto 0);
+			front_i: in std_logic;
+			view_i: in std_logic_vector(7 downto 0);
+			pal_count_i: in std_logic_vector(7 downto 0);
 			m_req_o: out std_logic;
 			m_we_o: out std_logic;
 			m_addr_o: out std_logic_vector(18 downto 0);
@@ -143,9 +168,34 @@ architecture arch of tb_debug_port is
 	end component;
 
 	constant PERIOD: time := 10 ns;
-	constant BIT_TIME: time := 1 us; -- 1 Mbaud
+	constant BIT_TIME: time := 1 sec / BAUD;
 	constant T_OUT: time := 3.5 ns; -- FPGA clock-to-out plus board trace
-	type bytes_t is array (0 to 255) of std_logic_vector(7 downto 0);
+	constant NPIX: natural := 1024; -- Pixels per streamed frame here
+	constant RING: natural := 8192; -- Received bytes kept (a frame is at most 3 * NPIX + 11)
+	type bytes_t is array (0 to RING - 1) of std_logic_vector(7 downto 0);
+
+	-- Test image of framebuffer fb (0 or 1), pixel i: a 300-pixel run (split
+	-- at 255), single values, ESC (255) twice and once, a 2-run, a 3-run,
+	-- then runs of 16
+	function pix(fb: natural; i: natural) return natural is
+	begin
+		if (i < 300) then
+			return 7 + fb;
+		elsif (i < 400) then
+			return (i * 37 + fb) mod 255;
+		elsif (i < 402) then
+			return 255;
+		elsif (i = 402) then
+			return 9;
+		elsif (i < 405) then
+			return 10;
+		elsif (i < 408) then
+			return 11;
+		elsif (i = 408) then
+			return 255;
+		end if;
+		return ((i / 16) * 5 + 3 * fb) mod 255;
+	end function;
 
 	signal clk, clk_rd: std_logic := '0';
 	signal rst: std_logic := '1';
@@ -158,6 +208,9 @@ architecture arch of tb_debug_port is
 	signal replies: bytes_t;
 	signal nreplies: natural := 0;
 	signal rx_checks, rx_errors: natural := 0; -- PC-side receiver check counts
+	signal front: std_logic := '0';
+	signal view: std_logic_vector(7 downto 0) := x"2E"; -- Blank, pattern 3, tint 2
+	signal pal_count: std_logic_vector(7 downto 0) := x"5A";
 
 	signal g_req, g_we: std_logic;
 	signal g_addr: std_logic_vector(18 downto 0);
@@ -199,8 +252,10 @@ begin
 
 	dut: debug_port
 		generic map (
+			BAUD => BAUD,
 			TIMEOUT_MS => 1,
-			CTRL_INIT => (others => '0')
+			CTRL_INIT => (others => '0'),
+			FRAME_PIXELS => NPIX
 		)
 		port map (
 			clk_i => clk,
@@ -209,6 +264,9 @@ begin
 			tx_o => fpga_tx,
 			status_i => status,
 			ctrl_o => ctrl,
+			front_i => front,
+			view_i => view,
+			pal_count_i => pal_count,
 			m_req_o => g_req,
 			m_we_o => g_we,
 			m_addr_o => g_addr,
@@ -324,7 +382,7 @@ begin
 		check(fpga_tx = '1', "stop bit", checks, errors);
 		rx_checks <= checks;
 		rx_errors <= errors;
-		replies(nreplies mod 256) <= b;
+		replies(nreplies mod RING) <= b;
 		nreplies <= nreplies + 1;
 	end process;
 
@@ -344,8 +402,130 @@ begin
 
 		impure function reply(i: natural) return std_logic_vector is
 		begin
-			return replies((first + i) mod 256);
+			return replies((first + i) mod RING);
 		end function;
+
+		variable exp: bytes_t; -- Reference encoder output
+		variable nexp: natural; -- Its length
+		variable fnum, fnum0: natural; -- Frame numbers from headers
+		variable lost: boolean; -- A stream byte never came
+
+		-- Byte k after first as a number, waiting for it if needed (0 once a byte is lost)
+		procedure get(k: natural; b: out natural) is
+		begin
+			if ((not lost) and (nreplies <= first + k)) then
+				wait until (nreplies > first + k) for 5 ms;
+			end if;
+			if (nreplies <= first + k) then
+				lost := true;
+				b := 0;
+			else
+				b := to_integer(unsigned(replies((first + k) mod RING)));
+			end if;
+		end procedure;
+
+		-- Append the bytes of one finished run to exp (the RTL's rule)
+		procedure flush(v: natural; n: natural) is
+		begin
+			if ((n >= 3) or (v = 255)) then
+				exp(nexp) := x"FF";
+				exp(nexp + 1) := std_logic_vector(to_unsigned(n, 8));
+				exp(nexp + 2) := std_logic_vector(to_unsigned(v, 8));
+				nexp := nexp + 3;
+			else
+				for j in 1 to n loop
+					exp(nexp) := std_logic_vector(to_unsigned(v, 8));
+					nexp := nexp + 1;
+				end loop;
+			end if;
+		end procedure;
+
+		-- Reference encoder: the RLE bytes of framebuffer fb into exp
+		procedure ref_encode(fb: natural) is
+			variable rv, rl, v: natural;
+		begin
+			nexp := 0;
+			rv := 0;
+			rl := 0;
+			for i in 0 to NPIX - 1 loop
+				v := pix(fb, i);
+				if ((rl /= 0) and ((v /= rv) or (rl = 255))) then
+					flush(rv, rl);
+					rl := 1;
+				else
+					rl := rl + 1;
+				end if;
+				rv := v;
+			end loop;
+			flush(rv, rl);
+		end procedure;
+
+		-- Read the frame that starts at byte first, check it against framebuffer
+		-- fb, put its number in fnum and move first past it
+		procedure check_frame(fb: natural; msg: string) is
+			variable b, n, v, k, count, sum, bad, mism: natural;
+		begin
+			lost := false;
+			get(0, b);
+			check(b = 16#46#, msg & ": header starts with F", checks, errors);
+			get(1, b);
+			get(2, n);
+			fnum := b + 256 * n;
+			get(3, b);
+			get(4, n);
+			get(5, v);
+			check(b + 256 * n + 65536 * v = NPIX, msg & ": pixel count", checks, errors);
+			get(6, b);
+			check(b = 16 * to_integer(unsigned(view(4 downto 2))) + 2 * to_integer(unsigned(view(5 downto 5))) + 1,
+				msg & ": flags (RLE, blank, pattern) " & integer'image(b), checks, errors);
+			get(7, b);
+			check(b = to_integer(unsigned(view(1 downto 0))), msg & ": tint", checks, errors);
+			get(8, b);
+			check(b = to_integer(unsigned(pal_count)), msg & ": palette count", checks, errors);
+			-- Byte for byte against the reference encoder
+			ref_encode(fb);
+			mism := 0;
+			for j in 0 to nexp - 1 loop
+				get(9 + j, b);
+				if (b /= to_integer(unsigned(exp(j)))) then
+					mism := mism + 1;
+				end if;
+			end loop;
+			check(mism = 0, msg & ": RLE bytes equal the reference encoder (" & integer'image(mism) &
+				" of " & integer'image(nexp) & " differ)", checks, errors);
+			-- Decode the same bytes back into pixels
+			k := 9;
+			count := 0;
+			bad := 0;
+			sum := 0;
+			while ((count < NPIX) and (k < 9 + 3 * NPIX) and (not lost)) loop
+				get(k, b);
+				k := k + 1;
+				if (b = 255) then
+					get(k, n);
+					get(k + 1, v);
+					k := k + 2;
+				else
+					n := 1;
+					v := b;
+				end if;
+				for j in 1 to n loop
+					if ((count < NPIX) and (v /= pix(fb, count))) then
+						bad := bad + 1;
+					end if;
+					count := count + 1;
+					sum := (sum + v) mod 65536;
+				end loop;
+			end loop;
+			check((count = NPIX) and (bad = 0), msg & ": decodes to the framebuffer (" &
+				integer'image(count) & " pixels, " & integer'image(bad) & " wrong)", checks, errors);
+			check(k = 9 + nexp, msg & ": data length", checks, errors);
+			get(k, b);
+			get(k + 1, n);
+			check(b + 256 * n = sum, msg & ": pixel sum", checks, errors);
+			check(not lost, msg & ": every byte arrived", checks, errors);
+			first := first + k + 2;
+		end procedure;
 	begin
 		wait until (rst = '0');
 		wait for 2 us;
@@ -462,6 +642,74 @@ begin
 		check(unsigned(rx_count) = 74, "rx byte count " & integer'image(to_integer(unsigned(rx_count))),
 			checks, errors);
 		check(unsigned(tx_count) = nreplies, "tx byte count", checks, errors);
+
+		------------------------------------------------------------------
+		-- Frame stream
+		------------------------------------------------------------------
+		for i in 0 to NPIX - 1 loop
+			sram_mem.write(FB0_BASE + i, std_logic_vector(to_unsigned(pix(0, i), 8)));
+			sram_mem.write(FB1_BASE + i, std_logic_vector(to_unsigned(pix(1, i), 8)));
+		end loop;
+		front <= '1'; -- Front change 1, while the stream is off
+		wait for 1 us;
+
+		-- 'V' 1: 'K', then a frame of the front buffer at once
+		first := nreplies;
+		pc_send(pc_tx, x"56");
+		pc_send(pc_tx, x"01");
+		expect(1, "stream on");
+		check(reply(0) = x"4B", "'V' 1 replies K", checks, errors);
+		first := first + 1;
+		check_frame(1, "first frame");
+		fnum0 := fnum;
+		check(fnum0 = 1, "first frame number counts the front change before it", checks, errors);
+
+		-- No front change, no frame
+		wait for 300 * BIT_TIME;
+		check(nreplies = first, "no frame without a front change", checks, errors);
+
+		-- Three changes within one header: frames +1 and +3 follow (the +2
+		-- frame is skipped, never waited for), both from FB0
+		front <= '0';
+		wait for 50 ns;
+		front <= '1';
+		wait for 50 ns;
+		front <= '0';
+		check_frame(0, "frame after three changes");
+		check(fnum = fnum0 + 1, "its number is +1", checks, errors);
+		check_frame(0, "next frame");
+		check(fnum = fnum0 + 3, "its number is +3 (one frame skipped)", checks, errors);
+		wait for 300 * BIT_TIME;
+		check(nreplies = first, "no further frames", checks, errors);
+
+		-- A register read sent during a frame: the frame arrives whole, then the reply
+		front <= '1';
+		wait until (nreplies >= first + 12) for 5 ms;
+		pc_send(pc_tx, x"52");
+		pc_send(pc_tx, x"05");
+		check_frame(1, "frame with a command inside");
+		check(fnum = fnum0 + 4, "its number is +4", checks, errors);
+		expect(4, "read reg 5 during a frame");
+		check((reply(0) & reply(1) & reply(2) & reply(3)) = x"05050505", "reply follows the frame",
+			checks, errors);
+		first := first + 4;
+
+		-- 'V' 0 during a frame: the frame ends, then 'K', then no more frames
+		front <= '0';
+		wait until (nreplies >= first + 12) for 5 ms;
+		pc_send(pc_tx, x"56");
+		pc_send(pc_tx, x"00");
+		check_frame(0, "frame with a stop inside");
+		expect(1, "stream off");
+		check(reply(0) = x"4B", "'V' 0 replies K after the frame", checks, errors);
+		first := first + 1;
+		front <= '1';
+		wait for 50 ns;
+		front <= '0';
+		wait for 300 * BIT_TIME;
+		check(nreplies = first, "no frames once the stream is off", checks, errors);
+
+		check(unsigned(tx_count) = nreplies mod 65536, "tx byte count with the stream", checks, errors);
 		check(sram_errors = 0, "SRAM model timing errors", checks, errors);
 		done <= true;
 		wait for 1 ns; -- The other processes' last counts reach their signals a delta later

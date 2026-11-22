@@ -25,6 +25,7 @@
 --                 pattern override (bits 6:4), bits 13:12 tint, bit 16
 --                 freeze (front buffer kept for a dump). Register 33: frame
 --                 start line (default 115). Status: "Status words" below.
+--                 UART at BAUD (4 Mbaud); 'V' streams each new frame.
 --                 Clock domains: clk_sys (100 MHz), clk_pix (25 MHz),
 --                 crossed only inside display_controller.
 --
@@ -47,7 +48,8 @@ use work.map_init_pkg.all;
 
 entity game_top is
 	generic(
-		BUILD_ID: std_logic_vector(31 downto 0) := x"53470101"; -- Maze game build
+		BUILD_ID: std_logic_vector(31 downto 0) := x"53470102"; -- Maze game build
+		BAUD: natural := 4_000_000; -- UART rate: 25 clocks per bit at 100 MHz (uart_rx needs 16 or more)
 		POWER_HOLD: positive := 1_000_000 -- PWR_SENSE hold time in clocks (10 ms)
 	);
 	port(
@@ -425,9 +427,10 @@ architecture arch of game_top is
 	component debug_port is
 		generic(
 			CLK_HZ: natural := 100_000_000;
-			BAUD: natural := 1_000_000;
+			BAUD: natural := 4_000_000;
 			TIMEOUT_MS: natural := 100;
-			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0')
+			CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) := (others => '0');
+			FRAME_PIXELS: positive := 76_800
 		);
 		port(
 			clk_i: in std_logic;
@@ -436,6 +439,9 @@ architecture arch of game_top is
 			tx_o: out std_logic;
 			status_i: in std_logic_vector(32 * 32 - 1 downto 0);
 			ctrl_o: out std_logic_vector(8 * 32 - 1 downto 0);
+			front_i: in std_logic;
+			view_i: in std_logic_vector(7 downto 0);
+			pal_count_i: in std_logic_vector(7 downto 0);
 			m_req_o: out std_logic;
 			m_we_o: out std_logic;
 			m_addr_o: out std_logic_vector(18 downto 0);
@@ -491,6 +497,7 @@ architecture arch of game_top is
 	signal pattern: std_logic_vector(2 downto 0);
 	signal btn1_rise: std_logic;
 	signal blank: std_logic;
+	signal view: std_logic_vector(7 downto 0); -- Stream header: 1:0 tint, 4:2 pattern, 5 blank
 	signal shown: std_logic := '0'; -- A rendered frame is on screen
 
 	-- Game frame control
@@ -709,6 +716,7 @@ begin
 	end process;
 
 	pattern <= ctrl(6 downto 4) when (ctrl(7) = '1') else std_logic_vector(pattern_btn);
+	view <= "00" & blank & pattern & ctrl(13 downto 12);
 	blank <= '1' when ((shown = '0') and (unsigned(pattern) = PATTERN_FRAMEBUFFER)) else '0';
 
 	display: display_controller
@@ -1080,6 +1088,7 @@ begin
 	------------------------------------------------------------------
 	uart: debug_port
 		generic map (
+			BAUD => BAUD,
 			CTRL_INIT => CTRL_INIT
 		)
 		port map (
@@ -1089,6 +1098,9 @@ begin
 			tx_o => uart_rxd_out,
 			status_i => values,
 			ctrl_o => ctrl,
+			front_i => front,
+			view_i => view,
+			pal_count_i => (others => '0'), -- The palette is never rewritten
 			m_req_o => g_req,
 			m_we_o => g_we,
 			m_addr_o => g_addr,
@@ -1118,7 +1130,10 @@ begin
 	-- 14: mouse retries 15:8, start-up state 7:4, buttons 2:0
 	values(14 * 32 + 31 downto 14 * 32) <= x"0000" & mouse_retries & mouse_state & '0' & mouse_buttons;
 	values(15 * 32 + 31 downto 15 * 32) <= rx_count & tx_count;
-	values(16 * 32 + 31 downto 16 * 32) <= x"0000000" & '0' & front & locked & pcb_on; -- 2 front, 1 locked, 0 PCB on
+	-- Display word: 0 PCB on, 1 locked, 2 front buffer, 5:4 tint, 10:8 pattern,
+	-- 12 blank (what the VGA output shows; live_view.py reads it when polling)
+	values(16 * 32 + 31 downto 16 * 32) <= x"0000" & "000" & blank & '0' & pattern & "00" &
+		ctrl(13 downto 12) & '0' & front & locked & pcb_on;
 	-- Words 17..24: door table as rendered, so the model can redraw the frame
 	door_words: for k in 0 to 7 generate
 		values((17 + k) * 32 + 31 downto (17 + k) * 32) <=

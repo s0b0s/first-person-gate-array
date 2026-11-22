@@ -5,7 +5,8 @@
 # nothing from this file.
 #
 # Install:  pip install -r requirements.txt
-# Or with uv, nothing to install: "uv run tools/uart/debug_uart.py ..." fetches the package
-# itself (the script lists it in a header at its top).
+# Or with uv, nothing to install: "uv run tools/uart/debug_uart.py ..." (or live_view.py)
+# fetches the packages itself (each script lists them in a header at its top).
 
-pyserial  # serial port access for tools/uart/debug_uart.py (talking to the board over UART)
+pyserial  # serial port access for tools/uart/ (talking to the board over UART)
+pygame-ce  # the window of tools/uart/live_view.py
