@@ -5,15 +5,16 @@
 -- Engineer:       Matthew Gordon
 --
 -- Create Date:    10/21/2026
--- Design Name:    Level 1 Map Package
+-- Design Name:    Maze Map Package
 -- Module Name:    map_init_pkg
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Power-on contents of the tile map BRAM: level 1, 64 x 64 tile
---                 words of 24 bits (fields TILE_* in game_pkg), index
---                 y * 64 + x, and its start pose. The level loader overwrites
---                 the map from flash; these are the fallback if that fails.
+-- Description:    Power-on contents of the tile map BRAM: the flat first maze
+--                 (tools/model/level.py level_maze(), game_top's map), 64 x 64
+--                 tile words of 24 bits (fields TILE_* in game_pkg), index
+--                 y * 64 + x, and its start pose. shooter_top's level loader
+--                 overwrites the map from flash at every level start.
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std
 --
@@ -28,7 +29,7 @@ use IEEE.std_logic_1164.all;
 
 package map_init_pkg is
 	type tile_array_t is array (0 to 4095) of std_logic_vector(23 downto 0);
-	constant LEVEL1_TILES: tile_array_t := (
+	constant MAZE_TILES: tile_array_t := (
 		x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81",
 		x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81",
 		x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81",
@@ -542,7 +543,7 @@ package map_init_pkg is
 		x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81",
 		x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81", x"000A81"
 	);
-	constant LEVEL1_START_X: std_logic_vector(21 downto 0) := "0010011000000000000000"; -- 9.5 tiles, Q6.16
-	constant LEVEL1_START_Y: std_logic_vector(21 downto 0) := "0010001000000000000000"; -- 8.5 tiles, Q6.16
-	constant LEVEL1_START_ANGLE: std_logic_vector(9 downto 0) := "0000000000"; -- 0
+	constant MAZE_START_X: std_logic_vector(21 downto 0) := "0010011000000000000000"; -- 9.5 tiles, Q6.16
+	constant MAZE_START_Y: std_logic_vector(21 downto 0) := "0010001000000000000000"; -- 8.5 tiles, Q6.16
+	constant MAZE_START_ANGLE: std_logic_vector(9 downto 0) := "0000000000"; -- 0
 end package map_init_pkg;

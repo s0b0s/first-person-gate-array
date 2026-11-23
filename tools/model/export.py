@@ -185,21 +185,22 @@ end arch;
 
 def map_init_pkg(path, tiles, start):
     sx, sy, sa = start
-    text = header("map_init_pkg", """Power-on contents of the tile map BRAM: level 1, 64 x 64 tile
-        words of 24 bits (fields TILE_* in game_pkg), index
-        y * 64 + x, and its start pose. The level loader overwrites
-        the map from flash; these are the fallback if that fails.""")
+    text = header("map_init_pkg", """Power-on contents of the tile map BRAM: the flat first maze
+        (tools/model/level.py level_maze(), game_top's map), 64 x 64
+        tile words of 24 bits (fields TILE_* in game_pkg), index
+        y * 64 + x, and its start pose. shooter_top's level loader
+        overwrites the map from flash at every level start.""")
     text += f"""library IEEE;
 use IEEE.std_logic_1164.all;
 
 package map_init_pkg is
 	type tile_array_t is array (0 to 4095) of std_logic_vector(23 downto 0);
-	constant LEVEL1_TILES: tile_array_t := (
+	constant MAZE_TILES: tile_array_t := (
 {hex_rows(tiles, 6, 8)}
 	);
-	constant LEVEL1_START_X: std_logic_vector(21 downto 0) := "{format(int(round(sx * 65536)), "022b")}"; -- {sx} tiles, Q6.16
-	constant LEVEL1_START_Y: std_logic_vector(21 downto 0) := "{format(int(round(sy * 65536)), "022b")}"; -- {sy} tiles, Q6.16
-	constant LEVEL1_START_ANGLE: std_logic_vector(9 downto 0) := "{format(sa & 1023, "010b")}"; -- {sa}
+	constant MAZE_START_X: std_logic_vector(21 downto 0) := "{format(int(round(sx * 65536)), "022b")}"; -- {sx} tiles, Q6.16
+	constant MAZE_START_Y: std_logic_vector(21 downto 0) := "{format(int(round(sy * 65536)), "022b")}"; -- {sy} tiles, Q6.16
+	constant MAZE_START_ANGLE: std_logic_vector(9 downto 0) := "{format(sa & 1023, "010b")}"; -- {sa}
 end package map_init_pkg;
 """
     write(path, text)

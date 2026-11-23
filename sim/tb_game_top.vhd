@@ -12,7 +12,7 @@
 -- Description:    System testbench for the maze game from the 12 MHz
 --                 oscillator (real MMCM model) with SRAM, SPI flash
 --                 (build/gamedata.bin at 0x220000), PS/2 and VGA models.
---                 Checks: level 1 loads (status register 7 = 1); the first
+--                 Checks: the maze (flash item 4) loads (status register 7 = 1); the first
 --                 front buffer equals sim/golden/frame4_0.txt; holding W moves
 --                 the player east inside the start room with no late frames or
 --                 line fetch overruns; VGA timing is clean.

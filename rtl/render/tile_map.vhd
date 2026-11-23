@@ -14,8 +14,9 @@
 --                   port A: read only, ray engine DDA walk
 --                   port B: read/write, level loader, game sequencer and
 --                           floor caster, one at a time
---                 Reads registered (1 clock). Powers up with level 1 from
---                 map_init_pkg, so the game runs without a flash load.
+--                 Reads registered (1 clock). Powers up with the flat
+--                 maze from map_init_pkg, so game_top runs without a flash
+--                 load; shooter_top loads each level over it.
 --                 Clock domain: clk_i (system).
 --
 -- Dependencies:   VHDL-93, IEEE.std_logic_1164, IEEE.numeric_std,
@@ -46,7 +47,7 @@ end tile_map;
 
 architecture arch of tile_map is
 	-- Only port B writes, so a plain signal infers one dual-port BRAM
-	signal ram: tile_array_t := LEVEL1_TILES;
+	signal ram: tile_array_t := MAZE_TILES;
 begin
 	process(clk_i)
 	begin

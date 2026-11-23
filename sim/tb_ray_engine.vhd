@@ -11,7 +11,7 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for ray_engine against
 --                 tools/model/render.py (via golden4.py). Golden files:
---                 ray4_poses.txt (27 poses: 9 flat level-1, 10 level-3 height
+--                 ray4_poses.txt (27 poses: 9 flat maze, 10 level-3 height
 --                 cases, 4 on the directed test map, 4 with light effects;
 --                 each line ends with the fx_i effects register: lmod of light
 --                 types 0..3, anim), ray4_maps.txt (tile maps), ray4_spans.txt

@@ -13,6 +13,7 @@ Items:
     id 1..3    levels 1..3 (tools/model/level.py Level.binary()): 4096 tile words of 3 bytes,
                little endian, index y * 64 + x; start x, start y (u32, Q6.16), start angle
                (u16); actor count (u16) and that many 8-byte actor records; level number (u8)
+    id 4       the flat first maze that game_top loads (level.level_maze(), same format)
     id 8       sprite art, 197,632 bytes, column-major frames (tools/model/art.py)
     id 16..33  sound effects 0..17, 11,025 Hz 8-bit unsigned (tools/model/audio.py)
     id 40..42  music loops for levels 1..3, 11,025 Hz 8-bit unsigned
@@ -34,6 +35,7 @@ ITEM_ALIGN = 256
 
 ID_TEST_PATTERN = 0
 ID_LEVEL = 1          # + level number - 1
+ID_MAZE = 4           # game_top's flat maze
 ID_ART = 8
 ID_SOUND = 16         # + sound id
 ID_MUSIC = 40         # + level - 1
@@ -68,6 +70,7 @@ def main():
     items = [(ID_TEST_PATTERN, test_pattern())]
     for n, make in enumerate(level.LEVELS):
         items.append((ID_LEVEL + n, make().binary()))
+    items.append((ID_MAZE, level.level_maze().binary()))
     items.append((ID_ART, art.art_blob()[0]))
     for sid, blob in enumerate(audio.sound_blobs()):
         items.append((ID_SOUND + sid, blob))

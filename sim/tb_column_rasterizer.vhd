@@ -11,7 +11,7 @@
 -- Tool versions:  Vivado 2025.1 xsim, VHDL-2008
 -- Description:    Self-checking testbench for column_rasterizer against
 --                 tools/model/render.py raster_spans. For each of the 27
---                 poses of sim/golden/ray4_poses.txt (9 flat level 1, 10
+--                 poses of sim/golden/ray4_poses.txt (9 flat maze, 10
 --                 level 3 heights and ramps, 4 test map, 4 light effects)
 --                 it sets camera, angle and fx, feeds the golden spans of
 --                 ray4_spans.txt (format in tools/model/golden4.py) with

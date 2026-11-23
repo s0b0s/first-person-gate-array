@@ -8,7 +8,7 @@ keyboard and mouse interface and sound are all state machines and memories writt
 
 Walk through a textured 3D maze, open doors, collect keys, health, ammo and weapons, and fight
 monsters that see you, chase you and shoot back. Three levels, the last ending with a boss.
-Later levels add floor and ceiling heights, steps, ramps and pits, flickering and glowing
+Each level has floor and ceiling heights, steps, ramps and pits, flickering and glowing
 lights, outdoor areas with a sky, and animated slime walls. Gunfire wakes monsters in nearby
 rooms, except those lying in ambush.
 
@@ -123,8 +123,9 @@ by itself and reconnects when the board is reset, reprogrammed or unplugged; clo
 to stop it. The board streams each new frame at 12 Mbaud, sending only the pixels that changed
 since the frame before, run-length encoded, so the window keeps up with the game's 60 frames a
 second; a whole new view while turning fast takes longer. Older bitstreams without the stream
-command are read frame by frame instead. The keyboard and mouse stay on the board. `tools/uart/debug_uart.py` reads and writes registers and memory, and
-its `capture` command freezes the game for an exact frame dump.
+command are read frame by frame instead. The keyboard and mouse stay on the board.
+`tools/uart/debug_uart.py` reads and writes registers and memory, and its `capture` command
+freezes the game for an exact frame dump.
 
 ## Art and sound
 

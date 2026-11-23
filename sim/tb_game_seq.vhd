@@ -116,7 +116,7 @@ begin
 	process(clk)
 	begin
 		if rising_edge(clk) then
-			map_data <= LEVEL1_TILES(to_integer(unsigned(map_addr)));
+			map_data <= MAZE_TILES(to_integer(unsigned(map_addr)));
 		end if;
 	end process;
 

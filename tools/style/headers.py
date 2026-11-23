@@ -47,7 +47,7 @@ DESIGN_NAMES = {
     "vga_timing": "VGA Timing", "display_pixel": "Display Pixel Path",
     "line_fetcher": "Line Fetcher", "line_buffer": "Line Buffer", "palette_ram": "Palette RAM",
     "display_controller": "Display Controller", "buffer_manager": "Buffer Manager",
-    "map_init_pkg": "Level 1 Map Package", "game_tables_pkg": "Game Tables Package",
+    "map_init_pkg": "Maze Map Package", "game_tables_pkg": "Game Tables Package",
     "text_pkg": "Text Strings Package", "render_types_pkg": "Renderer Types Package",
     "render_pkg": "Renderer Constants Package", "palette_pkg": "Palette Package",
     "game_pkg": "Game Constants Package", "hw_pkg": "Hardware Constants Package",

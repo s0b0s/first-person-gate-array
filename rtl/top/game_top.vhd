@@ -9,11 +9,13 @@
 -- Project Name:   First-Person Gate Array
 -- Target Devices: Digilent Cmod A7-35T, Artix-7 FPGAs
 -- Tool versions:  Vivado 2025.1, VHDL-93
--- Description:    Maze game: walk level 1's textured maze in first person
+-- Description:    Maze game: walk a flat textured maze in first person
 --                 with keyboard and mouse, open doors, collide with walls.
---                 Boot: the level loader copies level 1 from flash into the
---                 tile map (its power-on contents are level 1 too, so a
---                 failed load still runs).
+--                 Boot: the level loader copies the maze (flash item 4,
+--                 tools/model/level.py level_maze()) into the tile map (its
+--                 power-on contents are the same maze, so a failed load
+--                 still runs). The game's levels 1 to 3 have heights that
+--                 game_seq does not handle, so this design never loads them.
 --                 Each frame: frame_start at the start line, ps2_input
 --                 latches the snapshot, game_seq updates player and doors,
 --                 render_top draws the back buffer; once the pixel FIFO is
@@ -460,7 +462,7 @@ architecture arch of game_top is
 	-- Control registers: 32 = tone off, no override; 33 = start line 115
 	constant CTRL_INIT: std_logic_vector(8 * 32 - 1 downto 0) :=
 		(6 * 32 - 1 downto 0 => '0') & x"00000073" & x"00000000";
-	constant LEVEL_ID: std_logic_vector(7 downto 0) := x"01";
+	constant LEVEL_ID: std_logic_vector(7 downto 0) := x"04"; -- The flat maze (make_gamedata.py ID_MAZE)
 
 	type boot_t is (B_START, B_LOADING, B_RUN);
 	signal boot: boot_t := B_START;
@@ -525,8 +527,8 @@ architecture arch of game_top is
 	signal ld_x, ld_y: std_logic_vector(POS_BITS - 1 downto 0);
 	signal ld_angle: std_logic_vector(ANGLE_BITS - 1 downto 0);
 	signal game_load: std_logic := '0';
-	signal start_x, start_y: std_logic_vector(POS_BITS - 1 downto 0) := LEVEL1_START_X;
-	signal start_angle: std_logic_vector(ANGLE_BITS - 1 downto 0) := LEVEL1_START_ANGLE;
+	signal start_x, start_y: std_logic_vector(POS_BITS - 1 downto 0) := MAZE_START_X;
+	signal start_angle: std_logic_vector(ANGLE_BITS - 1 downto 0) := MAZE_START_ANGLE;
 	signal load_status: std_logic_vector(1 downto 0) := "00"; -- 01 loaded, 10 failed
 
 	-- Tile map
@@ -781,16 +783,16 @@ begin
 		);
 
 	------------------------------------------------------------------
-	-- Boot: load level 1 from flash, then run
+	-- Boot: load the maze from flash, then run
 	------------------------------------------------------------------
 	process(clk_sys, rst_sys)
 	begin
 		if (rst_sys = '1') then
 			boot <= B_START;
 			game_load <= '0';
-			start_x <= LEVEL1_START_X;
-			start_y <= LEVEL1_START_Y;
-			start_angle <= LEVEL1_START_ANGLE;
+			start_x <= MAZE_START_X;
+			start_y <= MAZE_START_Y;
+			start_angle <= MAZE_START_ANGLE;
 			load_status <= "00";
 		elsif rising_edge(clk_sys) then
 			game_load <= '0';
@@ -806,7 +808,7 @@ begin
 						game_load <= '1';
 						boot <= B_RUN;
 					elsif (load_error = '1') then
-						-- The map still holds its power-on copy of level 1
+						-- The map still holds its power-on copy of the maze
 						load_status <= "10";
 						game_load <= '1';
 						boot <= B_RUN;
